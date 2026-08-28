@@ -1,4 +1,4 @@
-import { Stack, useTheme } from "@mui/material";
+import { Stack } from "@mui/material";
 import { useRouter } from "next/router";
 
 import DashboardContent from "../../components/dashboardContent";
@@ -10,13 +10,21 @@ export const getServerSideProps = getSegmentServerSideProps;
 export default function NewSegment() {
   const router = useRouter();
   const id = typeof router.query.id === "string" ? router.query.id : undefined;
-  const theme = useTheme();
   if (!id) {
     return null;
   }
   return (
     <DashboardContent>
-      <Stack sx={{ padding: theme.spacing(3) }}>
+      <Stack
+        sx={{
+          width: "100%",
+          maxWidth: 1200,
+          mx: "auto",
+          px: "36px",
+          pt: "22px",
+          pb: "64px",
+        }}
+      >
         <SegmentEditorV2 id={id} />
       </Stack>
     </DashboardContent>

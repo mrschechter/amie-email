@@ -449,7 +449,7 @@ function PreviewCell({
             });
           }}
         >
-          <VisibilityIcon sx={{ color: "#262626", cursor: "pointer" }} />
+          <VisibilityIcon sx={{ color: "text.primary", cursor: "pointer" }} />
         </IconButton>
       </Tooltip>
     </Stack>

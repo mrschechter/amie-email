@@ -45,15 +45,33 @@ function MetricCard({
   isPercentage = false,
 }: MetricCardProps) {
   return (
-    <Card sx={{ minWidth: 80, textAlign: "center" }}>
-      <CardContent sx={{ p: 0.5, "&:last-child": { pb: 0.5 } }}>
-        <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5 }}>
+    <Card
+      variant="outlined"
+      sx={{
+        minWidth: 140,
+        flex: 1,
+        boxShadow: 2,
+        textAlign: "left",
+      }}
+    >
+      <CardContent sx={{ p: 2, "&:last-child": { pb: 2 } }}>
+        <Typography variant="overline" display="block">
           {title}
         </Typography>
         {isLoading ? (
-          <Skeleton variant="text" width={40} height={20} sx={{ mx: "auto" }} />
+          <Skeleton variant="text" width={72} height={36} />
         ) : (
-          <Typography variant="subtitle2" component="div">
+          <Typography
+            component="div"
+            sx={{
+              color: "secondary.800",
+              fontSize: "25px",
+              fontVariantNumeric: "tabular-nums",
+              fontWeight: 600,
+              lineHeight: 1.2,
+              mt: 0.75,
+            }}
+          >
             {isPercentage ? `${value.toFixed(1)}%` : value.toLocaleString()}
           </Typography>
         )}
@@ -177,7 +195,7 @@ export function AnalysisSummaryPanel({
       <Box sx={{ py: 0.5 }}>
         <Stack
           direction="row"
-          spacing={1}
+          spacing={1.75}
           alignItems="center"
           justifyContent="center"
         >
@@ -235,7 +253,12 @@ export function AnalysisSummaryPanel({
 
   // Show detailed summary for selected channel
   return (
-    <Stack direction="row" spacing={1} justifyContent="center" sx={{ py: 0.5 }}>
+    <Stack
+      direction="row"
+      spacing={1.75}
+      justifyContent="center"
+      sx={{ py: 1, width: "100%" }}
+    >
       <MetricCard
         title="SENT"
         value={summary.sent}

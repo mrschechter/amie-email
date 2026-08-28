@@ -21,7 +21,11 @@ function UserPropertyListContents() {
   return (
     <Stack
       sx={{
-        padding: 3,
+        maxWidth: 1200,
+        mx: "auto",
+        px: "36px",
+        pt: "26px",
+        pb: "64px",
         width: "100%",
         height: "100%",
       }}

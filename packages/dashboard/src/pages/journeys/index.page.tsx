@@ -21,7 +21,17 @@ export const getServerSideProps: GetServerSideProps<PropsWithInitialState> =
 function Journeys() {
   return (
     <DashboardContent>
-      <Stack sx={{ width: "100%", height: "100%", p: 3 }}>
+      <Stack
+        sx={{
+          width: "100%",
+          height: "100%",
+          maxWidth: 1200,
+          mx: "auto",
+          px: "36px",
+          pt: "26px",
+          pb: "64px",
+        }}
+      >
         <JourneysTableV2 />
       </Stack>
     </DashboardContent>

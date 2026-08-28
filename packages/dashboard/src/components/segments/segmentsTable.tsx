@@ -633,7 +633,6 @@ export function SegmentsTable({
               variant="contained"
               onClick={() => setDialogOpen(true)}
               startIcon={<AddIcon />}
-              sx={greyButtonStyle}
             >
               New Segment
             </Button>

@@ -25,6 +25,7 @@ import { useAppStorePick } from "../../lib/appStore";
 import { AppState, JourneyUiEdge, JourneyUiNode } from "../../lib/types";
 import { useJourneyStats } from "../../lib/useJourneyStats";
 import { useSubscriptionGroupsQuery } from "../../lib/useSubscriptionGroupsQuery";
+import tokens from "../../themeCustomization/tokens";
 import edgeTypes from "./edgeTypes";
 import NodeEditor from "./nodeEditor";
 import nodeTypes from "./nodeTypes";
@@ -167,6 +168,7 @@ function JourneysBuilderInner({ journeyId }: { journeyId: string }) {
             type: MarkerType.ArrowClosed,
           },
           style: {
+            stroke: tokens.colors.journeyEdge,
             strokeWidth: 2,
           },
         }}
@@ -187,8 +189,8 @@ function JourneysBuilderInner({ journeyId }: { journeyId: string }) {
         </Panel>
         <Controls position="top-right" />
         <Background
-          color="#C7C7D4"
-          style={{ backgroundColor: "#F7F8FA" }}
+          color={tokens.colors.canvasDot}
+          style={{ backgroundColor: tokens.colors.surfaceWarm }}
           size={2}
         />
       </ReactFlow>

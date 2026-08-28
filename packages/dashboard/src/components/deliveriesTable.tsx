@@ -692,7 +692,7 @@ export function DeliveriesTable({
               renderCell: ({ row }: GridRenderCellParams<TableItem>) => {
                 return (
                   <VisibilityIcon
-                    sx={{ color: "#262626", cursor: "pointer" }}
+                    sx={{ color: "text.primary", cursor: "pointer" }}
                     onClick={() => {
                       setPreviewObject({
                         body: row.body,

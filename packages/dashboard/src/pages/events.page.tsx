@@ -55,9 +55,15 @@ export default function Events() {
         direction="column"
         alignItems="center"
         justifyContent="center"
-        paddingBottom={2}
-        paddingTop={2}
-        sx={{ width: "100%", height: "100%", padding: 2 }}
+        sx={{
+          width: "100%",
+          height: "100%",
+          maxWidth: 1200,
+          mx: "auto",
+          px: "36px",
+          pt: "26px",
+          pb: "64px",
+        }}
       >
         <Box sx={{ width: "100%", height: "100%" }}>
           <UserEventsTable />

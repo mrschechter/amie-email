@@ -37,6 +37,7 @@ import { useImmer } from "use-immer";
 import { expandCascadingMessageFilters } from "../lib/cascadingMessageFilters";
 import { useAnalysisChartQuery } from "../lib/useAnalysisChartQuery";
 import { useResourcesQuery } from "../lib/useResourcesQuery";
+import tokens from "../themeCustomization/tokens";
 import {
   FilterType,
   getFilterValues,
@@ -186,7 +187,7 @@ function CustomLegend(props: { payload?: readonly LegendPayload[] }) {
               alignItems: "center",
               cursor: "pointer",
               fontSize: "14px",
-              color: "#333",
+              color: "text.primary",
               maxWidth: "200px", // Prevent legend from getting too wide
             }}
           >
@@ -203,7 +204,7 @@ function CustomLegend(props: { payload?: readonly LegendPayload[] }) {
               variant="body2"
               sx={{
                 fontSize: "14px",
-                color: "#333",
+                color: "text.primary",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
@@ -609,12 +610,12 @@ export function AnalysisChart({ configuration }: AnalysisChartProps = {}) {
 
   // Colors for different lines
   const colors = [
-    "#8884d8",
-    "#82ca9d",
-    "#ffc658",
-    "#ff7300",
-    "#00ff00",
-    "#0088fe",
+    tokens.colors.deepTeal,
+    tokens.colors.roseGold,
+    tokens.colors.sage,
+    tokens.colors.caption,
+    tokens.colors.deepTealHover,
+    tokens.colors.roseText,
   ];
 
   return (
@@ -746,7 +747,17 @@ export function AnalysisChart({ configuration }: AnalysisChartProps = {}) {
           {/* Date range selection handled by DateRangeSelector */}
 
           {/* Chart */}
-          <Paper sx={{ flex: 1, width: "100%", p: 1 }}>
+          <Paper
+            variant="outlined"
+            sx={{
+              flex: 1,
+              width: "100%",
+              p: 2,
+              borderColor: "grey.A800",
+              borderRadius: 1.5,
+              boxShadow: 2,
+            }}
+          >
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData}>
                 <XAxis

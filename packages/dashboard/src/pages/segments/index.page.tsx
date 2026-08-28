@@ -1,4 +1,3 @@
-import { useTheme } from "@mui/material";
 import { GetServerSideProps } from "next";
 import React from "react";
 
@@ -21,10 +20,17 @@ export const getServerSideProps: GetServerSideProps<SegmentsProps> =
   });
 
 export default function SegmentList() {
-  const theme = useTheme();
   return (
     <DashboardContent>
-      <SegmentsTable sx={{ padding: theme.spacing(3) }} />
+      <SegmentsTable
+        sx={{
+          maxWidth: 1200,
+          mx: "auto",
+          px: "36px",
+          pt: "26px",
+          pb: "64px",
+        }}
+      />
     </DashboardContent>
   );
 }

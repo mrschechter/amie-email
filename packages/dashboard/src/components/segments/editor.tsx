@@ -2345,10 +2345,10 @@ function AbsoluteTimestampValueSelect({
                 <DateInput
                   className="time-field-input"
                   style={{
-                    border: "1px solid #ccc",
-                    borderRadius: "4px",
+                    border: "1px solid var(--amie-border-strong)",
+                    borderRadius: "8px",
                     padding: "8px 12px",
-                    background: "#fff",
+                    background: "var(--amie-surface)",
                     minHeight: "40px",
                     display: "flex",
                     alignItems: "center",
@@ -3091,8 +3091,10 @@ export default function SegmentEditor({
         sx={{
           paddingTop: 3,
           paddingBottom: 3,
-          borderRadius: 1,
-          border: `1px solid ${theme.palette.grey[300]}`,
+          backgroundColor: "background.paper",
+          borderRadius: 1.5,
+          border: `1px solid ${theme.palette.grey.A800}`,
+          boxShadow: 2,
           ...sx,
         }}
       >

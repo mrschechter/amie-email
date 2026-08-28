@@ -21,7 +21,17 @@ export const getServerSideProps: GetServerSideProps<PropsWithInitialState> =
 export default function AnalysisOverviewPage() {
   return (
     <DashboardContent>
-      <Box sx={{ width: "100%", height: "100%", pl: 2, pr: 2, pt: 1 }}>
+      <Box
+        sx={{
+          width: "100%",
+          height: "100%",
+          maxWidth: 1200,
+          mx: "auto",
+          px: "36px",
+          pt: "26px",
+          pb: "64px",
+        }}
+      >
         <AnalysisChart />
       </Box>
     </DashboardContent>

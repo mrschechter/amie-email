@@ -616,10 +616,12 @@ export default function JourneyV2Layout({
         alignItems="center"
         spacing={1}
         sx={{
-          padding: 1,
+          px: "36px",
+          py: "10px",
           alignItems: "center",
-          height: theme.spacing(8),
-          borderBottom: `2px solid ${theme.palette.grey[200]}`,
+          minHeight: theme.spacing(8),
+          borderBottom: `1px solid ${theme.palette.divider}`,
+          backgroundColor: "background.default",
         }}
       >
         <Stack

@@ -208,10 +208,11 @@ export function BroadcastLayout({
         sx={{
           width: "100%",
           height: "100%",
-          paddingTop: 2,
-          paddingLeft: 2,
-          paddingRight: 1,
-          paddingBottom: 1,
+          maxWidth: 1100,
+          mx: "auto",
+          px: "36px",
+          pt: "22px",
+          pb: "64px",
           alignItems: "start",
         }}
         spacing={1}

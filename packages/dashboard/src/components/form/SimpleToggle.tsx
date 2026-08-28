@@ -21,9 +21,9 @@ const SimpleToggle: StyledComponent<SwitchProps, object, object> = styled(
     transitionDuration: "300ms",
     "&.Mui-checked": {
       transform: "translateX(16px)",
-      color: "#fff",
+      color: theme.palette.background.paper,
       "& + .MuiSwitch-track": {
-        backgroundColor: theme.palette.mode === "dark" ? "#2ECA45" : "#65C466",
+        backgroundColor: theme.palette.primary.main,
         opacity: 1,
         border: 0,
       },
@@ -32,8 +32,8 @@ const SimpleToggle: StyledComponent<SwitchProps, object, object> = styled(
       },
     },
     "&.Mui-focusVisible .MuiSwitch-thumb": {
-      color: "#33cf4d",
-      border: "6px solid #fff",
+      color: theme.palette.primary.main,
+      border: `6px solid ${theme.palette.background.paper}`,
     },
     "&.Mui-disabled .MuiSwitch-thumb": {
       color:
@@ -52,7 +52,7 @@ const SimpleToggle: StyledComponent<SwitchProps, object, object> = styled(
   },
   "& .MuiSwitch-track": {
     borderRadius: 26 / 2,
-    backgroundColor: theme.palette.mode === "light" ? "#E9E9EA" : "#39393D",
+    backgroundColor: theme.palette.grey[400],
     opacity: 1,
     transition: theme.transitions.create(["background-color"], {
       duration: 500,

@@ -1207,7 +1207,7 @@ export default function TemplateEditor({
       <BodyBox
         direction="left"
         className="editor-body"
-        sx={{ backgroundColor: "white" }}
+        sx={{ backgroundColor: "background.paper" }}
       >
         <ErrorBoundary>{renderEditorBody(renderEditorParams)}</ErrorBoundary>
       </BodyBox>
@@ -1440,6 +1440,12 @@ export default function TemplateEditor({
         sx={{
           height: "100%",
           width: "100%",
+          backgroundColor: "background.paper",
+          border: "1px solid",
+          borderColor: "grey.A800",
+          borderRadius: 1.5,
+          boxShadow: 2,
+          overflow: "hidden",
           // Ensure children can shrink and scroll instead of pushing parent
           minHeight: 0,
         }}

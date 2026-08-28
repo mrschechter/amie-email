@@ -152,7 +152,7 @@ export default function BroadcastReview() {
 
   return (
     <BroadcastLayout activeStep="review" id={id}>
-      <Typography fontWeight={400} variant="h2" sx={{ fontSize: 16 }}>
+      <Typography variant="h6">
         Broadcast Review
       </Typography>
       <Stack spacing={2} sx={{ width: "100%" }}>

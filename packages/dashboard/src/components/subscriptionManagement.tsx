@@ -2,12 +2,12 @@ import LoadingButton from "@mui/lab/LoadingButton";
 import {
   Alert,
   Box,
-  Checkbox,
   FormControlLabel,
   FormGroup,
+  Link,
   Stack,
+  Switch,
   Typography,
-  useTheme,
 } from "@mui/material";
 import { SubscriptionChange } from "backend-lib/src/types";
 import { UserSubscriptionResource } from "isomorphic-lib/src/types";
@@ -102,7 +102,6 @@ export function SubscriptionManagement({
     return channelState;
   }, [subscriptionsByChannel, initialSubscriptionManagementState]);
 
-  const theme = useTheme();
   const [state, updateState] = useImmer<SubscriptionState>(
     initialSubscriptionManagementState,
   );
@@ -194,7 +193,19 @@ export function SubscriptionManagement({
       message = `You have unsubscribed from ${changedSubscriptionName}`;
     }
 
-    subscriptionChangeSection = <Alert severity="info">{message}</Alert>;
+    subscriptionChangeSection = (
+      <Alert
+        severity="success"
+        sx={{
+          backgroundColor: "success.lighter",
+          color: "success.dark",
+          borderRadius: 1,
+          py: 0.25,
+        }}
+      >
+        {message}
+      </Alert>
+    );
   }
 
   const handleUpdate = () => {
@@ -215,66 +226,197 @@ export function SubscriptionManagement({
       });
     }
   };
+  const isUnsubscribed = subscriptionChange === SubscriptionChange.Unsubscribe;
+
   return (
-    <Stack
-      spacing={2}
+    <Box
+      component="main"
       sx={{
-        padding: 2,
-        borderWidth: 1,
-        display: "inline-block",
-        borderStyle: "solid",
-        borderRadius: 1,
-        boxShadow: theme.shadows[2],
-        borderColor: theme.palette.grey[200],
+        width: "100%",
+        minHeight: "100vh",
+        backgroundColor: "background.default",
+        px: 3,
+        py: 7,
       }}
     >
-      <Typography variant="h4">
-        Choose what messages you would like to receive from {workspaceName}
-      </Typography>
-      {subscriptionChangeSection}
-      <FormGroup>
-        {Object.entries(subscriptionsByChannel).map(
-          ([channel, channelSubscriptions]) => (
-            <Box key={channel}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={channelState[channel] === true}
-                    onChange={handleChannelChange}
-                    name={channel}
-                  />
-                }
-                label={channel}
-                sx={{ fontWeight: "bold" }}
-              />
-              <Stack sx={{ ml: 3 }}>
-                {channelSubscriptions.map((subscription) => (
+      <Box sx={{ width: "100%", maxWidth: 560, mx: "auto" }}>
+        <Typography
+          component="div"
+          sx={{
+            color: "secondary.800",
+            fontFamily: (theme) => theme.typography.displayFontFamily,
+            fontSize: "26px",
+            fontWeight: 600,
+            lineHeight: 1,
+            textAlign: "center",
+          }}
+        >
+          Amie<Box component="span" sx={{ color: "error.main" }}>.</Box>
+        </Typography>
+
+        <Box
+          aria-hidden="true"
+          sx={{
+            alignItems: "center",
+            backgroundColor: isUnsubscribed
+              ? "success.lighter"
+              : "primary.lighter",
+            borderRadius: 999,
+            color: isUnsubscribed ? "success.dark" : "primary.main",
+            display: "flex",
+            fontSize: "20px",
+            height: 46,
+            justifyContent: "center",
+            mt: 4.25,
+            mx: "auto",
+            width: 46,
+          }}
+        >
+          {isUnsubscribed ? "✓" : "A"}
+        </Box>
+
+        <Typography variant="h4" sx={{ mt: 2, textAlign: "center" }}>
+          {isUnsubscribed ? "You're unsubscribed." : "Choose what you receive."}
+        </Typography>
+        <Typography
+          sx={{
+            color: "secondary.main",
+            fontSize: "15px",
+            lineHeight: 1.6,
+            maxWidth: 480,
+            mt: 1.5,
+            mx: "auto",
+            textAlign: "center",
+          }}
+        >
+          {isUnsubscribed
+            ? `${identifier} will no longer receive the messages you opted out of from ${workspaceName}. Essential account and service messages are not affected.`
+            : `Update the messages ${identifier} receives from ${workspaceName}. Your changes take effect immediately.`}
+        </Typography>
+
+        <Stack
+          spacing={0}
+          sx={{
+            backgroundColor: "background.paper",
+            border: "1px solid",
+            borderColor: "grey.A800",
+            borderRadius: "14px",
+            boxShadow: 2,
+            mt: 4,
+            overflow: "hidden",
+            px: 2.75,
+            pb: 2.25,
+          }}
+        >
+          <Typography variant="subtitle1" sx={{ py: 2 }}>
+            Prefer to choose what you receive?
+          </Typography>
+          {subscriptionChangeSection && (
+            <Box sx={{ pb: 1.5 }}>{subscriptionChangeSection}</Box>
+          )}
+          <FormGroup>
+            {Object.entries(subscriptionsByChannel).map(
+              ([channel, channelSubscriptions]) => (
+                <Box
+                  key={channel}
+                  sx={{ borderTop: "1px solid", borderColor: "grey.200" }}
+                >
                   <FormControlLabel
-                    key={subscription.id}
+                    labelPlacement="start"
                     control={
-                      <Checkbox
-                        checked={state[subscription.id] === true}
-                        onChange={handleSubscriptionChange}
-                        name={subscription.id}
+                      <Switch
+                        checked={channelState[channel] === true}
+                        onChange={handleChannelChange}
+                        name={channel}
+                        size="small"
                       />
                     }
-                    label={subscription.name}
+                    label={
+                      <Box>
+                        <Typography variant="subtitle1">
+                          {channel} messages
+                        </Typography>
+                        <Typography variant="caption">
+                          Turn every {channel.toLowerCase()} preference on or off
+                        </Typography>
+                      </Box>
+                    }
+                    sx={{
+                      justifyContent: "space-between",
+                      m: 0,
+                      py: 1.25,
+                      width: "100%",
+                    }}
                   />
-                ))}
-              </Stack>
-            </Box>
-          ),
-        )}
-      </FormGroup>
-      <Box>
-        <LoadingButton
-          loading={!isPreview && updateSubscriptionsMutation.isPending}
-          variant="contained"
-          onClick={handleUpdate}
+                  <Stack
+                    sx={{ borderTop: "1px solid", borderColor: "grey.200" }}
+                  >
+                    {channelSubscriptions.map((subscription) => (
+                      <FormControlLabel
+                        key={subscription.id}
+                        labelPlacement="start"
+                        control={
+                          <Switch
+                            checked={state[subscription.id] === true}
+                            onChange={handleSubscriptionChange}
+                            name={subscription.id}
+                            size="small"
+                          />
+                        }
+                        label={
+                          <Typography variant="body2" color="secondary.800">
+                            {subscription.name}
+                          </Typography>
+                        }
+                        sx={{
+                          justifyContent: "space-between",
+                          m: 0,
+                          py: 1,
+                          pl: 1.5,
+                          width: "100%",
+                          "& + &": {
+                            borderTop: "1px solid",
+                            borderColor: "grey.200",
+                          },
+                        }}
+                      />
+                    ))}
+                  </Stack>
+                </Box>
+              ),
+            )}
+          </FormGroup>
+          <Box sx={{ borderTop: "1px solid", borderColor: "grey.200", pt: 2 }}>
+            <LoadingButton
+              loading={!isPreview && updateSubscriptionsMutation.isPending}
+              variant="contained"
+              onClick={handleUpdate}
+            >
+              Save preferences
+            </LoadingButton>
+          </Box>
+        </Stack>
+
+        <Box
+          sx={{
+            borderTop: "1px solid",
+            borderColor: "divider",
+            mt: 4.5,
+            pt: 2.25,
+          }}
         >
-          Save Preferences
-        </LoadingButton>
+          <Typography
+            variant="caption"
+            component="div"
+            sx={{ color: "grey.500", lineHeight: 1.7, textAlign: "center" }}
+          >
+            Amie Health · 2261 Market St #4010 · San Francisco, CA 94114
+            <br />
+            Questions?{" "}
+            <Link href="mailto:support@tryamie.com">support@tryamie.com</Link>
+          </Typography>
+        </Box>
       </Box>
-    </Stack>
+    </Box>
   );
 }

@@ -43,6 +43,7 @@ import { useJourneyQuery } from "../../../lib/useJourneyQuery";
 import { useJourneyStatsQueryV2 } from "../../../lib/useJourneyStatsQueryV2";
 import { useMessageTemplatesQuery } from "../../../lib/useMessageTemplatesQuery";
 import { useSegmentsQuery } from "../../../lib/useSegmentsQuery";
+import tokens from "../../../themeCustomization/tokens";
 import {
   DateRangeSelector,
   DateRangeValue,
@@ -257,7 +258,7 @@ function journNodeTypeToConfig(
       }
 
       return {
-        sidebarColor: "#F77520",
+        sidebarColor: tokens.colors.sage,
         icon: journeyNodeIcon(JourneyNodeType.DelayNode),
         title: journeyNodeLabel(JourneyNodeType.DelayNode),
         body,
@@ -267,7 +268,7 @@ function journNodeTypeToConfig(
     case JourneyNodeType.SegmentSplitNode: {
       const body = <SegmentDescriptionBody segmentId={props.segmentId} />;
       return {
-        sidebarColor: "#12F7BE",
+        sidebarColor: tokens.colors.roseGold,
         icon: journeyNodeIcon(JourneyNodeType.SegmentSplitNode),
         title: props.name,
         body,
@@ -275,7 +276,7 @@ function journNodeTypeToConfig(
     }
     case JourneyNodeType.MessageNode:
       return {
-        sidebarColor: "#03D9F5",
+        sidebarColor: tokens.colors.deepTeal,
         icon: journeyNodeIcon(JourneyNodeType.MessageNode),
         title: props.name.length ? props.name : "Unfinished Message",
         body: null,
@@ -300,7 +301,7 @@ function journNodeTypeToConfig(
         />
       );
       return {
-        sidebarColor: "#F7741E",
+        sidebarColor: tokens.colors.sage,
         icon: journeyNodeIcon(JourneyNodeType.WaitForNode),
         title: journeyNodeLabel(JourneyNodeType.WaitForNode),
         body,
@@ -313,7 +314,7 @@ function journNodeTypeToConfig(
         </Typography>
       );
       return {
-        sidebarColor: "#9C27B0",
+        sidebarColor: tokens.colors.roseGold,
         icon: journeyNodeIcon(JourneyNodeType.RandomCohortNode),
         title: journeyNodeLabel(JourneyNodeType.RandomCohortNode),
         body,
@@ -322,7 +323,7 @@ function journNodeTypeToConfig(
   }
 }
 
-const borderRadius = 2;
+const borderRadius = tokens.radii.node;
 
 interface SmallMetricCardProps {
   title: string;
@@ -497,8 +498,8 @@ export function JourneyNode({ id, data }: NodeProps<JourneyUiNodeDefinition>) {
   }, [id, isSelected, journeyStatsData, displayMode]);
 
   const borderColor: string = isSelected
-    ? theme.palette.blue[200]
-    : theme.palette.grey[200];
+    ? theme.palette.primary.main
+    : tokens.colors.journeyNodeBorder;
 
   const body = !isComplete ? (
     <Stack direction="row">
@@ -526,13 +527,14 @@ export function JourneyNode({ id, data }: NodeProps<JourneyUiNodeDefinition>) {
         width: JOURNEY_NODE_WIDTH,
         display: "flex",
         flexDirection: "row",
-        backgroundColor: "white",
+        backgroundColor: "background.paper",
         justifyItems: "stretch",
         cursor: "pointer",
         borderStyle: "solid",
         borderRadius,
         borderColor,
-        borderWidth: 2,
+        borderWidth: 1,
+        boxShadow: tokens.shadows.medium,
       }}
     >
       <Box
@@ -549,7 +551,7 @@ export function JourneyNode({ id, data }: NodeProps<JourneyUiNodeDefinition>) {
         <Stack direction="row" spacing={1} alignItems="center">
           <config.icon />
           <Typography
-            variant="h5"
+            variant="subtitle1"
             sx={{
               height: "1.5rem",
               overflow: "hidden",
@@ -589,13 +591,13 @@ export function JourneyNode({ id, data }: NodeProps<JourneyUiNodeDefinition>) {
         direction="column"
         sx={{
           padding: nodeStats ? 1 : 0,
-          backgroundColor: "white",
+          backgroundColor: "background.paper",
           borderStyle: "solid",
           width: JOURNEY_NODE_WIDTH,
-          borderBottomLeftRadius: 8,
-          borderBottomRightRadius: 8,
+          borderBottomLeftRadius: tokens.radii.node,
+          borderBottomRightRadius: tokens.radii.node,
           borderColor,
-          borderWidth: "0 2px 2px 2px",
+          borderWidth: "0 1px 1px 1px",
           opacity: nodeStats ? 1 : 0,
           visibility: nodeStats ? "visible" : "hidden",
           transition:

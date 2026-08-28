@@ -1,4 +1,4 @@
-import { Box, useTheme } from "@mui/material";
+import { Box } from "@mui/material";
 import { GetServerSideProps } from "next";
 
 import DashboardContent from "../../components/dashboardContent";
@@ -18,10 +18,19 @@ export const getServerSideProps: GetServerSideProps<PropsWithInitialState> =
   });
 
 export default function TemplateList() {
-  const theme = useTheme();
   return (
     <DashboardContent>
-      <Box sx={{ height: "100%", width: "100%", padding: theme.spacing(3) }}>
+      <Box
+        sx={{
+          height: "100%",
+          width: "100%",
+          maxWidth: 1200,
+          mx: "auto",
+          px: "36px",
+          pt: "26px",
+          pb: "64px",
+        }}
+      >
         <TemplatesTable />
       </Box>
     </DashboardContent>

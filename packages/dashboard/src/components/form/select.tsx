@@ -5,7 +5,6 @@ import {
   MenuItem,
   Select,
   SelectProps,
-  useTheme,
 } from "@mui/material";
 
 export interface SelectFieldProps {
@@ -23,7 +22,6 @@ export function SelectField({
   helperText,
   ...rest
 }: SelectFieldProps) {
-  const theme = useTheme();
   const items = options.map((option) => (
     <MenuItem key={option.value} value={option.value}>
       {option.label}
@@ -49,8 +47,8 @@ export function SelectField({
         "& .MuiOutlinedInput-root": {
           marginTop: "1.5rem",
           border: "1px solid",
-          borderColor: theme.palette.mode === "light" ? "#E0E3E7" : "#2D3843",
-          borderRadius: "4px",
+          borderColor: "grey.400",
+          borderRadius: 1,
         },
         "& .MuiFormHelperText-root": {
           marginLeft: 0,

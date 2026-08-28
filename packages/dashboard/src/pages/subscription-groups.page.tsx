@@ -1,4 +1,3 @@
-import { useTheme } from "@mui/material";
 import { GetServerSideProps } from "next";
 import React from "react";
 
@@ -21,10 +20,17 @@ export const getServerSideProps: GetServerSideProps<SubscriptionGroupsProps> =
   });
 
 export default function SubscriptionGroups() {
-  const theme = useTheme();
   return (
     <DashboardContent>
-      <SubscriptionGroupsTable sx={{ padding: theme.spacing(3) }} />
+      <SubscriptionGroupsTable
+        sx={{
+          maxWidth: 1200,
+          mx: "auto",
+          px: "36px",
+          pt: "26px",
+          pb: "64px",
+        }}
+      />
     </DashboardContent>
   );
 }

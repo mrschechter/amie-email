@@ -35,8 +35,9 @@ function SmsPreviewBody({ body }: SmsPreviewBodyProps) {
           sx={{
             width: "80%",
             marginTop: 14,
-            backgroundColor: "#f7f8fa",
-            border: "1px solid #ebecf2",
+            backgroundColor: "secondary.100",
+            border: "1px solid",
+            borderColor: "grey.A800",
             padding: 1,
             borderRadius: 1,
             whiteSpace: "normal", // Ensures text wraps onto the next line

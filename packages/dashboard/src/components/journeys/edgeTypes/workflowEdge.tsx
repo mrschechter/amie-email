@@ -177,7 +177,10 @@ export default function WorkflowEdge({
                 fontWeight: 700,
                 fontSize: 12,
                 padding: 1,
-                backgroundColor: "#f0f0f0",
+                backgroundColor: "secondary.100",
+                border: "1px solid",
+                borderColor: "grey.A800",
+                borderRadius: 999,
               }}
             >
               {`${getLabelText()} %`}

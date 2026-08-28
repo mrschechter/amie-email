@@ -657,7 +657,6 @@ export default function TemplatesTable({
           variant="contained"
           onClick={() => setDialogOpen(true)}
           startIcon={<AddIcon />}
-          sx={greyButtonStyle}
         >
           New Template
         </Button>

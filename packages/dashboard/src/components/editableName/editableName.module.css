@@ -2,7 +2,10 @@
 .editor {
   white-space: pre-wrap;
   cursor: text;
-  color: #1a1a1a;
+  color: var(--amie-heading);
+  font-family: "Cormorant Garamond", Georgia, serif;
+  font-size: 26px;
+  font-weight: 600;
   font-variation-settings: "opsz" 32;
   font-feature-settings: "calt";
   letter-spacing: -0.00625rem;
@@ -23,7 +26,7 @@
   box-shadow: none;
   border: none;
 
-  caret-color: black;
+  caret-color: var(--amie-primary);
   animation: blink-caret 1s step-start infinite;
 }
 

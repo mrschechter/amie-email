@@ -68,7 +68,7 @@ import { useDeleteJourneyMutation } from "../../../lib/useDeleteJourneyMutation"
 import { useDuplicateResourceMutation } from "../../../lib/useDuplicateResourceMutation";
 import { useJourneyMutation } from "../../../lib/useJourneyMutation";
 import { useJourneysQuery } from "../../../lib/useJourneysQuery";
-import { GreyButton, greyButtonStyle } from "../../greyButtonStyle";
+import { GreyButton } from "../../greyButtonStyle";
 import { DEFAULT_EDGES, DEFAULT_JOURNEY_NODES } from "../defaults";
 import { JourneyStateForDraft, journeyStateToDraft } from "../store";
 
@@ -453,7 +453,6 @@ export default function JourneysTable() {
           <Typography variant="h4">Journeys</Typography>
           <Button
             variant="contained"
-            sx={greyButtonStyle}
             onClick={() => setDialogOpen(true)}
             startIcon={<AddIcon />}
           >

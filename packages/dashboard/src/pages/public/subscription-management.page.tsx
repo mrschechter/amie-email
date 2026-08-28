@@ -1,4 +1,3 @@
-import { Stack } from "@mui/material";
 import backendConfig from "backend-lib/src/config";
 import { db } from "backend-lib/src/db";
 import * as schema from "backend-lib/src/db/schema";
@@ -221,26 +220,20 @@ const SubscriptionManagementPage: NextPage<SSP> =
       showAllChannels,
     } = props;
     return (
-      <Stack
-        justifyContent="center"
-        alignItems="center"
-        sx={{ height: "100vh" }}
-      >
-        <SubscriptionManagement
-          workspaceId={workspaceId}
-          subscriptions={subscriptions}
-          subscriptionChange={subscriptionChange}
-          changedSubscription={changedSubscription}
-          changedSubscriptionChannel={changedSubscriptionChannel}
-          hash={hash}
-          identifier={identifier}
-          identifierKey={identifierKey}
-          workspaceName={workspaceName}
-          apiBase={propsApiBase}
-          isPreview={isPreview}
-          showAllChannels={showAllChannels}
-        />
-      </Stack>
+      <SubscriptionManagement
+        workspaceId={workspaceId}
+        subscriptions={subscriptions}
+        subscriptionChange={subscriptionChange}
+        changedSubscription={changedSubscription}
+        changedSubscriptionChannel={changedSubscriptionChannel}
+        hash={hash}
+        identifier={identifier}
+        identifierKey={identifierKey}
+        workspaceName={workspaceName}
+        apiBase={propsApiBase}
+        isPreview={isPreview}
+        showAllChannels={showAllChannels}
+      />
     );
   };
 

@@ -72,7 +72,7 @@ import { useArchiveBroadcastMutation } from "../../lib/useArchiveBroadcastMutati
 import { useBroadcastsQuery } from "../../lib/useBroadcastsQuery";
 import { useCreateBroadcastMutation } from "../../lib/useCreateBroadcastMutation";
 import { useDuplicateResourceMutation } from "../../lib/useDuplicateResourceMutation";
-import { GreyButton, greyButtonStyle } from "../greyButtonStyle";
+import { GreyButton } from "../greyButtonStyle";
 
 // Use the union type for the table row data
 type Row = BroadcastResource | BroadcastResourceV2;
@@ -560,7 +560,6 @@ export default function BroadcastsTable() {
             />
             <Button
               variant="contained"
-              sx={greyButtonStyle}
               onClick={() => setDialogOpen(true)}
               startIcon={<AddIcon />}
             >

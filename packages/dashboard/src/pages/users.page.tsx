@@ -1,4 +1,4 @@
-import { Typography, useTheme } from "@mui/material";
+import { Typography } from "@mui/material";
 import Stack from "@mui/material/Stack";
 import { Type } from "@sinclair/typebox";
 import { schemaValidate } from "isomorphic-lib/src/resultHandling/schemaValidation";
@@ -28,7 +28,6 @@ export const getServerSideProps: GetServerSideProps<PropsWithInitialState> =
   });
 
 export default function SegmentUsers() {
-  const theme = useTheme();
   const router = useRouter();
   const queryParams = useMemo(
     () => schemaValidate(router.query, QueryParams).unwrapOr({}),
@@ -44,8 +43,11 @@ export default function SegmentUsers() {
         sx={{
           width: "100%",
           height: "100%",
-          padding: 3,
-          backgroundColor: theme.palette.grey[100],
+          maxWidth: 1200,
+          mx: "auto",
+          px: "36px",
+          pt: "26px",
+          pb: "64px",
         }}
       >
         <Stack direction="row">
