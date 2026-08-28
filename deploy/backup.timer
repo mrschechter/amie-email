@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Dittofeed database backup daily at 09:10 UTC
+
+[Timer]
+OnCalendar=*-*-* 09:10:00 UTC
+Persistent=true
+Unit=backup.service
+
+[Install]
+WantedBy=timers.target
+

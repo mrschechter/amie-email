@@ -1,0 +1,179 @@
+version: "3.9"
+
+x-database-credentials: &database-credentials
+  DATABASE_USER: ${DATABASE_USER:-postgres}
+  DATABASE_PASSWORD: ${DATABASE_PASSWORD:?required}
+
+x-clickhouse-credentials: &clickhouse-credentials
+  CLICKHOUSE_USER: ${CLICKHOUSE_USER:-dittofeed}
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?required}
+
+x-backend-app-env: &backend-app-env
+  <<: [*clickhouse-credentials, *database-credentials]
+  NODE_ENV: production
+  DATABASE_HOST: postgres
+  DATABASE_PORT: "5432"
+  CLICKHOUSE_HOST: http://clickhouse-server:8123
+  TEMPORAL_ADDRESS: temporal:7233
+  WORKSPACE_NAME: ${WORKSPACE_NAME:-Amie}
+  AUTH_MODE: single-tenant
+  SECRET_KEY: ${SECRET_KEY:?required}
+  PASSWORD: ${PASSWORD:?required}
+  DASHBOARD_API_BASE: ${DASHBOARD_API_BASE:-https://email.tryamie.com}
+
+x-logging: &default-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  lite:
+    image: dittofeed/dittofeed-lite:v0.23.0
+    restart: always
+    command: node --max-old-space-size=${LITE_MEM_LIMIT:-824} ./packages/lite/dist/scripts/startLite.js --workspace-name=${WORKSPACE_NAME:-Amie}
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: ${LITE_CONTAINER_MEM_LIMIT:-1024}m
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+      clickhouse-server:
+        condition: service_healthy
+    environment:
+      <<: *backend-app-env
+      # Set true for the first boot only; switch it back to false immediately afterward.
+      BOOTSTRAP: "${BOOTSTRAP:-false}"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - require('http').get('http://127.0.0.1:3000',r=>process.exit(r.statusCode&&r.statusCode<500?0:1)).on('error',()=>process.exit(1))
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks:
+      - dittofeed-network
+
+  # This profile is started only while following an upstream version's upgrade guide.
+  admin-cli:
+    image: dittofeed/dittofeed-admin-cli:v0.23.0
+    entrypoint: []
+    profiles: ["admin-cli"]
+    command: tail -f /dev/null
+    tty: true
+    restart: "no"
+    logging: *default-logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+      clickhouse-server:
+        condition: service_healthy
+    environment:
+      <<: *backend-app-env
+    networks:
+      - dittofeed-network
+
+  temporal:
+    image: temporalio/auto-setup:1.22.4
+    restart: always
+    logging: *default-logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgresql
+      DB_PORT: "5432"
+      POSTGRES_USER: ${DATABASE_USER:-postgres}
+      POSTGRES_PWD: ${DATABASE_PASSWORD:?required}
+      POSTGRES_SEEDS: postgres
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/prod.yaml
+    volumes:
+      - ../packages/backend-lib/temporal-dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    networks:
+      - dittofeed-network
+
+  postgres:
+    image: postgres:15
+    restart: always
+    logging: *default-logging
+    environment:
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?required}
+      POSTGRES_USER: ${DATABASE_USER:-postgres}
+      POSTGRES_DB: dittofeed
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - dittofeed-network
+
+  clickhouse-server:
+    image: clickhouse/clickhouse-server:24.12.6.70-alpine
+    restart: always
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: ${CLICKHOUSE_CONTAINER_MEM_LIMIT:-2048}m
+    environment:
+      <<: *clickhouse-credentials
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_backups:/backups
+      - ./clickhouse-backup.xml:/etc/clickhouse-server/config.d/backup_disk.xml:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          wget -qO- --header="X-ClickHouse-User: $$CLICKHOUSE_USER"
+          --header="X-ClickHouse-Key: $$CLICKHOUSE_PASSWORD"
+          http://127.0.0.1:8123/ping | grep -q '^Ok\.$'
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - dittofeed-network
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: always
+    logging: *default-logging
+    ports:
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /etc/dittofeed/certs:/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      lite:
+        condition: service_healthy
+    networks:
+      - dittofeed-network
+
+volumes:
+  postgres_data:
+  clickhouse_data:
+  clickhouse_backups:
+  caddy_data:
+  caddy_config:
+
+networks:
+  dittofeed-network:
+    driver: bridge

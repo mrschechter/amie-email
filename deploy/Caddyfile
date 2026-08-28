@@ -1,0 +1,9 @@
+{
+	admin off
+	auto_https disable_certs
+}
+
+email.tryamie.com:443 {
+	tls /certs/fullchain.pem /certs/privkey.pem
+	reverse_proxy lite:3000
+}

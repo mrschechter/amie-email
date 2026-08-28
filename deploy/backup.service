@@ -1,0 +1,12 @@
+[Unit]
+Description=Back up the Dittofeed PostgreSQL and ClickHouse databases
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/dittofeed
+EnvironmentFile=/etc/dittofeed-backup.env
+ExecStart=/opt/dittofeed/deploy/backup.sh
+
