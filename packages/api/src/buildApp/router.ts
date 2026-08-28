@@ -4,6 +4,7 @@ import { DittofeedFastifyInstance } from "backend-lib/src/types";
 import { FastifyInstance } from "fastify";
 
 import analysisController from "../controllers/analysisController";
+import amieComposerController from "../controllers/amieComposerController";
 import apiKeyController from "../controllers/apiKeyController";
 import broadcastsController from "../controllers/broadcastsController";
 import componentConfigurationsController from "../controllers/componentConfigurationsController";
@@ -52,6 +53,9 @@ export default async function router(
 
       await Promise.all([
         f.register(analysisController, { prefix: "/analysis" }),
+        f.register(amieComposerController, {
+          prefix: "/content/templates",
+        }),
         f.register(contentController, { prefix: "/content" }),
         f.register(eventsController, { prefix: "/events" }),
         f.register(journeysController, { prefix: "/journeys" }),

@@ -1,6 +1,6 @@
 import { Static, Type } from "@sinclair/typebox";
 import { loadConfig, setConfigOnEnv } from "backend-lib/src/config/loader";
-import { NodeEnv } from "backend-lib/src/types";
+import { BoolStr, NodeEnv } from "backend-lib/src/types";
 import { Overwrite } from "utility-types";
 
 const RawConfigProps = {
@@ -18,6 +18,8 @@ const RawConfigProps = {
       format: "naturalNumber",
     }),
   ),
+  amieComposerEnabled: Type.Optional(BoolStr),
+  amieComposerModelId: Type.Optional(Type.String()),
 };
 
 // Structure of application config.
@@ -33,6 +35,8 @@ export type Config = Overwrite<
     apiHost: string;
     apiPort: number;
     apiBodyLimit: number;
+    amieComposerEnabled: boolean;
+    amieComposerModelId: string;
   }
 >;
 function parseRawConfig(raw: RawConfig): Config {
@@ -48,6 +52,9 @@ function parseRawConfig(raw: RawConfig): Config {
       raw.apiHost ?? (nodeEnv === "development" ? "localhost" : "0.0.0.0"),
     apiPort: Number.isNaN(port) ? 3001 : port,
     apiBodyLimit: Number.isNaN(bodyLimit) ? 5 * 1024 * 1024 : bodyLimit,
+    amieComposerEnabled: raw.amieComposerEnabled === "true",
+    amieComposerModelId:
+      raw.amieComposerModelId ?? "us.anthropic.claude-opus-4-6-v1",
   };
 }
 
