@@ -48,7 +48,7 @@ function Navigation() {
     : null;
 
   return (
-    <Box sx={{ pt: 2, px: isMinimal ? 3 : undefined }}>
+    <Box sx={{ pb: 1.25, pt: 0.25, px: isMinimal ? 3 : undefined }}>
       {title ? (
         <Stack direction="row" sx={{ ml: -1, alignItems: "center" }}>
           {backLink ? (

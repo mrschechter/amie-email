@@ -58,7 +58,7 @@ function MainCardInner({
       sx={{
         ...sx,
         border: border ? "1px solid" : "none",
-        borderRadius: 2,
+        borderRadius: 1.5,
         borderColor:
           theme.palette.mode === "dark"
             ? theme.palette.divider

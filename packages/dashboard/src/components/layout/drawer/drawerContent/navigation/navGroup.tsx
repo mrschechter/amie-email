@@ -20,14 +20,14 @@ function NavGroup({ item }: { item: MenuItemGroup }) {
       subheader={
         item.title &&
         drawerOpen && (
-          <Box sx={{ pl: 3 }}>
-            <Typography variant="subtitle2" color="textSecondary">
+          <Box sx={{ pb: 0.75, pl: 3, pt: 2.25 }}>
+            <Typography variant="overline">
               {item.title}
             </Typography>
           </Box>
         )
       }
-      sx={{ mb: drawerOpen ? 1.5 : 0, py: 0, zIndex: 0 }}
+      sx={{ mb: drawerOpen ? 0.5 : 0, py: 0, zIndex: 0 }}
     >
       {navCollapse}
     </List>

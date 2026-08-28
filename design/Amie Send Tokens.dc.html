@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;padding:0;background:#FAF8F5;color:#4A4A4A;font-family:'DM Sans',sans-serif;}
+*{box-sizing:border-box}
+a{color:#2D7A7A;text-decoration:none}
+a:hover{color:#256868;text-decoration:underline}
+</style>
+</helmet>
+<div data-screen-label="Design tokens" style="max-width:1060px; margin:0 auto; padding:48px 28px 96px">
+  <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:20px; flex-wrap:wrap">
+    <div>
+      <h1 style="font-family:'Cormorant Garamond',Georgia,serif; font-size:34px; font-weight:600; color:#3E3733; margin:0">Amie Send — design tokens</h1>
+      <div style="font-size:13.5px; color:#8A8178; margin-top:6px">v1 · light theme only · maps to the MUI theme object</div>
+    </div>
+    <div style="font-size:12.5px; color:#8A8178">
+      <a href="Amie%20Send%20App.dc.html">App shell</a> · <a href="Amie%20Send%20Login.dc.html">Login</a> · <a href="Amie%20Send%20Unsubscribe.dc.html">Unsubscribe</a> · <a href="Amie%20Send%20Email%20Template.dc.html">Email template</a>
+    </div>
+  </div>
+
+  <div style="font-size:11px; font-weight:500; letter-spacing:.14em; text-transform:uppercase; color:#B3AAA0; margin:44px 0 0; padding-bottom:10px; border-bottom:1px solid #EFE8DF">Color</div>
+  <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:14px; margin-top:16px">
+    <div style="background:#FFFFFF; border:1px solid #EDE5DB; border-radius:10px; padding:10px"><div style="height:56px; border-radius:7px; background:#2D7A7A"></div><div style="font-size:13px; font-weight:500; color:#3E3733; margin-top:9px">Deep Teal</div><div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#A39B93">#2D7A7A</div><div style="font-size:11.5px; color:#8A8178; margin-top:3px">Primary action, links, active nav</div></div>
+    <div style="background:#FFFFFF; border:1px solid #EDE5DB; border-radius:10px; padding:10px"><div style="height:56px; border-radius:7px; background:#256868"></div><div style="font-size:13px; font-weight:500; color:#3E3733; margin-top:9px">Teal — hover</div><div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#A39B93">#256868</div><div style="font-size:11.5px; color:#8A8178; margin-top:3px">Primary button hover</div></div>
+    <div style="background:#FFFFFF; border:1px solid #EDE5DB; border-radius:10px; padding:10px"><div style="height:56px; border-radius:7px; background:#EAF2F1"></div><div style="font-size:13px; font-weight:500; color:#3E3733; margin-top:9px">Teal tint</div><div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#A39B93">#EAF2F1</div><div style="font-size:11.5px; color:#8A8178; margin-top:3px">Info pills, ghost-button hover</div></div>
+    <div style="background:#FFFFFF; border:1px solid #EDE5DB; border-radius:10px; padding:10px"><div style="height:56px; border-radius:7px; background:#F5E6E0"></div><div style="font-size:13px; font-weight:500; color:#3E3733; margin-top:9px">Blush</div><div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#A39B93">#F5E6E0</div><div style="font-size:11.5px; color:#8A8178; margin-top:3px">Selected states, brand tile, tints</div></div>
+    <div style="background:#FFFFFF; border:1px solid #EDE5DB; border-radius:10px; padding:10px"><div style="height:56px; border-radius:7px; background:#9CAF88"></div><div style="font-size:13px; font-weight:500; color:#3E3733; margin-top:9px">Sage</div><div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#A39B93">#9CAF88</div><div style="font-size:11.5px; color:#8A8178; margin-top:3px">Success dots, positive accents</div></div>
+    <div style="background:#FFFFFF; border:1px solid #EDE5DB; border-radius:10px; padding:10px"><div style="height:56px; border-radius:7px; background:#EFF3EA"></div><div style="font-size:13px; font-weight:500; color:#3E3733; margin-top:9px">Sage tint / text</div><div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#A39B93">#EFF3EA · text #5F7350</div><div style="font-size:11.5px; color:#8A8178; margin-top:3px">Success pill bg + label</div></div>
+    <div style="background:#FFFFFF; border:1px solid #EDE5DB; border-radius:10px; padding:10px"><div style="height:56px; border-radius:7px; background:#B76E79"></div><div style="font-size:13px; font-weight:500; color:#3E3733; margin-top:9px">Rose Gold</div><div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#A39B93">#B76E79</div><div style="font-size:11.5px; color:#8A8178; margin-top:3px">Errors, bounces — sparing</div></div>
+    <div style="background:#FFFFFF; border:1px solid #EDE5DB; border-radius:10px; padding:10px"><div style="height:56px; border-radius:7px; background:#F7E9EA"></div><div style="font-size:13px; font-weight:500; color:#3E3733; margin-top:9px">Rose tint / text</div><div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#A39B93">#F7E9EA · text #9A5762</div><div style="font-size:11.5px; color:#8A8178; margin-top:3px">Error pill bg + label</div></div>
+    <div style="background:#FFFFFF; border:1px solid #EDE5DB; border-radius:10px; padding:10px"><div style="height:56px; border-radius:7px; background:#FAF8F5; border:1px solid #F0E9E0"></div><div style="font-size:13px; font-weight:500; color:#3E3733; margin-top:9px">Ivory</div><div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#A39B93">#FAF8F5</div><div style="font-size:11.5px; color:#8A8178; margin-top:3px">App background</div></div>
+    <div style="background:#FFFFFF; border:1px solid #EDE5DB; border-radius:10px; padding:10px"><div style="height:56px; border-radius:7px; background:#FFFFFF; border:1px solid #F0E9E0"></div><div style="font-size:13px; font-weight:500; color:#3E3733; margin-top:9px">Surface</div><div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#A39B93">#FFFFFF</div><div style="font-size:11.5px; color:#8A8178; margin-top:3px">Cards, tables, sidebar</div></div>
+    <div style="background:#FFFFFF; border:1px solid #EDE5DB; border-radius:10px; padding:10px"><div style="height:56px; border-radius:7px; background:#E3DAD1"></div><div style="font-size:13px; font-weight:500; color:#3E3733; margin-top:9px">Border — strong</div><div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#A39B93">#E3DAD1</div><div style="font-size:11.5px; color:#8A8178; margin-top:3px">Inputs, secondary buttons</div></div>
+    <div style="background:#FFFFFF; border:1px solid #EDE5DB; border-radius:10px; padding:10px"><div style="height:56px; border-radius:7px; background:#EFE8DF"></div><div style="font-size:13px; font-weight:500; color:#3E3733; margin-top:9px">Border — soft</div><div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#A39B93">#EFE8DF · rows #F4EEE6</div><div style="font-size:11.5px; color:#8A8178; margin-top:3px">Cards, dividers, table rows</div></div>
+    <div style="background:#FFFFFF; border:1px solid #EDE5DB; border-radius:10px; padding:10px"><div style="height:56px; border-radius:7px; background:#3E3733"></div><div style="font-size:13px; font-weight:500; color:#3E3733; margin-top:9px">Heading</div><div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#A39B93">#3E3733</div><div style="font-size:11.5px; color:#8A8178; margin-top:3px">Titles, emphasis — never #000</div></div>
+    <div style="background:#FFFFFF; border:1px solid #EDE5DB; border-radius:10px; padding:10px"><div style="height:56px; border-radius:7px; background:#4A4A4A"></div><div style="font-size:13px; font-weight:500; color:#3E3733; margin-top:9px">Text</div><div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#A39B93">#4A4A4A</div><div style="font-size:11.5px; color:#8A8178; margin-top:3px">Body copy</div></div>
+    <div style="background:#FFFFFF; border:1px solid #EDE5DB; border-radius:10px; padding:10px"><div style="height:56px; border-radius:7px; background:#8A8178"></div><div style="font-size:13px; font-weight:500; color:#3E3733; margin-top:9px">Text — muted</div><div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#A39B93">#8A8178</div><div style="font-size:11.5px; color:#8A8178; margin-top:3px">Secondary copy, metadata</div></div>
+    <div style="background:#FFFFFF; border:1px solid #EDE5DB; border-radius:10px; padding:10px"><div style="height:56px; border-radius:7px; background:#B3AAA0"></div><div style="font-size:13px; font-weight:500; color:#3E3733; margin-top:9px">Text — faint</div><div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#A39B93">#B3AAA0</div><div style="font-size:11.5px; color:#8A8178; margin-top:3px">Overlines, table headers, hints</div></div>
+  </div>
+
+  <div style="font-size:11px; font-weight:500; letter-spacing:.14em; text-transform:uppercase; color:#B3AAA0; margin:48px 0 0; padding-bottom:10px; border-bottom:1px solid #EFE8DF">Typography</div>
+  <div style="display:grid; grid-template-columns:1fr 300px; gap:20px; align-items:baseline; padding:18px 0; border-bottom:1px solid #F4EEE6">
+    <div style="font-family:'Cormorant Garamond',Georgia,serif; font-size:30px; font-weight:600; color:#3E3733">Journeys</div>
+    <div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#8A8178">display · Cormorant Garamond 600 · 30/36 — page titles only</div>
+  </div>
+  <div style="display:grid; grid-template-columns:1fr 300px; gap:20px; align-items:baseline; padding:16px 0; border-bottom:1px solid #F4EEE6">
+    <div style="font-family:'Cormorant Garamond',Georgia,serif; font-size:22px; font-weight:600; color:#3E3733">Refill reminder — 30 day</div>
+    <div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#8A8178">title · Cormorant Garamond 600 · 22/28 — detail headers</div>
+  </div>
+  <div style="display:grid; grid-template-columns:1fr 300px; gap:20px; align-items:baseline; padding:16px 0; border-bottom:1px solid #F4EEE6">
+    <div style="font-size:14.5px; font-weight:500; color:#3E3733">Include people who match</div>
+    <div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#8A8178">heading · DM Sans 500 · 14.5/20 — card and section headers</div>
+  </div>
+  <div style="display:grid; grid-template-columns:1fr 300px; gap:20px; align-items:baseline; padding:16px 0; border-bottom:1px solid #F4EEE6">
+    <div style="font-size:14px; line-height:1.5">Automated flows triggered by patient events and segments.</div>
+    <div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#8A8178">body · DM Sans 400 · 14/21 — 13.5 in tables and controls</div>
+  </div>
+  <div style="display:grid; grid-template-columns:1fr 300px; gap:20px; align-items:baseline; padding:16px 0; border-bottom:1px solid #F4EEE6">
+    <div style="font-size:12.5px; color:#8A8178">8,412 people · excludes suppressed and bounced addresses</div>
+    <div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#8A8178">caption · DM Sans 400 · 12.5/17 · #8A8178 — metadata, helper text</div>
+  </div>
+  <div style="display:grid; grid-template-columns:1fr 300px; gap:20px; align-items:baseline; padding:16px 0; border-bottom:1px solid #F4EEE6">
+    <div style="font-size:10.5px; font-weight:500; letter-spacing:.12em; text-transform:uppercase; color:#B3AAA0">Last computed</div>
+    <div style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#8A8178">overline · DM Sans 500 · 10.5 caps · tracking .12em — labels, table headers</div>
+  </div>
+  <div style="font-size:12.5px; color:#8A8178; margin-top:14px">Cormorant Garamond is reserved for page and detail titles. Tables, forms, buttons, and all email body copy stay in DM Sans. Metrics use <span style="font-family:ui-monospace, Menlo, monospace; font-size:11.5px">font-variant-numeric: tabular-nums</span>.</div>
+
+  <div style="font-size:11px; font-weight:500; letter-spacing:.14em; text-transform:uppercase; color:#B3AAA0; margin:48px 0 0; padding-bottom:10px; border-bottom:1px solid #EFE8DF">Spacing · Radii · Shadows</div>
+  <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:28px; margin-top:18px">
+    <div>
+      <div style="font-size:12.5px; font-weight:500; color:#3E3733; margin-bottom:12px">Spacing — 4px unit</div>
+      <div style="display:flex; flex-direction:column; gap:9px">
+        <div style="display:flex; align-items:center; gap:12px"><span style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#8A8178; width:74px">space-1 · 4</span><span style="width:4px; height:18px; background:#EAD9CF; border-radius:2px"></span></div>
+        <div style="display:flex; align-items:center; gap:12px"><span style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#8A8178; width:74px">space-2 · 8</span><span style="width:8px; height:18px; background:#EAD9CF; border-radius:2px"></span></div>
+        <div style="display:flex; align-items:center; gap:12px"><span style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#8A8178; width:74px">space-3 · 12</span><span style="width:12px; height:18px; background:#EAD9CF; border-radius:2px"></span></div>
+        <div style="display:flex; align-items:center; gap:12px"><span style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#8A8178; width:74px">space-4 · 16</span><span style="width:16px; height:18px; background:#EAD9CF; border-radius:2px"></span></div>
+        <div style="display:flex; align-items:center; gap:12px"><span style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#8A8178; width:74px">space-6 · 24</span><span style="width:24px; height:18px; background:#EAD9CF; border-radius:2px"></span></div>
+        <div style="display:flex; align-items:center; gap:12px"><span style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#8A8178; width:74px">space-8 · 32</span><span style="width:32px; height:18px; background:#EAD9CF; border-radius:2px"></span></div>
+        <div style="display:flex; align-items:center; gap:12px"><span style="font-family:ui-monospace, Menlo, monospace; font-size:11px; color:#8A8178; width:74px">space-12 · 48</span><span style="width:48px; height:18px; background:#EAD9CF; border-radius:2px"></span></div>
+      </div>
+    </div>
+    <div>
+      <div style="font-size:12.5px; font-weight:500; color:#3E3733; margin-bottom:12px">Radii</div>
+      <div style="display:flex; gap:12px; flex-wrap:wrap">
+        <div style="text-align:center"><div style="width:58px; height:58px; background:#FFFFFF; border:1px solid #E3DAD1; border-radius:8px"></div><div style="font-family:ui-monospace, Menlo, monospace; font-size:10.5px; color:#8A8178; margin-top:6px">8 · controls</div></div>
+        <div style="text-align:center"><div style="width:58px; height:58px; background:#FFFFFF; border:1px solid #E3DAD1; border-radius:10px"></div><div style="font-family:ui-monospace, Menlo, monospace; font-size:10.5px; color:#8A8178; margin-top:6px">10 · nodes</div></div>
+        <div style="text-align:center"><div style="width:58px; height:58px; background:#FFFFFF; border:1px solid #E3DAD1; border-radius:12px"></div><div style="font-family:ui-monospace, Menlo, monospace; font-size:10.5px; color:#8A8178; margin-top:6px">12 · cards</div></div>
+        <div style="text-align:center"><div style="width:82px; height:30px; background:#FFFFFF; border:1px solid #E3DAD1; border-radius:999px; margin-top:14px"></div><div style="font-family:ui-monospace, Menlo, monospace; font-size:10.5px; color:#8A8178; margin-top:20px">999 · pills</div></div>
+      </div>
+    </div>
+    <div>
+      <div style="font-size:12.5px; font-weight:500; color:#3E3733; margin-bottom:12px">Shadows — warm, never grey-blue</div>
+      <div style="display:flex; flex-direction:column; gap:14px">
+        <div><div style="height:44px; background:#FFFFFF; border-radius:10px; box-shadow:0 1px 2px rgba(74,58,52,.05)"></div><div style="font-family:ui-monospace, Menlo, monospace; font-size:10px; color:#A39B93; margin-top:5px">sm · 0 1 2 rgba(74,58,52,.05)</div></div>
+        <div><div style="height:44px; background:#FFFFFF; border-radius:10px; box-shadow:0 1px 2px rgba(74,58,52,.04), 0 6px 18px rgba(74,58,52,.06)"></div><div style="font-family:ui-monospace, Menlo, monospace; font-size:10px; color:#A39B93; margin-top:5px">md · + 0 6 18 rgba(74,58,52,.06)</div></div>
+        <div><div style="height:44px; background:#FFFFFF; border-radius:10px; box-shadow:0 4px 10px rgba(74,58,52,.06), 0 18px 44px rgba(74,58,52,.12)"></div><div style="font-family:ui-monospace, Menlo, monospace; font-size:10px; color:#A39B93; margin-top:5px">lg · modals, popovers</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div style="font-size:11px; font-weight:500; letter-spacing:.14em; text-transform:uppercase; color:#B3AAA0; margin:48px 0 0; padding-bottom:10px; border-bottom:1px solid #EFE8DF">Components</div>
+  <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:18px">
+    <button style="background:#2D7A7A; color:#FFFFFF; border:none; border-radius:8px; padding:10px 16px; font-family:'DM Sans',sans-serif; font-size:13.5px; font-weight:500; cursor:pointer; box-shadow:0 1px 2px rgba(45,90,90,.2)" style-hover="background:#256868">Primary — one per screen</button>
+    <button style="background:#FFFFFF; color:#4A4A4A; border:1px solid #E3DAD1; border-radius:8px; padding:9px 14px; font-family:'DM Sans',sans-serif; font-size:13.5px; font-weight:500; cursor:pointer" style-hover="background:#FAF6F1">Secondary</button>
+    <button style="background:transparent; border:none; color:#2D7A7A; font-family:'DM Sans',sans-serif; font-size:13.5px; font-weight:500; cursor:pointer; padding:9px 10px; border-radius:8px" style-hover="background:#EAF2F1">+ Ghost</button>
+    <button style="background:#B76E79; color:#FFFFFF; border:none; border-radius:8px; padding:10px 16px; font-family:'DM Sans',sans-serif; font-size:13.5px; font-weight:500; cursor:pointer" style-hover="background:#A55F6A">Destructive</button>
+    <input type="text" value="Search journeys…" style="padding:9px 12px; border:1px solid #E3DAD1; border-radius:8px; background:#FFFFFF; font-family:'DM Sans',sans-serif; font-size:13.5px; color:#4A4A4A; outline:none; width:190px" style-focus="border-color:#2D7A7A; box-shadow:0 0 0 3px rgba(45,122,122,.14)">
+    <select style="padding:9px 12px; border:1px solid #E3DAD1; border-radius:8px; background:#FFFFFF; font-family:'DM Sans',sans-serif; font-size:13.5px; color:#4A4A4A; outline:none"><option>All statuses</option></select>
+  </div>
+  <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:16px">
+    <span style="display:inline-flex; align-items:center; gap:6px; padding:3px 10px 3px 8px; border-radius:999px; font-size:11.5px; font-weight:500; background:#EFF3EA; color:#5F7350"><span style="width:6px; height:6px; border-radius:999px; background:#9CAF88"></span>Running</span>
+    <span style="display:inline-flex; align-items:center; gap:6px; padding:3px 10px 3px 8px; border-radius:999px; font-size:11.5px; font-weight:500; background:#EAF2F1; color:#2D7A7A"><span style="width:6px; height:6px; border-radius:999px; background:#2D7A7A"></span>Scheduled</span>
+    <span style="display:inline-flex; align-items:center; gap:6px; padding:3px 10px 3px 8px; border-radius:999px; font-size:11.5px; font-weight:500; background:#F7E9EA; color:#9A5762"><span style="width:6px; height:6px; border-radius:999px; background:#B76E79"></span>Bounced</span>
+    <span style="display:inline-flex; align-items:center; gap:6px; padding:3px 10px 3px 8px; border-radius:999px; font-size:11.5px; font-weight:500; background:#F1EAE1; color:#8A8178"><span style="width:6px; height:6px; border-radius:999px; background:#BBB1A6"></span>Draft</span>
+    <span style="position:relative; width:38px; height:21px; border-radius:999px; background:#2D7A7A; display:inline-block"><span style="position:absolute; top:2px; left:0; width:17px; height:17px; border-radius:999px; background:#FFFFFF; box-shadow:0 1px 2px rgba(74,58,52,.2); transform:translateX(19px)"></span></span>
+    <span style="position:relative; width:38px; height:21px; border-radius:999px; background:#DAD2C8; display:inline-block"><span style="position:absolute; top:2px; left:0; width:17px; height:17px; border-radius:999px; background:#FFFFFF; box-shadow:0 1px 2px rgba(74,58,52,.2); transform:translateX(2px)"></span></span>
+    <div style="width:190px; background:#FFFFFF; border:1px solid #EDE5DB; border-radius:12px; box-shadow:0 1px 2px rgba(74,58,52,.04), 0 6px 18px rgba(74,58,52,.05); padding:13px 14px">
+      <div style="font-size:10.5px; font-weight:500; letter-spacing:.12em; text-transform:uppercase; color:#B3AAA0">Delivered</div>
+      <div style="font-size:22px; font-weight:700; color:#3E3733; font-variant-numeric:tabular-nums; margin-top:4px">12,166</div>
+      <div style="font-size:11.5px; color:#5F7350; margin-top:2px">↑ 8.0% vs prev</div>
+    </div>
+  </div>
+
+  <div style="font-size:11px; font-weight:500; letter-spacing:.14em; text-transform:uppercase; color:#B3AAA0; margin:48px 0 0; padding-bottom:10px; border-bottom:1px solid #EFE8DF">MUI theme mapping</div>
+  <div style="background:#FBF8F4; border:1px solid #EDE5DB; border-radius:12px; padding:18px 20px; margin-top:16px; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11.5px; line-height:1.9; color:#6B635B">
+    <div>palette.primary.main <span style="color:#B3AAA0">→</span> <span style="color:#2D7A7A">'#2D7A7A'</span> · palette.success.main <span style="color:#B3AAA0">→</span> <span style="color:#2D7A7A">'#9CAF88'</span> · palette.error.main <span style="color:#B3AAA0">→</span> <span style="color:#2D7A7A">'#B76E79'</span></div>
+    <div>palette.background <span style="color:#B3AAA0">→</span> { default: <span style="color:#2D7A7A">'#FAF8F5'</span>, paper: <span style="color:#2D7A7A">'#FFFFFF'</span> } · palette.divider <span style="color:#B3AAA0">→</span> <span style="color:#2D7A7A">'#EFE8DF'</span></div>
+    <div>palette.text <span style="color:#B3AAA0">→</span> { primary: <span style="color:#2D7A7A">'#4A4A4A'</span>, secondary: <span style="color:#2D7A7A">'#8A8178'</span> } · shape.borderRadius <span style="color:#B3AAA0">→</span> <span style="color:#2D7A7A">8</span></div>
+    <div>typography.h1–h4.fontFamily <span style="color:#B3AAA0">→</span> <span style="color:#2D7A7A">'Cormorant Garamond'</span> · everything else <span style="color:#B3AAA0">→</span> <span style="color:#2D7A7A">'DM Sans'</span></div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

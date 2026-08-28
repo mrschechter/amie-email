@@ -5,24 +5,22 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-// material-ui
-import { useTheme } from "@mui/material/styles";
 import Link from "next/link";
 import { useRouter } from "next/router";
 
 import { useAppStore } from "../../../../../lib/appStore";
+import tokens from "../../../../../themeCustomization/tokens";
 // project import
 import { MenuItem } from "../../../../menuItems/types";
 
 // ==============================|| NAVIGATION - LIST ITEM ||============================== //
 
 function NavItem({ item, level }: { level: number; item: MenuItem }) {
-  const theme = useTheme();
   const Icon = item.icon;
   const path = useRouter();
   const isSelected = item.url === path.asPath;
   const drawerOpen = useAppStore((state) => state.drawerOpen);
-  const textColor = "text.primary";
+  const textColor = tokens.colors.navText;
   const iconSelectedColor = "primary.main";
   const description = item.disabled
     ? `Coming Soon: ${item.description}`
@@ -38,16 +36,18 @@ function NavItem({ item, level }: { level: number; item: MenuItem }) {
           component={item.external ? "a" : Link}
           selected={isSelected}
           sx={{
+            borderRadius: 1,
+            minHeight: 36,
+            mx: 1.5,
             zIndex: 1201,
-            pl: drawerOpen ? `${level * 28}px` : 1.5,
-            py: !drawerOpen && level === 1 ? 1.25 : 1,
+            px: 1.5,
+            py: 1,
             ...(drawerOpen && {
               "&:hover": {
-                bgcolor: "primary.lighter",
+                bgcolor: tokens.colors.warmHover,
               },
               "&.Mui-selected": {
                 bgcolor: "primary.lighter",
-                borderRight: `2px solid ${theme.palette.primary.main}`,
                 color: iconSelectedColor,
                 "&:hover": {
                   color: iconSelectedColor,
@@ -99,8 +99,11 @@ function NavItem({ item, level }: { level: number; item: MenuItem }) {
             <ListItemText
               primary={
                 <Typography
-                  variant="h6"
-                  sx={{ color: isSelected ? iconSelectedColor : textColor }}
+                  variant="body2"
+                  sx={{
+                    color: isSelected ? iconSelectedColor : textColor,
+                    fontWeight: isSelected ? 500 : 400,
+                  }}
                 >
                   {item.title}
                 </Typography>

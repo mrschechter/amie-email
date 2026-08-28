@@ -50,8 +50,9 @@ function Header({
     color: "inherit",
     elevation: 0,
     sx: {
+      bgcolor: "background.default",
       borderBottom: `1px solid ${theme.palette.divider}`,
-      boxShadow: theme.customShadows.z1,
+      boxShadow: "none",
     },
   };
 

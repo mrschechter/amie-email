@@ -49,6 +49,7 @@ function MainDrawer({
               boxSizing: "border-box",
               width: drawerWidth,
               borderRight: `1px solid ${theme.palette.divider}`,
+              backgroundColor: theme.palette.background.default,
               backgroundImage: "none",
               boxShadow: "inherit",
             },

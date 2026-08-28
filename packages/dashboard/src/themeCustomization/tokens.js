@@ -1,0 +1,60 @@
+const tokens = {
+  colors: {
+    ivory: "#FAF8F5",
+    surface: "#FFFFFF",
+    surfaceWarm: "#FBF8F4",
+    deepTeal: "#2D7A7A",
+    deepTealHover: "#256868",
+    tealTint: "#EAF2F1",
+    blush: "#F5E6E0",
+    sage: "#9CAF88",
+    sageTint: "#EFF3EA",
+    sageText: "#5F7350",
+    roseGold: "#B76E79",
+    roseGoldHover: "#A55F6A",
+    roseTint: "#F7E9EA",
+    roseText: "#9A5762",
+    heading: "#3E3733",
+    text: "#4A4A4A",
+    navText: "#5C554F",
+    secondaryText: "#6B635B",
+    caption: "#8A8178",
+    faint: "#B3AAA0",
+    hint: "#A39B93",
+    placeholder: "#C6BDB2",
+    borderStrong: "#E3DAD1",
+    borderSoft: "#EFE8DF",
+    borderCard: "#EDE5DB",
+    borderLogin: "#EEE5DB",
+    rowDivider: "#F4EEE6",
+    warmHover: "#F9F1EB",
+    warmControlHover: "#FAF6F1",
+    neutralTint: "#F1EAE1",
+    neutralDot: "#BBB1A6",
+  },
+  typography: {
+    bodyFontFamily: "'DM Sans', sans-serif",
+    displayFontFamily: "'Cormorant Garamond', Georgia, serif",
+  },
+  radii: {
+    control: 8,
+    node: 10,
+    card: 12,
+    pill: 999,
+  },
+  shadows: {
+    small: "0 1px 2px rgba(74,58,52,.05)",
+    medium:
+      "0 1px 2px rgba(74,58,52,.04), 0 6px 18px rgba(74,58,52,.06)",
+    large:
+      "0 4px 10px rgba(74,58,52,.06), 0 18px 44px rgba(74,58,52,.12)",
+    button: "0 1px 2px rgba(45,90,90,.2)",
+    focus: "0 0 0 3px rgba(45,122,122,.14)",
+    login:
+      "0 1px 2px rgba(74,58,52,.04), 0 12px 32px rgba(74,58,52,.07)",
+    text: "0 -1px 0 rgba(74,58,52,.12)",
+    inset: "inset 0 1px 2px rgba(74,58,52,.12)",
+  },
+};
+
+export default tokens;

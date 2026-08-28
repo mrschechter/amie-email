@@ -16,8 +16,8 @@ function DrawerContent() {
       }}
     >
       <>
-        <Navigation />
         <NavCard />
+        <Navigation />
       </>
     </SimpleBar>
   );

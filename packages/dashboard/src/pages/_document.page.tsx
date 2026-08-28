@@ -29,7 +29,7 @@ export default function DittofeedDocument({
         {/* eslint-disable-next-line @next/next/no-page-custom-font */}
         <link
           rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&family=DM+Sans:wght@400;500;700&display=swap"
         />
         <meta name="emotion-insertion-point" content="" />
         {/* disable indexing the dashboard */}

@@ -9,6 +9,12 @@ import Palette from "./palette";
 import Typography from "./typography";
 import CustomShadows from "./shadows";
 import componentsOverride from "./overrides";
+import tokens from "./tokens";
+
+const muiShadows = Array(25).fill(tokens.shadows.large);
+muiShadows[0] = "none";
+muiShadows[1] = tokens.shadows.small;
+muiShadows[2] = tokens.shadows.medium;
 
 // ==============================|| DEFAULT THEME - MAIN  ||============================== //
 
@@ -16,9 +22,7 @@ export default function ThemeCustomization({ children }) {
   const theme = Palette("light", "default");
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const themeTypography = Typography(
-    "Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,Noto Sans,sans-serif,Apple Color Emoji,Segoe UI Emoji,Segoe UI Symbol,Noto Color Emoji",
-  );
+  const themeTypography = Typography();
 
   const themeCustomShadows = useMemo(() => CustomShadows(theme), [theme]);
 
@@ -36,13 +40,15 @@ export default function ThemeCustomization({ children }) {
       direction: "ltr",
       mixins: {
         toolbar: {
-          minHeight: 60,
-          paddingTop: 8,
-          paddingBottom: 8,
+          minHeight: 52,
         },
       },
       palette: theme.palette,
       customShadows: themeCustomShadows,
+      shadows: muiShadows,
+      shape: {
+        borderRadius: tokens.radii.control,
+      },
       typography: themeTypography,
     }),
     [theme, themeTypography, themeCustomShadows],

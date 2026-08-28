@@ -1,57 +1,127 @@
 // material-ui
 import { createTheme } from "@mui/material/styles";
 
-// third-party
-import { presetPalettes } from "@ant-design/colors";
-
 // project import
-import ThemeOption from "./theme";
+import tokens from "./tokens";
 
 // ==============================|| DEFAULT THEME - PALETTE  ||============================== //
 
 const Palette = (mode) => {
-  const colors = presetPalettes;
-
-  const greyPrimary = [
-    "#ffffff",
-    "#fafafa",
-    "#f5f5f5",
-    "#f0f0f0",
-    "#d9d9d9",
-    "#bfbfbf",
-    "#8c8c8c",
-    "#595959",
-    "#262626",
-    "#141414",
-    "#000000",
-  ];
-  const greyAscent = ["#fafafa", "#bfbfbf", "#434343", "#1f1f1f"];
-  const greyConstant = ["#fafafb", "#e6ebf1"];
-
-  colors.grey = [...greyPrimary, ...greyAscent, ...greyConstant];
-
-  const paletteColor = ThemeOption(colors);
+  const { colors } = tokens;
 
   return createTheme({
     palette: {
       mode,
       common: {
-        black: "#000",
-        white: "#fff",
+        black: colors.heading,
+        white: colors.surface,
       },
-      ...paletteColor,
+      primary: {
+        50: colors.tealTint,
+        lighter: colors.tealTint,
+        100: colors.tealTint,
+        200: colors.tealTint,
+        light: colors.tealTint,
+        400: colors.deepTeal,
+        main: colors.deepTeal,
+        dark: colors.deepTealHover,
+        700: colors.deepTealHover,
+        darker: colors.deepTealHover,
+        900: colors.deepTealHover,
+        contrastText: colors.surface,
+      },
+      secondary: {
+        lighter: colors.ivory,
+        100: colors.surfaceWarm,
+        200: colors.rowDivider,
+        light: colors.borderSoft,
+        400: colors.borderStrong,
+        main: colors.caption,
+        600: colors.caption,
+        dark: colors.text,
+        800: colors.heading,
+        darker: colors.heading,
+        A100: colors.surface,
+        A200: colors.blush,
+        A300: colors.caption,
+        contrastText: colors.surface,
+      },
+      error: {
+        lighter: colors.roseTint,
+        light: colors.roseGold,
+        main: colors.roseGold,
+        dark: colors.roseGoldHover,
+        darker: colors.roseText,
+        contrastText: colors.surface,
+      },
+      warning: {
+        postIt: colors.blush,
+        postItContrastText: colors.heading,
+        lighter: colors.blush,
+        light: colors.blush,
+        main: colors.roseGold,
+        dark: colors.roseGoldHover,
+        darker: colors.roseText,
+        contrastText: colors.surface,
+      },
+      info: {
+        lighter: colors.tealTint,
+        light: colors.tealTint,
+        main: colors.deepTeal,
+        dark: colors.deepTealHover,
+        darker: colors.deepTealHover,
+        contrastText: colors.surface,
+      },
+      success: {
+        lighter: colors.sageTint,
+        light: colors.sageTint,
+        main: colors.sage,
+        dark: colors.sageText,
+        darker: colors.sageText,
+        contrastText: colors.surface,
+      },
+      grey: {
+        0: colors.surface,
+        50: colors.ivory,
+        100: colors.surfaceWarm,
+        200: colors.rowDivider,
+        300: colors.borderSoft,
+        400: colors.borderStrong,
+        500: colors.faint,
+        600: colors.caption,
+        700: colors.text,
+        800: colors.heading,
+        900: colors.heading,
+        A50: colors.ivory,
+        A100: colors.surface,
+        A200: colors.blush,
+        A400: colors.caption,
+        A700: colors.text,
+        A800: colors.borderCard,
+      },
+      blue: {
+        default: colors.deepTeal,
+        100: colors.tealTint,
+        200: colors.tealTint,
+        300: colors.deepTeal,
+      },
       text: {
-        primary: paletteColor.grey[700],
-        secondary: paletteColor.grey[500],
-        disabled: paletteColor.grey[400],
+        primary: colors.text,
+        secondary: colors.caption,
+        disabled: colors.faint,
       },
       action: {
-        disabled: paletteColor.grey[300],
+        active: colors.text,
+        hover: colors.warmHover,
+        selected: colors.tealTint,
+        disabled: colors.faint,
+        disabledBackground: colors.borderSoft,
+        focus: colors.tealTint,
       },
-      divider: paletteColor.grey[200],
+      divider: colors.borderSoft,
       background: {
-        paper: paletteColor.grey[0],
-        default: paletteColor.grey.A50,
+        paper: colors.surface,
+        default: colors.ivory,
       },
     },
   });

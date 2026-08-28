@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;padding:0;background:#FAF8F5;color:#4A4A4A;font-family:'DM Sans',sans-serif;}
+*{box-sizing:border-box}
+a{color:#2D7A7A;text-decoration:none}
+a:hover{color:#256868;text-decoration:underline}
+::placeholder{color:#C6BDB2}
+input,button{font-family:'DM Sans',sans-serif}
+</style>
+</helmet>
+<div data-screen-label="Login" style="min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:24px; background:radial-gradient(640px 420px at 50% 28%, #F5E6E0 0%, rgba(245,230,224,0) 70%), #FAF8F5">
+  <div style="width:46px; height:46px; border-radius:12px; background:#F5E6E0; display:flex; align-items:center; justify-content:center; font-family:'Cormorant Garamond',Georgia,serif; font-size:25px; font-weight:600; color:#2D7A7A; box-shadow:0 1px 2px rgba(74,58,52,.06)">A</div>
+  <div style="font-family:'Cormorant Garamond',Georgia,serif; font-size:34px; font-weight:600; color:#3E3733; margin-top:14px">Amie Send</div>
+  <div style="font-size:13.5px; color:#8A8178; margin-top:4px">Internal email platform</div>
+  <div style="width:380px; max-width:100%; background:#FFFFFF; border:1px solid #EEE5DB; border-radius:14px; box-shadow:0 1px 2px rgba(74,58,52,.04), 0 12px 32px rgba(74,58,52,.07); padding:26px 26px 24px; margin-top:28px">
+    <div style="font-size:12.5px; font-weight:500; color:#6B635B; margin-bottom:8px">Workspace password</div>
+    <input type="password" placeholder="••••••••••" style="width:100%; padding:11px 13px; border:1px solid #E3DAD1; border-radius:8px; background:#FFFFFF; font-size:14px; color:#4A4A4A; outline:none; transition:border-color .12s, box-shadow .12s" style-focus="border-color:#2D7A7A; box-shadow:0 0 0 3px rgba(45,122,122,.14)">
+    <button style="width:100%; margin-top:14px; background:#2D7A7A; color:#FFFFFF; border:none; border-radius:8px; padding:11px 16px; font-size:14px; font-weight:500; cursor:pointer; box-shadow:0 1px 2px rgba(45,90,90,.2); transition:background .12s" style-hover="background:#256868">Sign in</button>
+    <div style="font-size:11.5px; color:#A39B93; margin-top:14px; text-align:center">Shared with the marketing and CX team only.</div>
+  </div>
+  <div style="font-size:11.5px; color:#B3AAA0; margin-top:36px">email.tryamie.com · an internal tool by Amie</div>
+</div>
+</x-dc>
+</body>
+</html>

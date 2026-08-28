@@ -1,4 +1,5 @@
 // project import
+import AmieSend from "./AmieSend";
 import Badge from "./Badge";
 import Button from "./Button";
 import CardContent from "./CardContent";
@@ -30,5 +31,6 @@ export default function ComponentsOverrides(theme) {
     TableCell(theme),
     Tabs(),
     Typography(),
+    AmieSend(theme),
   );
 }

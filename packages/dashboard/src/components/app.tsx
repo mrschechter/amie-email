@@ -38,6 +38,7 @@ declare module "@mui/material/styles" {
     typography: {
       htmlFontSize: string;
       fontFamily: string;
+      displayFontFamily: string;
       fontWeightLight: string;
       fontWeightRegular: string;
       fontWeightMedium: string;
@@ -224,7 +225,9 @@ export default function App({
     <StoreProvider createStore={createStore}>
       <EmotionCacheProvider value={emotionCache}>
         <Head>
+          <title>Amie Send</title>
           <meta name="viewport" content="initial-scale=1, width=device-width" />
+          <link rel="icon" type="image/svg+xml" href="/dashboard/favicon.svg" />
         </Head>
         <ThemeCustomization>
           <SnackbarProvider preventDuplicate>

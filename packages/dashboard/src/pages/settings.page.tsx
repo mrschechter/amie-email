@@ -379,7 +379,7 @@ function getMenuItems(authMode: string | undefined): MenuItemGroup[] {
           title: "Public Write Key",
           type: "item",
           url: `/settings#${settingsSectionIds.writeKey}`,
-          description: "Write key used to submit user data to Dittofeed.",
+          description: "Write key used to submit user data to Amie Send.",
           icon: Create,
         },
         {

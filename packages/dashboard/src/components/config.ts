@@ -1,6 +1,6 @@
 const config = {
   defaultPath: "/",
-  fontFamily: `'Public Sans', sans-serif`,
+  fontFamily: `'DM Sans', sans-serif`,
   i18n: "en",
   miniDrawer: false,
   container: true,
@@ -10,7 +10,7 @@ const config = {
 };
 
 export default config;
-export const drawerWidth = 260;
+export const drawerWidth = 232;
 
 export const twitterColor = "#1DA1F2";
 export const facebookColor = "#3b5998";

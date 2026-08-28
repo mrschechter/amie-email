@@ -134,7 +134,7 @@ const menuItems: { items: MenuItemGroup[] } = {
           icon: MenuBookOutlined,
           external: true,
           description:
-            "Documentation with instructions and guidelines on how to use Dittofeed.",
+            "Documentation with instructions and guidelines on how to use Amie Send.",
         },
         {
           id: "contact",
