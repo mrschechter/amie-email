@@ -118,6 +118,22 @@ function fieldValue(block: AmieBlockSpec, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
+function swapBlocks(
+  blocks: AmieBlockSpec[],
+  firstIndex: number,
+  secondIndex: number,
+): AmieBlockSpec[] {
+  const first = blocks[firstIndex];
+  const second = blocks[secondIndex];
+  if (first === undefined || second === undefined) {
+    return blocks;
+  }
+  const next = [...blocks];
+  next[firstIndex] = second;
+  next[secondIndex] = first;
+  return next;
+}
+
 function escapePreviewText(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -774,14 +790,9 @@ export default function AmieComposer({
                               size="small"
                               disabled={index === 0}
                               onClick={() =>
-                                editBlocks((current) => {
-                                  const next = [...current];
-                                  [next[index - 1], next[index]] = [
-                                    next[index],
-                                    next[index - 1],
-                                  ];
-                                  return next;
-                                })
+                                editBlocks((current) =>
+                                  swapBlocks(current, index - 1, index),
+                                )
                               }
                             >
                               <ArrowUpward fontSize="small" />
@@ -794,14 +805,9 @@ export default function AmieComposer({
                               size="small"
                               disabled={index === blocks.length - 1}
                               onClick={() =>
-                                editBlocks((current) => {
-                                  const next = [...current];
-                                  [next[index], next[index + 1]] = [
-                                    next[index + 1],
-                                    next[index],
-                                  ];
-                                  return next;
-                                })
+                                editBlocks((current) =>
+                                  swapBlocks(current, index, index + 1),
+                                )
                               }
                             >
                               <ArrowDownward fontSize="small" />
