@@ -131,6 +131,27 @@ export const AmieComposeResponse = strictObject({
 
 export type AmieComposeResponse = Static<typeof AmieComposeResponse>;
 
+export const AmieAssembleRequest = strictObject({
+  workspaceId: Type.String(),
+  blocks: Type.Array(AmieBlockSpec),
+});
+
+export type AmieAssembleRequest = Static<typeof AmieAssembleRequest>;
+
+export const AmieAssembleResponse = strictObject({
+  html: Type.String(),
+});
+
+export type AmieAssembleResponse = Static<typeof AmieAssembleResponse>;
+
+export const AmieComposerConfigResponse = strictObject({
+  enabled: Type.Boolean(),
+});
+
+export type AmieComposerConfigResponse = Static<
+  typeof AmieComposerConfigResponse
+>;
+
 export enum AmieComposerReasonCode {
   Disabled = "AMIE_COMPOSER_DISABLED",
   InvalidModelResponse = "AMIE_COMPOSER_INVALID_MODEL_RESPONSE",

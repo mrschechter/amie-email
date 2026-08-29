@@ -1,4 +1,5 @@
 import AddIcon from "@mui/icons-material/Add";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import CloseIcon from "@mui/icons-material/Close";
 import DeleteIcon from "@mui/icons-material/Delete";
 import {
@@ -32,6 +33,8 @@ import Link from "next/link";
 import React, { useMemo } from "react";
 
 import { useAppStorePick } from "../../lib/appStore";
+import { useUniversalRouter } from "../../lib/authModeProvider";
+import { useAmieComposerConfigQuery } from "../../lib/useAmieComposerConfigQuery";
 import EmailPreviewHeader from "../emailPreviewHeader";
 import TemplateEditor, {
   DraftToPreview,
@@ -442,6 +445,8 @@ export default function EmailEditor({
   messageTemplateConfiguration?: Omit<MessageTemplateConfiguration, "type">;
 }) {
   const theme = useTheme();
+  const universalRouter = useUniversalRouter();
+  const composerConfig = useAmieComposerConfigQuery();
   const disabledStyles: SxProps<Theme> = {
     "& .MuiInputBase-input.Mui-disabled": {
       WebkitTextFillColor: theme.palette.grey[600],
@@ -461,6 +466,20 @@ export default function EmailEditor({
       hideTitle={hideTitle}
       hidePublisher={hidePublisher}
       mode={mode}
+      headerAction={
+        composerConfig.data?.enabled && !disabled ? (
+          <Button
+            variant="contained"
+            size="small"
+            startIcon={<AutoAwesomeIcon />}
+            onClick={() =>
+              universalRouter.push(`/templates/email/${messageId}/compose`)
+            }
+          >
+            Compose with AI
+          </Button>
+        ) : null
+      }
       renderEditorOptions={(params) => <EmailOptions {...params} />}
       renderEditorHeader={({ draft, setDraft }) => {
         if (draft.type !== ChannelType.Email) {

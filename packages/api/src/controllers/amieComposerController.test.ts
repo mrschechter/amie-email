@@ -1,6 +1,8 @@
 import { InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
 import fastify from "fastify";
 import {
+  AmieAssembleResponse,
+  AmieComposerConfigResponse,
   AmieComposerErrorResponse,
   AmieComposerReasonCode,
   AmieComposeResponse,
@@ -30,6 +32,50 @@ function bedrockText(text: string): Uint8Array {
 }
 
 describe("amieComposerController", () => {
+  it("exposes the enabled flag without invoking Bedrock", async () => {
+    const send = bedrockSendMock();
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      bedrockClient: { send },
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/compose/config",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<AmieComposerConfigResponse>()).toEqual({
+      enabled: true,
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("assembles validated blocks without invoking Bedrock", async () => {
+    const send = bedrockSendMock();
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      bedrockClient: { send },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose/assemble",
+      payload: {
+        workspaceId: "workspace-1",
+        blocks: [{ type: "paragraph", params: { text: "Edited locally." } }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<AmieAssembleResponse>().html).toContain(
+      "Edited locally.",
+    );
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("invokes Bedrock and returns validated blocks with assembled HTML", async () => {
     const send = bedrockSendMock().mockResolvedValue({
       body: bedrockBody({

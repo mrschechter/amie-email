@@ -8,7 +8,10 @@ import { assembleEmail } from "backend-lib/src/messaging/amieBlocks";
 import { extractFirstJsonObject } from "backend-lib/src/messaging/amieComposer";
 import { FastifyInstance } from "fastify";
 import {
+  AmieAssembleRequest,
+  AmieAssembleResponse,
   AmieComposeRequest,
+  AmieComposerConfigResponse,
   AmieComposerErrorResponse,
   AmieComposerModelOutput,
   AmieComposerReasonCode,
@@ -274,6 +277,46 @@ export default async function amieComposerController(
   const bedrockClient =
     options.bedrockClient ??
     new BedrockRuntimeClient({ region: BEDROCK_REGION });
+
+  fastify.withTypeProvider<TypeBoxTypeProvider>().get(
+    "/compose/config",
+    {
+      schema: {
+        description: "Get the Amie composer feature configuration.",
+        tags: ["Content"],
+        response: {
+          200: AmieComposerConfigResponse,
+        },
+      },
+    },
+    async (_request, reply) => reply.status(200).send({ enabled }),
+  );
+
+  fastify.withTypeProvider<TypeBoxTypeProvider>().post(
+    "/compose/assemble",
+    {
+      schema: {
+        description: "Assemble Amie email blocks without invoking a model.",
+        tags: ["Content"],
+        body: AmieAssembleRequest,
+        response: {
+          200: AmieAssembleResponse,
+          503: AmieComposerErrorResponse,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!enabled) {
+        return reply.status(503).send({
+          message: "Amie composer is disabled.",
+          reasonCode: AmieComposerReasonCode.Disabled,
+        });
+      }
+      return reply.status(200).send({
+        html: assembleEmail(request.body.blocks),
+      });
+    },
+  );
 
   fastify.withTypeProvider<TypeBoxTypeProvider>().post(
     "/compose",

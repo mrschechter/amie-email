@@ -342,6 +342,7 @@ export interface TemplateEditorProps {
   renderEditorHeader: RenderEditorSection;
   renderEditorBody: RenderEditorSection;
   renderEditorOptions?: RenderEditorSection;
+  headerAction?: React.ReactNode;
   draftToPreview: DraftToPreview;
   fieldToReadable: (field: string) => string | null;
   mode?: TemplateEditorMode;
@@ -363,6 +364,7 @@ export default function TemplateEditor({
   fieldToReadable,
   draftToPreview,
   renderEditorOptions,
+  headerAction,
   mode = ModeEnum.Full,
   defaultIsUserPropertiesMinimised = false,
   hideUserPropertiesPanel = false,
@@ -1182,6 +1184,7 @@ export default function TemplateEditor({
           )
         )}
         <Stack direction="row" spacing={1}>
+          {headerAction}
           {renderEditorOptions && renderEditorOptions(renderEditorParams)}
           <SettingsMenu commands={commands} />
           {fullscreen === null ? (

@@ -2,6 +2,7 @@ import {
   Add as AddIcon,
   ArrowDownward,
   ArrowUpward,
+  AutoAwesome,
   Computer,
   ContentCopy as ContentCopyIcon,
   Delete as DeleteIcon,
@@ -72,6 +73,7 @@ import { v4 as uuid } from "uuid";
 import { useAppStorePick } from "../../lib/appStore";
 import { useUniversalRouter } from "../../lib/authModeProvider";
 import { getDefaultMessageTemplateDefinition } from "../../lib/defaultTemplateDefinition";
+import { useAmieComposerConfigQuery } from "../../lib/useAmieComposerConfigQuery";
 import {
   DeleteMessageTemplateVariables,
   useDeleteMessageTemplateMutation,
@@ -368,6 +370,7 @@ export default function TemplatesTable({
 }) {
   const universalRouter = useUniversalRouter();
   const { workspace } = useAppStorePick(["workspace"]);
+  const composerConfig = useAmieComposerConfigQuery();
 
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState("");
@@ -555,6 +558,17 @@ export default function TemplatesTable({
         setSnackbarOpen(true);
       },
     });
+  };
+
+  const handleComposeWithAi = () => {
+    if (!newTemplateName.trim() || selectedChannel !== ChannelType.Email) {
+      return;
+    }
+    universalRouter.push(`/templates/email/${uuid()}/compose`, {
+      name: newTemplateName.trim(),
+      new: "true",
+    });
+    handleCloseDialog();
   };
 
   const columns = useMemo<ColumnDef<Row>[]>(
@@ -933,6 +947,18 @@ export default function TemplatesTable({
             })()}
         </DialogContent>
         <DialogActions>
+          {composerConfig.data?.enabled &&
+            selectedChannel === ChannelType.Email && (
+              <Button
+                variant="outlined"
+                startIcon={<AutoAwesome />}
+                onClick={handleComposeWithAi}
+                disabled={!newTemplateName.trim()}
+                sx={{ mr: "auto" }}
+              >
+                Compose with AI
+              </Button>
+            )}
           <Button onClick={handleCloseDialog}>Cancel</Button>
           <Button
             onClick={handleCreateTemplate}
