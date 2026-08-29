@@ -3,8 +3,9 @@ import {
   InvokeModelCommand,
 } from "@aws-sdk/client-bedrock-runtime";
 import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
-import { assembleEmail } from "backend-lib/src/messaging/amieBlocks";
 import logger from "backend-lib/src/logger";
+import { assembleEmail } from "backend-lib/src/messaging/amieBlocks";
+import { extractFirstJsonObject } from "backend-lib/src/messaging/amieComposer";
 import { FastifyInstance } from "fastify";
 import {
   AmieComposeRequest,
@@ -18,6 +19,10 @@ import { schemaValidate } from "isomorphic-lib/src/resultHandling/schemaValidati
 import config from "../config";
 
 const BEDROCK_REGION = "us-east-1";
+const MAX_MODEL_OUTPUT_TOKENS = 4096;
+const RAW_MODEL_OUTPUT_LOG_LENGTH = 300;
+const CORRECTIVE_INSTRUCTION =
+  "Return ONLY the JSON object, no fences, matching the schema";
 
 export interface BedrockInvoker {
   send(command: InvokeModelCommand): Promise<{ body?: Uint8Array }>;
@@ -30,9 +35,22 @@ export interface AmieComposerControllerOptions {
 }
 
 class ComposerModelError extends Error {
-  constructor(public readonly reasonCode: AmieComposerReasonCode) {
-    super(reasonCode);
+  constructor(
+    public readonly reasonCode: AmieComposerReasonCode,
+    public readonly underlyingError: unknown,
+    public readonly rawModelOutput = "",
+  ) {
+    super(errorMessage(underlyingError));
+    this.name = "ComposerModelError";
   }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function systemPrompt(): string {
@@ -77,15 +95,19 @@ function decodeModelText(body: Uint8Array | undefined): string {
   if (!body) {
     throw new ComposerModelError(
       AmieComposerReasonCode.InvalidModelResponse,
+      new Error("Bedrock response did not include a body"),
     );
   }
 
+  const bodyText = new TextDecoder().decode(body);
   let payload: unknown;
   try {
-    payload = JSON.parse(new TextDecoder().decode(body));
-  } catch {
+    payload = JSON.parse(bodyText);
+  } catch (error) {
     throw new ComposerModelError(
       AmieComposerReasonCode.InvalidModelResponse,
+      error,
+      bodyText,
     );
   }
 
@@ -97,6 +119,8 @@ function decodeModelText(body: Uint8Array | undefined): string {
   ) {
     throw new ComposerModelError(
       AmieComposerReasonCode.InvalidModelResponse,
+      new Error("Bedrock response body did not contain a content array"),
+      bodyText,
     );
   }
 
@@ -112,28 +136,89 @@ function decodeModelText(body: Uint8Array | undefined): string {
   if (!textPart) {
     throw new ComposerModelError(
       AmieComposerReasonCode.InvalidModelResponse,
+      new Error("Bedrock response did not contain a text output"),
+      bodyText,
     );
   }
   return textPart.text;
 }
 
 function parseModelOutput(modelText: string): AmieComposerModelOutput {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(modelText);
-  } catch {
+  const jsonObject = extractFirstJsonObject(modelText);
+  if (jsonObject === null) {
     throw new ComposerModelError(
       AmieComposerReasonCode.InvalidModelResponse,
+      new SyntaxError("Model output did not contain a balanced JSON object"),
+      modelText,
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonObject);
+  } catch (error) {
+    throw new ComposerModelError(
+      AmieComposerReasonCode.InvalidModelResponse,
+      error,
+      modelText,
     );
   }
 
   const validated = schemaValidate(parsed, AmieComposerModelOutput);
   if (validated.isErr()) {
+    const [firstValidationError] = validated.error;
+    const validationDetails = firstValidationError
+      ? ` at ${firstValidationError.path}: ${firstValidationError.message}`
+      : "";
+    const validationError = new Error(
+      `Model output failed schema validation${validationDetails}`,
+    );
+    validationError.name = "SchemaValidationError";
     throw new ComposerModelError(
       AmieComposerReasonCode.InvalidModelResponse,
+      validationError,
+      modelText,
     );
   }
   return validated.value;
+}
+
+async function invokeComposerModel({
+  bedrockClient,
+  modelId,
+  messages,
+  previousModelOutput = "",
+}: {
+  bedrockClient: BedrockInvoker;
+  modelId: string;
+  messages: ReturnType<typeof modelMessages>;
+  previousModelOutput?: string;
+}): Promise<string> {
+  let response: { body?: Uint8Array };
+  try {
+    response = await bedrockClient.send(
+      new InvokeModelCommand({
+        modelId,
+        accept: "application/json",
+        contentType: "application/json",
+        body: JSON.stringify({
+          anthropic_version: "bedrock-2023-05-31",
+          max_tokens: MAX_MODEL_OUTPUT_TOKENS,
+          temperature: 0.3,
+          system: systemPrompt(),
+          messages,
+        }),
+      }),
+    );
+  } catch (error) {
+    throw new ComposerModelError(
+      AmieComposerReasonCode.ModelFailure,
+      error,
+      previousModelOutput,
+    );
+  }
+
+  return decodeModelText(response.body);
 }
 
 export async function composeAmieEmail({
@@ -145,27 +230,34 @@ export async function composeAmieEmail({
   bedrockClient: BedrockInvoker;
   modelId: string;
 }): Promise<AmieComposeResponse> {
-  let response: { body?: Uint8Array };
+  const messages = modelMessages(request);
+  const firstModelOutput = await invokeComposerModel({
+    bedrockClient,
+    modelId,
+    messages,
+  });
+
+  let output: AmieComposerModelOutput;
   try {
-    response = await bedrockClient.send(
-      new InvokeModelCommand({
-        modelId,
-        accept: "application/json",
-        contentType: "application/json",
-        body: JSON.stringify({
-          anthropic_version: "bedrock-2023-05-31",
-          max_tokens: 4096,
-          temperature: 0.3,
-          system: systemPrompt(),
-          messages: modelMessages(request),
-        }),
-      }),
-    );
-  } catch {
-    throw new ComposerModelError(AmieComposerReasonCode.ModelFailure);
+    output = parseModelOutput(firstModelOutput);
+  } catch (error) {
+    if (!(error instanceof ComposerModelError)) {
+      throw error;
+    }
+
+    const retryModelOutput = await invokeComposerModel({
+      bedrockClient,
+      modelId,
+      previousModelOutput: firstModelOutput,
+      messages: [
+        ...messages,
+        { role: "assistant", content: firstModelOutput },
+        { role: "user", content: CORRECTIVE_INSTRUCTION },
+      ],
+    });
+    output = parseModelOutput(retryModelOutput);
   }
 
-  const output = parseModelOutput(decodeModelText(response.body));
   return {
     ...output,
     html: assembleEmail(output.blocks, output.previewText),
@@ -217,8 +309,21 @@ export default async function amieComposerController(
           error instanceof ComposerModelError
             ? error.reasonCode
             : AmieComposerReasonCode.ModelFailure;
+        const underlyingError =
+          error instanceof ComposerModelError ? error.underlyingError : error;
+        const rawModelOutput =
+          error instanceof ComposerModelError ? error.rawModelOutput : "";
         logger().error(
-          { reasonCode, workspaceId: request.body.workspaceId },
+          {
+            reasonCode,
+            workspaceId: request.body.workspaceId,
+            errorName: errorName(underlyingError),
+            errorMessage: errorMessage(underlyingError),
+            rawModelOutputSample: rawModelOutput.slice(
+              0,
+              RAW_MODEL_OUTPUT_LOG_LENGTH,
+            ),
+          },
           "Amie composer request failed",
         );
         return reply.status(502).send({

@@ -18,9 +18,13 @@ function bedrockSendMock() {
 }
 
 function bedrockBody(value: unknown): Uint8Array {
+  return bedrockText(JSON.stringify(value));
+}
+
+function bedrockText(text: string): Uint8Array {
   return new TextEncoder().encode(
     JSON.stringify({
-      content: [{ type: "text", text: JSON.stringify(value) }],
+      content: [{ type: "text", text }],
     }),
   );
 }
@@ -74,6 +78,84 @@ describe("amieComposerController", () => {
     const command: InvokeModelCommand | undefined = send.mock.calls[0]?.[0];
     expect(command).toBeInstanceOf(InvokeModelCommand);
     expect(command?.input.modelId).toBe("test-model");
+    expect(String(command?.input.body)).toContain('"max_tokens":4096');
+  });
+
+  it("accepts a fence-wrapped model response with surrounding prose", async () => {
+    const send = bedrockSendMock().mockResolvedValue({
+      body: bedrockText(
+        [
+          "Here is the requested email:",
+          "```json",
+          JSON.stringify({
+            subject: "A thoughtful hello",
+            previewText: "A note for your day.",
+            blocks: [{ type: "paragraph", params: { text: "Hello there." } }],
+          }),
+          "```",
+        ].join("\n"),
+      ),
+    });
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      bedrockClient: { send },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose",
+      payload: { workspaceId: "workspace-1", prompt: "Compose an email" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<AmieComposeResponse>().subject).toBe(
+      "A thoughtful hello",
+    );
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries once with the failed output and corrective instruction", async () => {
+    const failedOutput = "I could not format the response.";
+    const send = bedrockSendMock()
+      .mockResolvedValueOnce({ body: bedrockText(failedOutput) })
+      .mockResolvedValueOnce({
+        body: bedrockBody({
+          subject: "Corrected response",
+          previewText: "Now valid JSON.",
+          blocks: [{ type: "paragraph", params: { text: "Corrected." } }],
+        }),
+      });
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      bedrockClient: { send },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose",
+      payload: { workspaceId: "workspace-1", prompt: "Compose an email" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<AmieComposeResponse>().subject).toBe(
+      "Corrected response",
+    );
+    expect(send).toHaveBeenCalledTimes(2);
+    const retryCommand: InvokeModelCommand | undefined =
+      send.mock.calls[1]?.[0];
+    const failedOutputMessage = JSON.stringify({
+      role: "assistant",
+      content: failedOutput,
+    });
+    const correctiveMessage = JSON.stringify({
+      role: "user",
+      content: "Return ONLY the JSON object, no fences, matching the schema",
+    });
+    expect(String(retryCommand?.input.body)).toContain(
+      `${failedOutputMessage},${correctiveMessage}`,
+    );
   });
 
   it("rejects unknown model block parameters without rendering them", async () => {
@@ -107,6 +189,7 @@ describe("amieComposerController", () => {
       reasonCode: AmieComposerReasonCode.InvalidModelResponse,
     });
     expect(response.body).not.toContain("<script>");
+    expect(send).toHaveBeenCalledTimes(2);
   });
 
   it("returns a clean reason code when Bedrock fails", async () => {
