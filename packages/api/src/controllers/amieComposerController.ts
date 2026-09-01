@@ -69,7 +69,7 @@ Return STRICT JSON and nothing else. The response must have exactly this shape: 
 BlockSpec JSON Schema:
 ${JSON.stringify(AmieComposerModelOutput.properties.blocks)}
 
-Use only schema-defined block types and parameters. Include a header and footer unless the user's request explicitly says otherwise. Paragraph values are plain text, not HTML. All links and image URLs must begin with http:// or https://. The footer's unsubscribe parameter is the visible link label; the server supplies the platform unsubscribe URL.
+Use only schema-defined block types and parameters. Include a header and footer unless the user's request explicitly says otherwise. Paragraph values are plain text, not HTML. All links and image URLs must begin with http:// or https://. The footer's unsubscribe parameter is the visible link label; the server supplies the platform unsubscribe URL. The server replaces every footer addressLine with the configured mailing address before rendering, so do not invent a mailing address; any addressLine value you emit is ignored.
 
 For a revision, preserve the existing structure and wording wherever possible. Make only the changes requested by the latest user message.`;
 }
