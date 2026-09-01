@@ -4,8 +4,9 @@ import {
   AmieAssembleResponse,
   AmieComposerConfigResponse,
   AmieComposerErrorResponse,
-  AmieComposerReasonCode,
   AmieComposeResponse,
+  AmieComposerReasonCode,
+  AmieSanitizeHtmlResponse,
 } from "isomorphic-lib/src/amieComposer";
 
 import amieComposerController, {
@@ -19,16 +20,16 @@ function bedrockSendMock() {
   >();
 }
 
-function bedrockBody(value: unknown): Uint8Array {
-  return bedrockText(JSON.stringify(value));
-}
-
 function bedrockText(text: string): Uint8Array {
   return new TextEncoder().encode(
     JSON.stringify({
       content: [{ type: "text", text }],
     }),
   );
+}
+
+function bedrockBody(value: unknown): Uint8Array {
+  return bedrockText(JSON.stringify(value));
 }
 
 describe("amieComposerController", () => {
@@ -72,6 +73,87 @@ describe("amieComposerController", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json<AmieAssembleResponse>().html).toContain(
       "Edited locally.",
+    );
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("sanitizes pasted HTML without invoking Bedrock", async () => {
+    const send = bedrockSendMock();
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      bedrockClient: { send },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose/sanitize-html",
+      payload: {
+        workspaceId: "workspace-1",
+        html: [
+          '<table onclick="bad()" onfocus=alsoBad onblur style="width:100%" data-onclick="keep">',
+          "<tr><td>{{ user.firstName }}</td></tr>",
+          "<script>bad()</script>",
+          "</table>",
+        ].join(""),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<AmieSanitizeHtmlResponse>()).toEqual({
+      html: [
+        '<table style="width:100%" data-onclick="keep">',
+        "<tr><td>{{ user.firstName }}</td></tr>",
+        "</table>",
+      ].join(""),
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("removes unclosed script contents from pasted HTML", async () => {
+    const send = bedrockSendMock();
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      bedrockClient: { send },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose/sanitize-html",
+      payload: {
+        workspaceId: "workspace-1",
+        html: "<p>Safe</p><script>alert('bad')",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<AmieSanitizeHtmlResponse>()).toEqual({
+      html: "<p>Safe</p>",
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("applies the composer kill switch to HTML sanitization", async () => {
+    const send = bedrockSendMock();
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: false,
+      bedrockClient: { send },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose/sanitize-html",
+      payload: {
+        workspaceId: "workspace-1",
+        html: "<p>Hello</p>",
+      },
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json<AmieComposerErrorResponse>().reasonCode).toBe(
+      AmieComposerReasonCode.Disabled,
     );
     expect(send).not.toHaveBeenCalled();
   });

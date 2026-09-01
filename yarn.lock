@@ -331,6 +331,7 @@ __metadata:
     "@smithy/util-stream": "npm:^3.0.2"
     "@smithy/util-utf8": "npm:^3.0.0"
     tslib: "npm:^2.6.2"
+  checksum: 10/cdc35248a3924d16e70f2dd02838d67ded95422541a97f14183b2a3f3e2572ebdb4a406e5cf648dc0c5bba11c90caa9c7d8e78f4a84b97095d2603690ce9b944
   languageName: node
   linkType: hard
 

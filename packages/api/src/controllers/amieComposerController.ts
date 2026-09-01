@@ -10,12 +10,15 @@ import { FastifyInstance } from "fastify";
 import {
   AmieAssembleRequest,
   AmieAssembleResponse,
-  AmieComposeRequest,
   AmieComposerConfigResponse,
+  AmieComposeRequest,
   AmieComposerErrorResponse,
+  AmieComposeResponse,
   AmieComposerModelOutput,
   AmieComposerReasonCode,
-  AmieComposeResponse,
+  AmieSanitizeHtmlRequest,
+  AmieSanitizeHtmlResponse,
+  sanitizeAmieHtml,
 } from "isomorphic-lib/src/amieComposer";
 import { schemaValidate } from "isomorphic-lib/src/resultHandling/schemaValidation";
 
@@ -37,6 +40,10 @@ export interface AmieComposerControllerOptions {
   modelId?: string;
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 class ComposerModelError extends Error {
   constructor(
     public readonly reasonCode: AmieComposerReasonCode,
@@ -50,10 +57,6 @@ class ComposerModelError extends Error {
 
 function errorName(error: unknown): string {
   return error instanceof Error ? error.name : typeof error;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function systemPrompt(): string {
@@ -267,6 +270,8 @@ export async function composeAmieEmail({
   };
 }
 
+// Fastify detects the returned promise and completes plugin registration.
+// eslint-disable-next-line @typescript-eslint/require-await
 export default async function amieComposerController(
   fastify: FastifyInstance,
   options: AmieComposerControllerOptions,
@@ -314,6 +319,32 @@ export default async function amieComposerController(
       }
       return reply.status(200).send({
         html: assembleEmail(request.body.blocks),
+      });
+    },
+  );
+
+  fastify.withTypeProvider<TypeBoxTypeProvider>().post(
+    "/compose/sanitize-html",
+    {
+      schema: {
+        description: "Sanitize raw HTML for an Amie email template.",
+        tags: ["Content"],
+        body: AmieSanitizeHtmlRequest,
+        response: {
+          200: AmieSanitizeHtmlResponse,
+          503: AmieComposerErrorResponse,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!enabled) {
+        return reply.status(503).send({
+          message: "Amie composer is disabled.",
+          reasonCode: AmieComposerReasonCode.Disabled,
+        });
+      }
+      return reply.status(200).send({
+        html: sanitizeAmieHtml(request.body.html),
       });
     },
   );
