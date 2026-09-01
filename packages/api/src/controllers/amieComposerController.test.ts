@@ -202,11 +202,15 @@ describe("amieComposerController", () => {
     expect(body.html).toContain("<!doctype html>");
     expect(body.html).toContain("A gentler way to wind down");
     expect(body.html).toContain("{% unsubscribe_url %}");
+    expect(body.html).not.toContain("123 Main St, New York, NY");
     expect(send).toHaveBeenCalledTimes(1);
     const command: InvokeModelCommand | undefined = send.mock.calls[0]?.[0];
     expect(command).toBeInstanceOf(InvokeModelCommand);
     expect(command?.input.modelId).toBe("test-model");
     expect(String(command?.input.body)).toContain('"max_tokens":4096');
+    expect(String(command?.input.body)).toContain(
+      "The server replaces every footer addressLine with the configured mailing address before rendering",
+    );
   });
 
   it("accepts a fence-wrapped model response with surrounding prose", async () => {

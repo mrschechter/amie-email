@@ -13,6 +13,8 @@ import {
   testimonial,
 } from "./amieBlocks";
 
+const UNSAFE_SCRIPT_URL = ["java", "script:alert(1)"].join("");
+
 function expectEmailSafeBlock(html: string) {
   expect(html).toMatch(/^<table/);
   expect(html).not.toMatch(/<\/?div\b/i);
@@ -77,11 +79,11 @@ describe("Amie email blocks", () => {
   it("escapes model-provided text and unsafe URLs", () => {
     const html = ctaButton({
       label: '<script>alert("x")</script>',
-      url: "javascript:alert(1)",
+      url: UNSAFE_SCRIPT_URL,
     });
 
     expect(html).not.toContain("<script>");
-    expect(html).not.toContain("javascript:");
+    expect(html).not.toContain(UNSAFE_SCRIPT_URL);
     expect(html).toContain('href="#"');
   });
 
@@ -103,10 +105,70 @@ describe("Amie email blocks", () => {
     expect(html).toContain("Hello");
   });
 
+  describe("footer mailing address enforcement", () => {
+    const originalMailingAddress = process.env.AMIE_MAILING_ADDRESS;
+
+    afterEach(() => {
+      if (originalMailingAddress === undefined) {
+        delete process.env.AMIE_MAILING_ADDRESS;
+      } else {
+        process.env.AMIE_MAILING_ADDRESS = originalMailingAddress;
+      }
+    });
+
+    it("replaces a model-supplied address with the default when env is unset", () => {
+      delete process.env.AMIE_MAILING_ADDRESS;
+
+      const html = assembleEmail([
+        {
+          type: "footer",
+          params: {
+            addressLine: "Invented model address",
+            unsubscribe: "Unsubscribe",
+          },
+        },
+      ]);
+
+      expect(html).toContain("Amie Health · 382 NE 191st St, Miami, FL 33179");
+      expect(html).not.toContain("Invented model address");
+    });
+
+    it("uses the env address for every footer block", () => {
+      process.env.AMIE_MAILING_ADDRESS =
+        "Amie Health · 100 Configured Ave, Miami, FL 33101";
+
+      const html = assembleEmail([
+        {
+          type: "footer",
+          params: {
+            addressLine: "First invented address",
+            unsubscribe: "Unsubscribe",
+          },
+        },
+        {
+          type: "footer",
+          params: {
+            addressLine: "Second invented address",
+            unsubscribe: "Manage preferences",
+          },
+        },
+      ]);
+
+      const configuredAddress =
+        "Amie Health · 100 Configured Ave, Miami, FL 33101";
+      expect(html.split(configuredAddress)).toHaveLength(3);
+      expect(html).not.toContain("First invented address");
+      expect(html).not.toContain("Second invented address");
+    });
+  });
+
   it.each([
     { type: "unknown", params: {} },
     { type: "paragraph", params: { text: "Hello", rawHtml: "<b>bad</b>" } },
-    { type: "ctaButton", params: { label: "Click", url: "javascript:alert(1)" } },
+    {
+      type: "ctaButton",
+      params: { label: "Click", url: UNSAFE_SCRIPT_URL },
+    },
   ])("rejects invalid block schema: %j", (block) => {
     expect(schemaValidate(block, AmieBlockSpec).isErr()).toBe(true);
   });

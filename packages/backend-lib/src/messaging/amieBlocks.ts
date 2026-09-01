@@ -13,6 +13,8 @@ import { assertUnreachable } from "isomorphic-lib/src/typeAssertions";
 
 const TABLE_RESET =
   "border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;";
+const DEFAULT_AMIE_MAILING_ADDRESS =
+  "Amie Health · 382 NE 191st St, Miami, FL 33179";
 
 function escapeHtml(value: string): string {
   return value
@@ -205,11 +207,19 @@ export function assembleEmail(
   blocks: AmieBlockSpec[],
   previewText = "A thoughtful update from Amie.",
 ): string {
+  const mailingAddress =
+    process.env.AMIE_MAILING_ADDRESS ?? DEFAULT_AMIE_MAILING_ADDRESS;
   const rows = blocks
-    .map(
-      (block) =>
-        `<tr><td style="padding:0;">${renderBlock(block)}</td></tr>`,
-    )
+    .map((block) => {
+      const renderedBlock: AmieBlockSpec =
+        block.type === "footer"
+          ? {
+              ...block,
+              params: { ...block.params, addressLine: mailingAddress },
+            }
+          : block;
+      return `<tr><td style="padding:0;">${renderBlock(renderedBlock)}</td></tr>`;
+    })
     .join("\n");
 
   return `<!doctype html>
