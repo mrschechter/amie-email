@@ -7,9 +7,14 @@ import {
   Send,
 } from "@mui/icons-material";
 import {
+  Alert,
   Box,
   Button,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   IconButton,
   Paper,
   Stack,
@@ -20,13 +25,15 @@ import {
   Typography,
 } from "@mui/material";
 import axios from "axios";
-import { defaultEmailDefinition } from "isomorphic-lib/src/email";
 import {
   AmieAssembleResponse,
   AmieBlockSpec,
   AmieComposeRequest,
   AmieComposeResponse,
+  AmieSanitizeHtmlResponse,
+  sanitizeAmieHtml,
 } from "isomorphic-lib/src/amieComposer";
+import { defaultEmailDefinition } from "isomorphic-lib/src/email";
 import {
   ChannelType,
   CompletionStatus,
@@ -103,7 +110,7 @@ function updateBlockField(
 ): AmieBlockSpec {
   const params: Record<string, unknown> = { ...block.params };
   if (field.optional && value === "") {
-    delete params[field.key];
+    Reflect.deleteProperty(params, field.key);
   } else {
     params[field.key] = value;
   }
@@ -113,8 +120,7 @@ function updateBlockField(
 }
 
 function fieldValue(block: AmieBlockSpec, key: string): string {
-  const params: Record<string, unknown> = block.params;
-  const value = params[key];
+  const value: unknown = Reflect.get(block.params, key);
   return typeof value === "string" ? value : "";
 }
 
@@ -166,6 +172,16 @@ function assistantConfirmation(revision: boolean): ConversationMessage {
   };
 }
 
+function hasLiquidField(value: string): boolean {
+  return /{{[\s\S]*?}}|{%[\s\S]*?%}/.test(value);
+}
+
+function hasUnsubscribeField(value: string): boolean {
+  return /(?:{{[\s\S]*?unsubscribe[\s\S]*?}}|{%[\s\S]*?unsubscribe[\s\S]*?%})/i.test(
+    value,
+  );
+}
+
 export default function AmieComposer({
   templateId,
   templateName,
@@ -203,10 +219,15 @@ export default function AmieComposer({
   const [isAssembling, setIsAssembling] = useState(false);
   const [assembleError, setAssembleError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [isRawHtml, setIsRawHtml] = useState(false);
+  const [pasteHtmlDialogOpen, setPasteHtmlDialogOpen] = useState(false);
+  const [pastedHtml, setPastedHtml] = useState("");
+  const [pasteHtmlError, setPasteHtmlError] = useState<string | null>(null);
+  const [isSanitizingHtml, setIsSanitizingHtml] = useState(false);
 
   const workspaceId =
     workspace.type === CompletionStatus.Successful ? workspace.value.id : null;
-  const hasDraft = blocks !== null;
+  const hasDraft = blocks !== null || isRawHtml;
 
   const requestHeaders = useMemo(
     () => ({
@@ -219,7 +240,7 @@ export default function AmieComposer({
   const compose = useCallback(
     async (message: string) => {
       const cleanMessage = message.trim();
-      if (!cleanMessage || !workspaceId || isComposing) {
+      if (!cleanMessage || !workspaceId || isComposing || isRawHtml) {
         return;
       }
 
@@ -272,9 +293,46 @@ export default function AmieComposer({
       isComposing,
       originalPrompt,
       requestHeaders,
+      isRawHtml,
       workspaceId,
     ],
   );
+
+  const handlePasteHtml = async () => {
+    if (!workspaceId || !pastedHtml.trim() || isSanitizingHtml) {
+      return;
+    }
+
+    const clientSanitizedHtml = sanitizeAmieHtml(pastedHtml);
+    if (!clientSanitizedHtml.trim()) {
+      setPasteHtmlError("The pasted content did not contain usable HTML.");
+      return;
+    }
+
+    setIsSanitizingHtml(true);
+    setPasteHtmlError(null);
+    try {
+      const response = await axios.post<AmieSanitizeHtmlResponse>(
+        `${baseApiUrl}/content/templates/compose/sanitize-html`,
+        { workspaceId, html: clientSanitizedHtml },
+        { headers: requestHeaders },
+      );
+      setHtml(response.data.html);
+      setBlocks(null);
+      setIsRawHtml(true);
+      setPreviewText("");
+      setConversation([]);
+      setInput("");
+      setComposeError(null);
+      setAssembleError(null);
+      setPastedHtml("");
+      setPasteHtmlDialogOpen(false);
+    } catch {
+      setPasteHtmlError("The HTML couldn’t be prepared. Please try again.");
+    } finally {
+      setIsSanitizingHtml(false);
+    }
+  };
 
   useEffect(() => {
     if (!blocks || blockEditVersion === 0 || !workspaceId) {
@@ -323,7 +381,7 @@ export default function AmieComposer({
 
   const handleSave = async () => {
     if (
-      !blocks ||
+      !hasDraft ||
       !workspaceId ||
       !subject.trim() ||
       (!isNew && templateQuery.isLoading)
@@ -332,11 +390,18 @@ export default function AmieComposer({
     }
     setSaveError(null);
     try {
-      const assembled = await axios.post<AmieAssembleResponse>(
-        `${baseApiUrl}/content/templates/compose/assemble`,
-        { workspaceId, blocks },
-        { headers: requestHeaders },
-      );
+      let body = html;
+      if (!isRawHtml) {
+        if (!blocks) {
+          return;
+        }
+        const assembled = await axios.post<AmieAssembleResponse>(
+          `${baseApiUrl}/content/templates/compose/assemble`,
+          { workspaceId, blocks },
+          { headers: requestHeaders },
+        );
+        body = withPreviewText(assembled.data.html, previewText);
+      }
       const existingDefinition = template?.definition ?? template?.draft;
       const baseDefinition =
         existingDefinition?.type === ChannelType.Email
@@ -355,7 +420,7 @@ export default function AmieComposer({
           type: ChannelType.Email,
           emailContentsType: EmailContentsType.Code,
           subject: subject.trim(),
-          body: withPreviewText(assembled.data.html, previewText),
+          body,
         },
         ...(isNew ? { resourceType: ResourceTypeEnum.Declarative } : {}),
       });
@@ -408,7 +473,7 @@ export default function AmieComposer({
           variant="contained"
           onClick={handleSave}
           disabled={
-            !blocks ||
+            !hasDraft ||
             !subject.trim() ||
             isComposing ||
             isAssembling ||
@@ -459,7 +524,7 @@ export default function AmieComposer({
           }}
         >
           <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", p: 3 }}>
-            {!hasDraft ? (
+            {!hasDraft && (
               <Stack spacing={2.5} sx={{ maxWidth: 440, mx: "auto", pt: 5 }}>
                 <Box
                   sx={{
@@ -502,17 +567,52 @@ export default function AmieComposer({
                   disabled={isComposing}
                   fullWidth
                 />
-                <Button
-                  variant="contained"
-                  onClick={() => compose(input)}
-                  disabled={!input.trim() || isComposing || !workspaceId}
-                  endIcon={<Send fontSize="small" />}
-                  sx={{ alignSelf: "flex-end" }}
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  justifyContent="space-between"
                 >
-                  Send
-                </Button>
+                  <Button
+                    size="small"
+                    variant="text"
+                    onClick={() => {
+                      setPasteHtmlError(null);
+                      setPasteHtmlDialogOpen(true);
+                    }}
+                    sx={{ color: tokens.colors.caption }}
+                  >
+                    Paste HTML
+                  </Button>
+                  <Button
+                    variant="contained"
+                    onClick={() => compose(input)}
+                    disabled={!input.trim() || isComposing || !workspaceId}
+                    endIcon={<Send fontSize="small" />}
+                  >
+                    Send
+                  </Button>
+                </Stack>
               </Stack>
-            ) : (
+            )}
+            {hasDraft && isRawHtml && (
+              <Paper
+                variant="outlined"
+                sx={{ p: 2, borderColor: tokens.colors.borderCard }}
+              >
+                <Typography
+                  sx={{ color: tokens.colors.heading, fontWeight: 600 }}
+                >
+                  Raw HTML template
+                </Typography>
+                <Typography
+                  variant="body2"
+                  sx={{ color: tokens.colors.caption, mt: 0.5 }}
+                >
+                  AI editing is unavailable for pasted HTML.
+                </Typography>
+              </Paper>
+            )}
+            {hasDraft && !isRawHtml && (
               <Stack spacing={2}>
                 {conversation.map((message, index) => (
                   <Box
@@ -600,15 +700,19 @@ export default function AmieComposer({
                 maxRows={6}
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
-                placeholder="Tell it what to change…"
-                disabled={isComposing}
+                placeholder={
+                  isRawHtml
+                    ? "AI editing is unavailable for pasted HTML"
+                    : "Tell it what to change…"
+                }
+                disabled={isComposing || isRawHtml}
                 fullWidth
               />
               <Stack direction="row" justifyContent="flex-end" sx={{ mt: 1 }}>
                 <Button
                   variant="contained"
                   onClick={() => compose(input)}
-                  disabled={!input.trim() || isComposing}
+                  disabled={!input.trim() || isComposing || isRawHtml}
                   endIcon={<Send fontSize="small" />}
                 >
                   Send
@@ -639,7 +743,12 @@ export default function AmieComposer({
                 label="Preview text"
                 value={previewText}
                 onChange={(event) => setPreviewText(event.target.value)}
-                disabled={!hasDraft}
+                disabled={!hasDraft || isRawHtml}
+                helperText={
+                  isRawHtml
+                    ? "Use the pasted HTML’s own preview text."
+                    : undefined
+                }
                 fullWidth
                 size="small"
               />
@@ -714,6 +823,26 @@ export default function AmieComposer({
                 )}
               </Paper>
             </Box>
+
+            {isRawHtml && (
+              <Paper
+                variant="outlined"
+                sx={{ p: 2, borderColor: tokens.colors.borderCard }}
+              >
+                <Typography
+                  sx={{ color: tokens.colors.heading, fontWeight: 600 }}
+                >
+                  Raw HTML template
+                </Typography>
+                <Typography
+                  variant="body2"
+                  sx={{ color: tokens.colors.caption, mt: 0.5 }}
+                >
+                  This preview uses your pasted HTML directly. The block editor
+                  does not apply to this template.
+                </Typography>
+              </Paper>
+            )}
 
             {blocks && (
               <Stack spacing={1.5}>
@@ -865,6 +994,69 @@ export default function AmieComposer({
           </Stack>
         </Box>
       </Box>
+
+      <Dialog
+        open={pasteHtmlDialogOpen}
+        onClose={() => {
+          if (!isSanitizingHtml) {
+            setPasteHtmlDialogOpen(false);
+          }
+        }}
+        fullWidth
+        maxWidth="md"
+      >
+        <DialogTitle>Paste email HTML</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ pt: 0.5 }}>
+            <Typography variant="body2" sx={{ color: tokens.colors.caption }}>
+              Paste the complete email markup. Scripts and inline event handlers
+              will be removed.
+            </Typography>
+            <TextField
+              autoFocus
+              multiline
+              minRows={12}
+              value={pastedHtml}
+              onChange={(event) => {
+                setPastedHtml(event.target.value);
+                setPasteHtmlError(null);
+              }}
+              placeholder="<!doctype html>…"
+              disabled={isSanitizingHtml}
+              fullWidth
+              inputProps={{ "aria-label": "Email HTML" }}
+            />
+            {pastedHtml.length > 0 && !hasUnsubscribeField(pastedHtml) && (
+              <Alert severity="warning">
+                No unsubscribe merge tag was found. You can still use this HTML,
+                but marketing emails should include one.
+              </Alert>
+            )}
+            {pastedHtml.length > 0 && !hasLiquidField(pastedHtml) && (
+              <Alert severity="warning">
+                No Liquid fields using {"{{ }}"} or {"{% %}"} were found.
+              </Alert>
+            )}
+            {pasteHtmlError && <Alert severity="error">{pasteHtmlError}</Alert>}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setPasteHtmlDialogOpen(false)}
+            disabled={isSanitizingHtml}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handlePasteHtml}
+            disabled={!pastedHtml.trim() || !workspaceId || isSanitizingHtml}
+            startIcon={isSanitizingHtml ? <CircularProgress size={16} /> : null}
+          >
+            {isSanitizingHtml ? "Preparing…" : "Use HTML"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   );
 }
