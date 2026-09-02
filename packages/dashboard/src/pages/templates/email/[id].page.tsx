@@ -62,7 +62,11 @@ export default function MessageEditor() {
   }
   return (
     <TemplatePageContent>
-      <EmailEditor templateId={messageId} member={member ?? undefined} />
+      <EmailEditor
+        templateId={messageId}
+        member={member ?? undefined}
+        canvasLayout
+      />
     </TemplatePageContent>
   );
 }

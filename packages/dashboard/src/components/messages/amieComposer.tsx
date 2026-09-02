@@ -83,6 +83,7 @@ import {
   createBlock,
 } from "./amieComposer/blockLibrary";
 import { AMIE_RECIPES, AmieRecipe } from "./amieComposer/recipes";
+import { previewTextFromHtml, withPreviewText } from "./amieComposerHtml";
 import ImageAssetsPanel from "./imageAssetsPanel";
 
 type ConversationMessage = NonNullable<
@@ -273,43 +274,6 @@ function swapBlocks(
   const [moved] = next.splice(from, 1);
   if (moved) next.splice(to, 0, moved);
   return next;
-}
-
-function escapePreviewText(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function withPreviewText(html: string, previewText: string): string {
-  const marker = 'mso-hide:all;">';
-  const textStart = html.indexOf(marker);
-  if (textStart === -1) return html;
-  const valueStart = textStart + marker.length;
-  const valueEnd = html.indexOf("</td></tr>", valueStart);
-  return valueEnd === -1
-    ? html
-    : `${html.slice(0, valueStart)}${escapePreviewText(previewText)}${html.slice(valueEnd)}`;
-}
-
-function previewTextFromHtml(html: string): string {
-  const marker = 'mso-hide:all;">';
-  const start = html.indexOf(marker);
-  if (start === -1) return "";
-  const valueStart = start + marker.length;
-  const end = html.indexOf("</td></tr>", valueStart);
-  return end === -1
-    ? ""
-    : html
-        .slice(valueStart, end)
-        .replace(/&amp;/g, "&")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'");
 }
 
 function designerPreviewHtml(html: string): string {
@@ -916,7 +880,7 @@ export default function AmieComposer({
             params: {
               ...block.params,
               src: asset.url,
-              alt: asset.alt ?? asset.name,
+              alt: asset.alt,
             },
           };
         if (block.type === "productCard")
@@ -929,7 +893,7 @@ export default function AmieComposer({
               image: {
                 ...block.params.image,
                 src: asset.url,
-                alt: asset.alt ?? asset.name,
+                alt: asset.alt,
               },
             },
           };
