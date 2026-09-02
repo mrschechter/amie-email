@@ -53,6 +53,7 @@ import {
   InternalEventType,
   JsonResultType,
   MessageTemplateConfiguration,
+  MessageTemplateResource,
   MessageTemplateResourceDraft,
   MessageTemplateTestRequest,
   MobilePushProviderType,
@@ -66,7 +67,7 @@ import {
 import { LoremIpsum } from "lorem-ipsum";
 import { useRouter } from "next/router";
 import { closeSnackbar, enqueueSnackbar } from "notistack";
-import React, { useCallback, useEffect, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useDebounce } from "use-debounce";
 import { useImmer } from "use-immer";
 
@@ -263,6 +264,31 @@ export interface RenderEditorParams {
 
 export type RenderEditorSection = (args: RenderEditorParams) => React.ReactNode;
 
+export interface TemplateEditorLayoutParams extends RenderEditorParams {
+  templateId: string;
+  template: MessageTemplateResource;
+  title: string;
+  setTitle: (title: string) => void;
+  rendered: Record<string, string>;
+  userProperties: UserPropertyAssignments;
+  userPropertiesJSON: string;
+  setUserPropertiesJSON: (json: string) => void;
+  publisherStatus: PublisherStatus | null;
+  draftToggleStatus: PublisherDraftToggleStatus | null;
+  viewDraft: boolean;
+  setViewDraft: (viewDraft: boolean) => void;
+  lastSavedAt: number | null;
+  isSaving: boolean;
+  sendTestControl: React.ReactNode;
+  editorOptions: React.ReactNode;
+  editorBody: React.ReactNode;
+  settingsMenu: React.ReactNode;
+}
+
+export type RenderTemplateEditorLayout = (
+  args: TemplateEditorLayoutParams,
+) => React.ReactNode;
+
 function errorHash(key: string, message: string) {
   return hash(`${key}-${message}`);
 }
@@ -348,6 +374,7 @@ export interface TemplateEditorProps {
   mode?: TemplateEditorMode;
   defaultIsUserPropertiesMinimised?: boolean;
   messageTemplateConfiguration?: Omit<MessageTemplateConfiguration, "type">;
+  renderLayout?: RenderTemplateEditorLayout;
 }
 
 export default function TemplateEditor({
@@ -370,6 +397,7 @@ export default function TemplateEditor({
   hideUserPropertiesPanel = false,
   hideEditor = false,
   messageTemplateConfiguration,
+  renderLayout,
 }: TemplateEditorProps) {
   const theme = useTheme();
   const router = useRouter();
@@ -389,6 +417,7 @@ export default function TemplateEditor({
   const { mutate: updateTemplate, isPending: isUpdating } =
     useMessageTemplateUpdateMutation();
   const testTemplateMutation = useTestTemplateMutation();
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
 
   const duplicateMessageTemplateMutation = useDuplicateResourceMutation({
     onSuccess: (data) => {
@@ -503,7 +532,7 @@ export default function TemplateEditor({
         draft.editedTemplate.draft = undefined;
       }
     });
-  }, [setState, template]);
+  }, [hidePublisher, setState, template]);
 
   const publisherStatuses: {
     publisher: PublisherStatus;
@@ -533,19 +562,29 @@ export default function TemplateEditor({
       disabled: !viewDraft || errors.size > 0,
       isUpdating,
       onPublish: () => {
-        updateTemplate({
-          id: templateId,
-          name: template.name,
-          draft: null,
-          definition: definitionFromDraft,
-        });
+        updateTemplate(
+          {
+            id: templateId,
+            name: template.name,
+            draft: null,
+            definition: definitionFromDraft,
+          },
+          {
+            onSuccess: () => setLastSavedAt(Date.now()),
+          },
+        );
       },
       onRevert: () => {
-        updateTemplate({
-          id: templateId,
-          name: template.name,
-          draft: null,
-        });
+        updateTemplate(
+          {
+            id: templateId,
+            name: template.name,
+            draft: null,
+          },
+          {
+            onSuccess: () => setLastSavedAt(Date.now()),
+          },
+        );
       },
     };
 
@@ -604,7 +643,9 @@ export default function TemplateEditor({
       updateData.definition !== undefined ||
       debouncedTitle !== template?.name
     ) {
-      updateTemplate(updateData);
+      updateTemplate(updateData, {
+        onSuccess: () => setLastSavedAt(Date.now()),
+      });
     }
   }, [debouncedDraft, debouncedTitle]);
 
@@ -660,7 +701,7 @@ export default function TemplateEditor({
   });
 
   useEffect(() => {
-    if (renderQuery.isError && renderQuery.error) {
+    if (renderQuery.isError) {
       enqueueSnackbar("API Error: failed to render template preview.", {
         variant: "error",
         autoHideDuration: 3000,
@@ -943,7 +984,7 @@ export default function TemplateEditor({
 
   let testModalContents: React.ReactNode = null;
 
-  if (testTemplateMutation.isSuccess && testTemplateMutation.data) {
+  if (testTemplateMutation.isSuccess) {
     const testResponseData = testTemplateMutation.data;
     if (
       testResponseData.type === JsonResultType.Ok &&
@@ -1018,7 +1059,7 @@ export default function TemplateEditor({
         </Stack>
       );
     }
-  } else if (testTemplateMutation.isError && testTemplateMutation.error) {
+  } else if (testTemplateMutation.isError) {
     testModalContents = (
       <Alert severity="error">
         API Error: Failed to attempt test message.{" "}
@@ -1147,6 +1188,91 @@ export default function TemplateEditor({
     return null;
   }
 
+  const setUserPropertiesJSON = (json: string) => {
+    setState((draft) => {
+      if (!draft.editedTemplate) {
+        return;
+      }
+      draft.userPropertiesJSON = json;
+      const result = jsonParseSafe(json).andThen((properties) =>
+        schemaValidateWithErr(properties, UserPropertyAssignments),
+      );
+      if (result.isOk()) {
+        draft.userProperties = result.value;
+      }
+    });
+  };
+
+  const sendTestControl = (
+    <LoadingModal
+      openTitle="Send test"
+      dialogTitle="Send Test Message"
+      loading={testTemplateMutation.isPending}
+      submitTitle={(() => {
+        if (testTemplateMutation.isError) return "Retry";
+        if (testTemplateMutation.isPending || testTemplateMutation.isSuccess)
+          return "Re-Submit";
+        return "Submit";
+      })()}
+      onSubmit={() => {
+        testTemplateMutation.mutate(submitTestDataVariables, {
+          onSuccess: (data) => {
+            if (
+              data.type === JsonResultType.Ok &&
+              data.value.type === InternalEventType.MessageSent
+            ) {
+              enqueueSnackbar(
+                `Test message sent successfully to ${data.value.variant.to}.`,
+                { variant: "success", anchorOrigin },
+              );
+            } else {
+              enqueueSnackbar(
+                "Test message processed. See the dialog for details.",
+                { variant: "info", anchorOrigin },
+              );
+            }
+          },
+          onError: (error) => {
+            enqueueSnackbar(`API Error sending test: ${error.message}`, {
+              variant: "error",
+              anchorOrigin,
+            });
+          },
+        });
+      }}
+      onClose={() => testTemplateMutation.reset()}
+    >
+      {testModalContents}
+    </LoadingModal>
+  );
+
+  if (renderLayout && editedTemplate) {
+    return renderLayout({
+      ...renderEditorParams,
+      templateId,
+      template,
+      title: editedTemplate.title,
+      setTitle: (title) =>
+        setState((draft) => {
+          if (draft.editedTemplate) draft.editedTemplate.title = title;
+        }),
+      rendered,
+      userProperties: debouncedUserProperties,
+      userPropertiesJSON,
+      setUserPropertiesJSON,
+      publisherStatus: publisherStatuses?.publisher ?? null,
+      draftToggleStatus: publisherStatuses?.draftToggle ?? null,
+      viewDraft,
+      setViewDraft,
+      lastSavedAt: lastSavedAt ?? template.updatedAt,
+      isSaving: isUpdating,
+      sendTestControl,
+      editorOptions: renderEditorOptions?.(renderEditorParams) ?? null,
+      editorBody: renderEditorBody(renderEditorParams),
+      settingsMenu: <SettingsMenu commands={commands} />,
+    });
+  }
+
   const editor = (
     <Stack
       sx={{
@@ -1185,7 +1311,7 @@ export default function TemplateEditor({
         )}
         <Stack direction="row" spacing={1}>
           {headerAction}
-          {renderEditorOptions && renderEditorOptions(renderEditorParams)}
+          {renderEditorOptions?.(renderEditorParams)}
           <SettingsMenu commands={commands} />
           {fullscreen === null ? (
             <Stack direction="row" alignItems="center" spacing={2}>
@@ -1403,21 +1529,7 @@ export default function TemplateEditor({
               height="100%"
               // Hide line numbers to save horizontal space
               basicSetup={{ lineNumbers: false }}
-              onChange={(json) =>
-                setState((draft) => {
-                  if (!draft.editedTemplate) {
-                    return;
-                  }
-                  draft.userPropertiesJSON = json;
-                  const result = jsonParseSafe(json).andThen((p) =>
-                    schemaValidateWithErr(p, UserPropertyAssignments),
-                  );
-                  if (result.isErr()) {
-                    return;
-                  }
-                  draft.userProperties = result.value;
-                })
-              }
+              onChange={(json) => setUserPropertiesJSON(json)}
               extensions={[
                 codeMirrorJson(),
                 linter(jsonParseLinter()),

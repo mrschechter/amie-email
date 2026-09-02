@@ -42,6 +42,7 @@ import TemplateEditor, {
   TemplateEditorMode,
 } from "../templateEditor";
 import CodeEmailBodyEditor from "./codeEmailBodyEditor";
+import EmailTemplateEditorV3 from "./emailTemplateEditorV3";
 
 const DEFAULT_EMAIL_IDENTIFIER = "email";
 
@@ -432,6 +433,7 @@ export default function EmailEditor({
   hideUserPropertiesPanel,
   hideEditor,
   messageTemplateConfiguration,
+  canvasLayout = false,
 }: {
   templateId: string;
   hidePublisher?: boolean;
@@ -443,6 +445,7 @@ export default function EmailEditor({
   hideUserPropertiesPanel?: boolean;
   hideEditor?: boolean;
   messageTemplateConfiguration?: Omit<MessageTemplateConfiguration, "type">;
+  canvasLayout?: boolean;
 }) {
   const theme = useTheme();
   const universalRouter = useUniversalRouter();
@@ -598,6 +601,11 @@ export default function EmailEditor({
       hideUserPropertiesPanel={hideUserPropertiesPanel}
       hideEditor={hideEditor}
       messageTemplateConfiguration={messageTemplateConfiguration}
+      renderLayout={
+        canvasLayout
+          ? (params) => <EmailTemplateEditorV3 {...params} />
+          : undefined
+      }
     />
   );
 }
