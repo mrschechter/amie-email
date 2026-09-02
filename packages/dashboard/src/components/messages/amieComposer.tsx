@@ -25,6 +25,7 @@ import {
   Typography,
 } from "@mui/material";
 import axios from "axios";
+import { AmieAsset } from "isomorphic-lib/src/amieAssets";
 import {
   AmieAssembleResponse,
   AmieBlockSpec,
@@ -52,6 +53,7 @@ import { useAmieComposerConfigQuery } from "../../lib/useAmieComposerConfigQuery
 import { useMessageTemplateQuery } from "../../lib/useMessageTemplateQuery";
 import { useMessageTemplateUpdateMutation } from "../../lib/useMessageTemplateUpdateMutation";
 import tokens from "../../themeCustomization/tokens";
+import ImageAssetsPanel from "./imageAssetsPanel";
 
 type ConversationMessage = NonNullable<
   AmieComposeRequest["conversation"]
@@ -89,6 +91,19 @@ function editableFields(block: AmieBlockSpec): EditableField[] {
         { key: "imageUrl", label: "Image URL", optional: true },
         { key: "ctaLabel", label: "Link label", optional: true },
         { key: "ctaUrl", label: "Link URL", optional: true },
+      ];
+    case "image":
+      return [
+        { key: "src", label: "Image URL" },
+        { key: "alt", label: "Alt text" },
+        { key: "href", label: "Link URL", optional: true },
+      ];
+    case "heroImage":
+      return [
+        { key: "src", label: "Image URL" },
+        { key: "alt", label: "Alt text" },
+        { key: "headline", label: "Headline", multiline: true, optional: true },
+        { key: "href", label: "Link URL", optional: true },
       ];
     case "testimonial":
       return [
@@ -224,6 +239,9 @@ export default function AmieComposer({
   const [pastedHtml, setPastedHtml] = useState("");
   const [pasteHtmlError, setPasteHtmlError] = useState<string | null>(null);
   const [isSanitizingHtml, setIsSanitizingHtml] = useState(false);
+  const [images, setImages] = useState<
+    NonNullable<AmieComposeRequest["images"]>
+  >([]);
 
   const workspaceId =
     workspace.type === CompletionStatus.Successful ? workspace.value.id : null;
@@ -251,6 +269,7 @@ export default function AmieComposer({
       const request: AmieComposeRequest = {
         workspaceId,
         prompt: revision ? originalPrompt : cleanMessage,
+        ...(images.length ? { images } : {}),
         ...(revision
           ? { currentBlocks: blocks, conversation: nextConversation }
           : {}),
@@ -294,9 +313,18 @@ export default function AmieComposer({
       originalPrompt,
       requestHeaders,
       isRawHtml,
+      images,
       workspaceId,
     ],
   );
+
+  const attachImage = useCallback((asset: AmieAsset) => {
+    setImages((current) =>
+      current.some((image) => image.url === asset.url)
+        ? current
+        : [...current, { url: asset.url, alt: "" }],
+    );
+  }, []);
 
   const handlePasteHtml = async () => {
     if (!workspaceId || !pastedHtml.trim() || isSanitizingHtml) {
@@ -572,17 +600,24 @@ export default function AmieComposer({
                   alignItems="center"
                   justifyContent="space-between"
                 >
-                  <Button
-                    size="small"
-                    variant="text"
-                    onClick={() => {
-                      setPasteHtmlError(null);
-                      setPasteHtmlDialogOpen(true);
-                    }}
-                    sx={{ color: tokens.colors.caption }}
-                  >
-                    Paste HTML
-                  </Button>
+                  <Stack direction="row" spacing={0.5}>
+                    <Button
+                      size="small"
+                      variant="text"
+                      onClick={() => {
+                        setPasteHtmlError(null);
+                        setPasteHtmlDialogOpen(true);
+                      }}
+                      sx={{ color: tokens.colors.caption }}
+                    >
+                      Paste HTML
+                    </Button>
+                    <ImageAssetsPanel
+                      label="Add image"
+                      onInsert={attachImage}
+                      onUploaded={attachImage}
+                    />
+                  </Stack>
                   <Button
                     variant="contained"
                     onClick={() => compose(input)}
@@ -709,6 +744,14 @@ export default function AmieComposer({
                 fullWidth
               />
               <Stack direction="row" justifyContent="flex-end" sx={{ mt: 1 }}>
+                {!isRawHtml && (
+                  <ImageAssetsPanel
+                    label="Add image"
+                    onInsert={attachImage}
+                    onUploaded={attachImage}
+                    disabled={isComposing}
+                  />
+                )}
                 <Button
                   variant="contained"
                   onClick={() => compose(input)}
@@ -893,101 +936,124 @@ export default function AmieComposer({
                 )}
 
                 {blocks.map((block, index) => (
-                  <Paper
-                    // Reordering means a positional key reflects the visible order.
-                    // eslint-disable-next-line react/no-array-index-key
-                    key={`${block.type}-${index}`}
-                    variant="outlined"
-                    sx={{ p: 2, borderColor: tokens.colors.borderCard }}
-                  >
-                    <Stack
-                      direction="row"
-                      alignItems="center"
-                      justifyContent="space-between"
-                      sx={{ mb: editableFields(block).length ? 1.5 : 0 }}
+                  // Reordering means a positional key reflects the visible order.
+                  // eslint-disable-next-line react/no-array-index-key
+                  <React.Fragment key={`${block.type}-${index}`}>
+                    <Paper
+                      variant="outlined"
+                      sx={{ p: 2, borderColor: tokens.colors.borderCard }}
                     >
-                      <Typography
-                        variant="overline"
-                        sx={{ color: tokens.colors.deepTeal, fontWeight: 700 }}
+                      <Stack
+                        direction="row"
+                        alignItems="center"
+                        justifyContent="space-between"
+                        sx={{ mb: editableFields(block).length ? 1.5 : 0 }}
                       >
-                        {block.type}
-                      </Typography>
-                      <Stack direction="row" spacing={0.25}>
-                        <Tooltip title="Move up">
-                          <span>
+                        <Typography
+                          variant="overline"
+                          sx={{
+                            color: tokens.colors.deepTeal,
+                            fontWeight: 700,
+                          }}
+                        >
+                          {block.type}
+                        </Typography>
+                        <Stack direction="row" spacing={0.25}>
+                          <Tooltip title="Move up">
+                            <span>
+                              <IconButton
+                                size="small"
+                                disabled={index === 0}
+                                onClick={() =>
+                                  editBlocks((current) =>
+                                    swapBlocks(current, index - 1, index),
+                                  )
+                                }
+                              >
+                                <ArrowUpward fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                          <Tooltip title="Move down">
+                            <span>
+                              <IconButton
+                                size="small"
+                                disabled={index === blocks.length - 1}
+                                onClick={() =>
+                                  editBlocks((current) =>
+                                    swapBlocks(current, index, index + 1),
+                                  )
+                                }
+                              >
+                                <ArrowDownward fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                          <Tooltip title="Delete block">
                             <IconButton
                               size="small"
-                              disabled={index === 0}
                               onClick={() =>
                                 editBlocks((current) =>
-                                  swapBlocks(current, index - 1, index),
+                                  current.filter(
+                                    (_item, itemIndex) => itemIndex !== index,
+                                  ),
                                 )
                               }
+                              sx={{ color: tokens.colors.roseGold }}
                             >
-                              <ArrowUpward fontSize="small" />
+                              <DeleteOutline fontSize="small" />
                             </IconButton>
-                          </span>
-                        </Tooltip>
-                        <Tooltip title="Move down">
-                          <span>
-                            <IconButton
-                              size="small"
-                              disabled={index === blocks.length - 1}
-                              onClick={() =>
-                                editBlocks((current) =>
-                                  swapBlocks(current, index, index + 1),
-                                )
-                              }
-                            >
-                              <ArrowDownward fontSize="small" />
-                            </IconButton>
-                          </span>
-                        </Tooltip>
-                        <Tooltip title="Delete block">
-                          <IconButton
+                          </Tooltip>
+                        </Stack>
+                      </Stack>
+
+                      <Stack spacing={1.25}>
+                        {editableFields(block).map((field) => (
+                          <TextField
+                            key={field.key}
+                            label={field.label}
+                            value={fieldValue(block, field.key)}
+                            multiline={field.multiline}
+                            minRows={field.multiline ? 2 : undefined}
                             size="small"
-                            onClick={() =>
+                            fullWidth
+                            onChange={(event) =>
                               editBlocks((current) =>
-                                current.filter(
-                                  (_item, itemIndex) => itemIndex !== index,
+                                current.map((item, itemIndex) =>
+                                  itemIndex === index
+                                    ? updateBlockField(
+                                        item,
+                                        field,
+                                        event.target.value,
+                                      )
+                                    : item,
                                 ),
                               )
                             }
-                            sx={{ color: tokens.colors.roseGold }}
-                          >
-                            <DeleteOutline fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
+                          />
+                        ))}
                       </Stack>
-                    </Stack>
-
-                    <Stack spacing={1.25}>
-                      {editableFields(block).map((field) => (
-                        <TextField
-                          key={field.key}
-                          label={field.label}
-                          value={fieldValue(block, field.key)}
-                          multiline={field.multiline}
-                          minRows={field.multiline ? 2 : undefined}
-                          size="small"
-                          fullWidth
-                          onChange={(event) =>
-                            editBlocks((current) =>
-                              current.map((item, itemIndex) =>
-                                itemIndex === index
-                                  ? updateBlockField(
-                                      item,
-                                      field,
-                                      event.target.value,
-                                    )
-                                  : item,
-                              ),
-                            )
-                          }
+                    </Paper>
+                    {index < blocks.length - 1 && (
+                      <Box sx={{ display: "flex", justifyContent: "center" }}>
+                        <ImageAssetsPanel
+                          label="Insert image block"
+                          onInsert={(asset) => {
+                            attachImage(asset);
+                            editBlocks((current) => [
+                              ...current.slice(0, index + 1),
+                              {
+                                type: "image",
+                                params: { src: asset.url, alt: "", width: 600 },
+                              },
+                              ...current.slice(index + 1),
+                            ]);
+                          }}
+                          onUploaded={attachImage}
                         />
-                      ))}
-                    </Stack>
-                  </Paper>
+                      </Box>
+                    )}
+                  </React.Fragment>
                 ))}
               </Stack>
             )}

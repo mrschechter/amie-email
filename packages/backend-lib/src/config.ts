@@ -37,7 +37,9 @@ const BaseRawConfigProps = {
   clickhouseDatabase: Type.Optional(Type.String()),
   clickhouseUser: Type.String(),
   clickhousePassword: Type.String(),
-  defaultUserJourneyMaxAttempts: Type.Optional(Type.String({ format: "naturalNumber" })),
+  defaultUserJourneyMaxAttempts: Type.Optional(
+    Type.String({ format: "naturalNumber" }),
+  ),
   kafkaBrokers: Type.Optional(Type.String()),
   kafkaUsername: Type.Optional(Type.String()),
   kafkaPassword: Type.Optional(Type.String()),
@@ -120,6 +122,9 @@ const BaseRawConfigProps = {
   blobStorageBucket: Type.Optional(Type.String()),
   enableBlobStorage: Type.Optional(BoolStr),
   blobStorageRegion: Type.Optional(Type.String()),
+  amieAssetsBucket: Type.Optional(Type.String()),
+  amieAssetsPublicBaseUrl: Type.Optional(Type.String()),
+  amieAssetsMaxBytes: Type.Optional(Type.String({ format: "naturalNumber" })),
   // Enable cold storage behavior (store on pause/tombstone, restore on resume/activate)
   enableColdStorage: Type.Optional(BoolStr),
   exportLogsHyperDx: Type.Optional(BoolStr),
@@ -270,12 +275,15 @@ export type Config = Overwrite<
     allowedOrigins: string[];
     assignmentSequentialConsistency: boolean;
     authMode: AuthMode;
-    blobStorageAccessKeyId: string;
+    amieAssetsBucket: string;
+    amieAssetsMaxBytes: number;
+    amieAssetsPublicBaseUrl: string;
+    blobStorageAccessKeyId?: string;
     blobStorageBucket: string;
     blobStorageEndpoint: string;
     blobStorageInternalEndpoint: string;
     blobStorageRegion: string;
-    blobStorageSecretAccessKey: string;
+    blobStorageSecretAccessKey?: string;
     bootstrap: boolean;
     bootstrapEvents: boolean;
     bootstrapSafe: boolean;
@@ -598,6 +606,14 @@ function parseRawConfig(rawConfig: RawConfig): Config {
 
   const blobStorageBucket = rawConfig.blobStorageBucket ?? "dittofeed";
   const enableColdStorage = rawConfig.enableColdStorage === "true";
+  let defaultUserJourneyMaxAttempts: number | undefined;
+  if (rawConfig.defaultUserJourneyMaxAttempts !== undefined) {
+    defaultUserJourneyMaxAttempts = parseInt(
+      rawConfig.defaultUserJourneyMaxAttempts,
+    );
+  } else if (nodeEnv === NodeEnvEnum.Test) {
+    defaultUserJourneyMaxAttempts = 1;
+  }
   const parsedConfig: Config = {
     ...rawConfig,
     bootstrap: rawConfig.bootstrap === "true",
@@ -707,11 +723,17 @@ function parseRawConfig(rawConfig: RawConfig): Config {
     blobStorageEndpoint,
     // Internal endpoint used by ClickHouse (container-accessible)
     blobStorageInternalEndpoint,
-    blobStorageAccessKeyId: rawConfig.blobStorageAccessKeyId ?? "admin",
-    blobStorageSecretAccessKey:
-      rawConfig.blobStorageSecretAccessKey ?? "password",
+    blobStorageAccessKeyId: rawConfig.blobStorageAccessKeyId,
+    blobStorageSecretAccessKey: rawConfig.blobStorageSecretAccessKey,
     blobStorageBucket,
     blobStorageRegion: rawConfig.blobStorageRegion ?? "us-east-1",
+    amieAssetsBucket: rawConfig.amieAssetsBucket ?? "amie-send-assets",
+    amieAssetsPublicBaseUrl:
+      rawConfig.amieAssetsPublicBaseUrl ??
+      "https://amie-send-assets.s3.amazonaws.com",
+    amieAssetsMaxBytes: rawConfig.amieAssetsMaxBytes
+      ? parseInt(rawConfig.amieAssetsMaxBytes)
+      : 5 * 1024 * 1024,
     exportLogsHyperDx: rawConfig.exportLogsHyperDx === "true",
     dittofeedTelemetryDisabled:
       rawConfig.dittofeedTelemetryDisabled === "true" ||
@@ -794,9 +816,7 @@ function parseRawConfig(rawConfig: RawConfig): Config {
       rawConfig.broadcastSendMessagesMaxAttempts,
       5,
     ),
-    defaultUserJourneyMaxAttempts: rawConfig.defaultUserJourneyMaxAttempts !== undefined ? parseInt(
-      rawConfig.defaultUserJourneyMaxAttempts,
-    ) : (nodeEnv === NodeEnvEnum.Test ? 1 : undefined),
+    defaultUserJourneyMaxAttempts,
     defaultGetSegmentAndEventDetailsMaxAttempts: parseMaxAttempts(
       rawConfig.defaultGetSegmentAndEventDetailsMaxAttempts,
       nodeEnv === NodeEnvEnum.Test ? 1 : 10,

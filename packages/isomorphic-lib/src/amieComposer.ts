@@ -46,6 +46,26 @@ export const AmieProductCardBlock = strictObject({
   }),
 });
 
+export const AmieImageBlock = strictObject({
+  type: Type.Literal("image"),
+  params: strictObject({
+    src: HttpUrl,
+    alt: Type.String(),
+    width: Type.Optional(Type.Integer({ minimum: 1, maximum: 1200 })),
+    href: Type.Optional(HttpUrl),
+  }),
+});
+
+export const AmieHeroImageBlock = strictObject({
+  type: Type.Literal("heroImage"),
+  params: strictObject({
+    src: HttpUrl,
+    alt: Type.String(),
+    headline: Type.Optional(Type.String()),
+    href: Type.Optional(HttpUrl),
+  }),
+});
+
 export const AmieTestimonialBlock = strictObject({
   type: Type.Literal("testimonial"),
   params: strictObject({
@@ -73,6 +93,8 @@ export const AmieBlockSpec = Type.Union([
   AmieParagraphBlock,
   AmieCtaButtonBlock,
   AmieProductCardBlock,
+  AmieImageBlock,
+  AmieHeroImageBlock,
   AmieTestimonialBlock,
   AmieDividerBlock,
   AmieFooterBlock,
@@ -90,6 +112,10 @@ export type AmieCtaButtonParams = Static<typeof AmieCtaButtonBlock>["params"];
 export type AmieProductCardParams = Static<
   typeof AmieProductCardBlock
 >["params"];
+export type AmieImageParams = Static<typeof AmieImageBlock>["params"];
+export type AmieHeroImageParams = Static<
+  typeof AmieHeroImageBlock
+>["params"];
 export type AmieTestimonialParams = Static<
   typeof AmieTestimonialBlock
 >["params"];
@@ -104,6 +130,14 @@ export const AmieComposerConversationMessage = strictObject({
 export const AmieComposeRequest = strictObject({
   workspaceId: Type.String(),
   prompt: Type.String({ minLength: 1 }),
+  images: Type.Optional(
+    Type.Array(
+      strictObject({
+        url: HttpUrl,
+        alt: Type.Optional(Type.String()),
+      }),
+    ),
+  ),
   currentBlocks: Type.Optional(Type.Array(AmieBlockSpec)),
   conversation: Type.Optional(Type.Array(AmieComposerConversationMessage)),
 });
@@ -204,9 +238,19 @@ function stripEventHandlerAttributes(tag: string): string {
     return tag;
   }
 
-  return tag.replace(
+  const withoutHandlers = tag.replace(
     /\s+on[a-z0-9_:-]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?/gi,
     "",
+  );
+  if (!/^<\s*img(?:\s|\/?>)/i.test(withoutHandlers)) {
+    return withoutHandlers;
+  }
+  return withoutHandlers.replace(
+    /\s+src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi,
+    (attribute, doubleQuoted, singleQuoted, unquoted) => {
+      const value = String(doubleQuoted ?? singleQuoted ?? unquoted ?? "");
+      return /^https?:\/\//i.test(value) ? attribute : "";
+    },
   );
 }
 
