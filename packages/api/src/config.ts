@@ -20,6 +20,7 @@ const RawConfigProps = {
   ),
   amieComposerEnabled: Type.Optional(BoolStr),
   amieComposerModelId: Type.Optional(Type.String()),
+  amieComposerModelIdFast: Type.Optional(Type.String()),
 };
 
 // Structure of application config.
@@ -37,6 +38,7 @@ export type Config = Overwrite<
     apiBodyLimit: number;
     amieComposerEnabled: boolean;
     amieComposerModelId: string;
+    amieComposerModelIdFast: string;
   }
 >;
 function parseRawConfig(raw: RawConfig): Config {
@@ -54,7 +56,9 @@ function parseRawConfig(raw: RawConfig): Config {
     apiBodyLimit: Number.isNaN(bodyLimit) ? 5 * 1024 * 1024 : bodyLimit,
     amieComposerEnabled: raw.amieComposerEnabled === "true",
     amieComposerModelId:
-      raw.amieComposerModelId ?? "us.anthropic.claude-opus-4-6-v1",
+      raw.amieComposerModelId ?? "us.anthropic.claude-sonnet-5",
+    amieComposerModelIdFast:
+      raw.amieComposerModelIdFast ?? "us.anthropic.claude-sonnet-5",
   };
 }
 

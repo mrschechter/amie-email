@@ -5,6 +5,10 @@ const strictObject = <T extends Parameters<typeof Type.Object>[0]>(
 ) => Type.Object(properties, { additionalProperties: false });
 
 const HttpUrl = Type.String({ pattern: "^https?://" });
+const HttpOrLiquidUrl = Type.Union([
+  HttpUrl,
+  Type.String({ pattern: "^\\s*\\{\\{[\\s\\S]*\\}\\}\\s*$" }),
+]);
 
 export const AmieBrandBackground = Type.Union([
   Type.Literal("ivory"),
@@ -68,7 +72,7 @@ export const AmieParagraphBlock = styledBlock({
 
 export const AmieCtaButtonBlock = styledBlock({
   type: Type.Literal("ctaButton"),
-  params: strictObject({ label: Type.String(), url: HttpUrl }),
+  params: strictObject({ label: Type.String(), url: HttpOrLiquidUrl }),
 });
 
 export const AmieProductCardBlock = styledBlock({
@@ -79,7 +83,7 @@ export const AmieProductCardBlock = styledBlock({
     price: Type.Optional(Type.String()),
     imageUrl: Type.Optional(HttpUrl),
     ctaLabel: Type.Optional(Type.String()),
-    ctaUrl: Type.Optional(HttpUrl),
+    ctaUrl: Type.Optional(HttpOrLiquidUrl),
   }),
 });
 
@@ -89,7 +93,7 @@ export const AmieImageBlock = styledBlock({
     src: HttpUrl,
     alt: Type.String(),
     width: Type.Optional(Type.Integer({ minimum: 1, maximum: 1200 })),
-    href: Type.Optional(HttpUrl),
+    href: Type.Optional(HttpOrLiquidUrl),
   }),
 });
 
@@ -99,7 +103,7 @@ export const AmieHeroImageBlock = styledBlock({
     src: HttpUrl,
     alt: Type.String(),
     headline: Type.Optional(Type.String()),
-    href: Type.Optional(HttpUrl),
+    href: Type.Optional(HttpOrLiquidUrl),
   }),
 });
 
@@ -127,13 +131,13 @@ export const AmieTwoColumnBlock = styledBlock({
     image: strictObject({
       src: HttpUrl,
       alt: Type.String(),
-      href: Type.Optional(HttpUrl),
+      href: Type.Optional(HttpOrLiquidUrl),
     }),
     imageSide: Type.Union([Type.Literal("left"), Type.Literal("right")]),
     heading: Type.Optional(Type.String()),
     body: Type.String(),
     cta: Type.Optional(
-      strictObject({ label: Type.String(), url: HttpUrl }),
+      strictObject({ label: Type.String(), url: HttpOrLiquidUrl }),
     ),
   }),
 });
@@ -265,7 +269,7 @@ export const AmieDesignBrief = strictObject({
     ]),
   ),
   ctaText: Type.Optional(Type.String()),
-  ctaUrl: Type.Optional(HttpUrl),
+  ctaUrl: Type.Optional(HttpOrLiquidUrl),
 });
 export type AmieDesignBrief = Static<typeof AmieDesignBrief>;
 
@@ -288,6 +292,8 @@ export const AmieComposeRequest = strictObject({
     ),
   ),
   currentBlocks: Type.Optional(Type.Array(AmieBlockSpec, { maxItems: 12 })),
+  currentSubject: Type.Optional(Type.String()),
+  currentPreviewText: Type.Optional(Type.String()),
   seedBlocks: Type.Optional(Type.Array(AmieBlockSpec, { maxItems: 12 })),
   designBrief: Type.Optional(AmieDesignBrief),
   conversation: Type.Optional(Type.Array(AmieComposerConversationMessage)),
@@ -334,6 +340,7 @@ export const AmieComposeResponse = strictObject({
   blocks: Type.Array(AmieBlockSpec),
   html: Type.String(),
   designNotes: Type.String(),
+  warnings: Type.Optional(Type.Array(Type.String())),
 });
 export type AmieComposeResponse = Static<typeof AmieComposeResponse>;
 

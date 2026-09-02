@@ -1,6 +1,7 @@
 /**
  * @jest-environment jsdom
  */
+import { AmieComposeResponse } from "isomorphic-lib/src/amieComposer";
 import {
   ChannelType,
   EmailContentsType,
@@ -8,6 +9,7 @@ import {
 } from "isomorphic-lib/src/types";
 import React, { act, useState } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { TextDecoder, TextEncoder } from "util";
 
 import { SetDraft } from "../templateEditor";
 import EmailTemplateEditorV3, {
@@ -16,12 +18,54 @@ import EmailTemplateEditorV3, {
 
 const mockAxiosGet = jest.fn();
 const mockAxiosPost = jest.fn();
+const mockFetch = jest.fn();
 const mockCreateTemplate = jest.fn();
 
 Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
   configurable: true,
   value: true,
 });
+Object.defineProperty(globalThis, "fetch", {
+  configurable: true,
+  writable: true,
+  value: mockFetch,
+});
+Object.defineProperty(globalThis, "TextDecoder", {
+  configurable: true,
+  writable: true,
+  value: TextDecoder,
+});
+
+function mockComposerStream(
+  response: AmieComposeResponse & { warnings?: string[] },
+  chunks: string[] = ["I’m updating that now."],
+) {
+  const events = [
+    JSON.stringify({ type: "status", status: "Thinking…" }),
+    JSON.stringify({ type: "status", status: "Writing…" }),
+    ...chunks.map((text) => JSON.stringify({ type: "chunk", text })),
+    JSON.stringify({ type: "status", status: "Assembling" }),
+    JSON.stringify({ type: "status", status: "Checking Liquid" }),
+    JSON.stringify({ type: "result", response }),
+  ].map((line) => new TextEncoder().encode(`${line}\n`));
+  let index = 0;
+  mockFetch.mockResolvedValue({
+    ok: true,
+    status: 200,
+    body: {
+      getReader: () => ({
+        read: async () =>
+          index < events.length
+            ? (() => {
+                const value = events[index];
+                index += 1;
+                return { done: false, value };
+              })()
+            : { done: true, value: undefined },
+      }),
+    },
+  });
+}
 
 jest.mock("axios", () => ({
   __esModule: true,
@@ -212,6 +256,7 @@ describe("EmailTemplateEditorV3", () => {
   beforeEach(() => {
     mockAxiosGet.mockResolvedValue({ data: { assets: [] } });
     mockAxiosPost.mockReset();
+    mockFetch.mockReset();
     mockCreateTemplate.mockResolvedValue({ id: "created-template" });
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -246,14 +291,12 @@ describe("EmailTemplateEditorV3", () => {
   });
 
   it("applies a composer response to subject and body", async () => {
-    mockAxiosPost.mockResolvedValue({
-      data: {
-        subject: "Time to refill, {{first_name}}",
-        previewText: "It takes about a minute.",
-        blocks: [{ type: "paragraph", params: { text: "Updated body" } }],
-        html: '<html><head><title>Amie</title></head><body><div data-amie-block="0">Updated body</div><div>unsubscribe</div></body></html>',
-        designNotes: "Kept it warm and concise.",
-      },
+    mockComposerStream({
+      subject: "Time to refill, {{first_name}}",
+      previewText: "It takes about a minute.",
+      blocks: [{ type: "paragraph", params: { text: "Updated body" } }],
+      html: '<html><head><title>Amie</title></head><body><div data-amie-block="0">Updated body</div><div>unsubscribe</div></body></html>',
+      designNotes: "Kept it warm and concise.",
     });
     await act(async () => root.render(<Harness />));
     const prompt = container.querySelector<HTMLTextAreaElement>(
@@ -278,14 +321,12 @@ describe("EmailTemplateEditorV3", () => {
   });
 
   it("sends hand-edited code through the rawHtml revision path", async () => {
-    mockAxiosPost.mockResolvedValue({
-      data: {
-        subject: "Revised",
-        previewText: "Preview",
-        blocks: [{ type: "paragraph", params: { text: "Revised" } }],
-        html: "<html><body>Revised unsubscribe</body></html>",
-        designNotes: "Revised the imported HTML.",
-      },
+    mockComposerStream({
+      subject: "Revised",
+      previewText: "Preview",
+      blocks: [{ type: "paragraph", params: { text: "Revised" } }],
+      html: "<html><body>Revised unsubscribe</body></html>",
+      designNotes: "Revised the imported HTML.",
     });
     await act(async () => root.render(<Harness />));
     act(() => click(button(container, "Code")));
@@ -313,12 +354,49 @@ describe("EmailTemplateEditorV3", () => {
       ),
     );
     await act(async () => click(button(container, "Send prompt")));
-    expect(mockAxiosPost.mock.calls[0]?.[1].currentBlocks).toEqual([
+    expect(
+      JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body)),
+    ).toMatchObject({
+      currentBlocks: [
+        {
+          type: "rawHtml",
+          params: { html: "<html><body>Raw hand edit</body></html>" },
+        },
+      ],
+    });
+  });
+
+  it("appends streaming chunks to the last assistant message", async () => {
+    mockComposerStream(
       {
-        type: "rawHtml",
-        params: { html: "<html><body>Raw hand edit</body></html>" },
+        subject: "Revised",
+        previewText: "Preview",
+        blocks: [{ type: "paragraph", params: { text: "Revised" } }],
+        html: "<html><body>Revised unsubscribe</body></html>",
+        designNotes: "Checked.",
+        warnings: ["Kept the last valid subject after a Liquid check."],
       },
-    ]);
+      ["I’m tightening", " the copy now."],
+    );
+    await act(async () => root.render(<Harness />));
+    act(() =>
+      changeInput(
+        requiredElement(
+          container.querySelector<HTMLTextAreaElement>(
+            'textarea[aria-label="Assistant prompt"]',
+          ),
+          "Assistant prompt",
+        ),
+        "Tighten this",
+      ),
+    );
+    await act(async () => click(button(container, "Send prompt")));
+
+    expect(container.textContent).toContain("I’m tightening the copy now.");
+    const warning = Array.from(
+      container.querySelectorAll('[role="alert"]'),
+    ).find((element) => element.textContent?.includes("last valid subject"));
+    expect(warning?.className).toContain("MuiAlert-colorWarning");
   });
 
   it("round-trips delivery fields and test JSON through Settings", () => {

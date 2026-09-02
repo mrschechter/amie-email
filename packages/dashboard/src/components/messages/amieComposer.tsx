@@ -83,7 +83,12 @@ import {
   createBlock,
 } from "./amieComposer/blockLibrary";
 import { AMIE_RECIPES, AmieRecipe } from "./amieComposer/recipes";
-import { previewTextFromHtml, withPreviewText } from "./amieComposerHtml";
+import {
+  AmieComposeStatus,
+  previewTextFromHtml,
+  streamAmieComposition,
+  withPreviewText,
+} from "./amieComposerHtml";
 import ImageAssetsPanel from "./imageAssetsPanel";
 
 type ConversationMessage = NonNullable<
@@ -672,6 +677,9 @@ export default function AmieComposer({
     "desktop",
   );
   const [isComposing, setIsComposing] = useState(false);
+  const [composeStatus, setComposeStatus] =
+    useState<AmieComposeStatus>("Thinking…");
+  const [composeWarnings, setComposeWarnings] = useState<string[]>([]);
   const [composeError, setComposeError] = useState<string | null>(null);
   const [retryMessage, setRetryMessage] = useState<string | null>(null);
   const [blockEditVersion, setBlockEditVersion] = useState(0);
@@ -775,30 +783,59 @@ export default function AmieComposer({
           : {}),
         ...(recipe ? { seedBlocks: recipe.seedBlocks } : {}),
         ...(revision
-          ? { currentBlocks: blocks, conversation: nextConversation }
+          ? {
+              currentBlocks: blocks,
+              currentSubject: subject,
+              currentPreviewText: previewText,
+              conversation: nextConversation,
+            }
           : {}),
       };
       setIsComposing(true);
       setComposeError(null);
+      setComposeWarnings([]);
+      setComposeStatus("Thinking…");
       setRetryMessage(cleanMessage);
+      const assistantIndex = nextConversation.length;
+      setConversation([
+        ...nextConversation,
+        { role: "assistant", content: "" },
+      ]);
       try {
-        const response = await axios.post<AmieComposeResponse>(
-          `${baseApiUrl}/content/templates/compose`,
+        const response = await streamAmieComposition({
+          url: `${baseApiUrl}/content/templates/compose/stream`,
           request,
-          { headers: authHeaders },
-        );
-        setSubject(response.data.subject);
-        setPreviewText(response.data.previewText);
-        setBlocks(response.data.blocks);
-        setHtml(response.data.html);
-        setDesignNotes(response.data.designNotes);
-        setSelectedBlock(response.data.blocks.length ? 0 : null);
+          headers: authHeaders,
+          onStatus: setComposeStatus,
+          onChunk: (text) =>
+            setConversation((current) =>
+              current.map((entry, index) =>
+                index === assistantIndex
+                  ? { ...entry, content: `${entry.content}${text}` }
+                  : entry,
+              ),
+            ),
+        });
+        setSubject(response.subject);
+        setPreviewText(response.previewText);
+        setBlocks(response.blocks);
+        setHtml(response.html);
+        setDesignNotes(response.designNotes);
+        setComposeWarnings(response.warnings ?? []);
+        setSelectedBlock(response.blocks.length ? 0 : null);
         setBlockEditVersion(0);
-        setConversation([...nextConversation, assistantConfirmation(revision)]);
+        setConversation((current) =>
+          current.map((entry, index) =>
+            index === assistantIndex && !entry.content
+              ? assistantConfirmation(revision)
+              : entry,
+          ),
+        );
         if (!revision) setOriginalPrompt(cleanMessage);
         setInput("");
         setRetryMessage(null);
       } catch {
+        setConversation(nextConversation);
         setComposeError(
           revision
             ? "That change didn’t go through. Your draft is untouched."
@@ -818,6 +855,8 @@ export default function AmieComposer({
       isComposing,
       isRawHtml,
       originalPrompt,
+      previewText,
+      subject,
       workspaceId,
     ],
   );
@@ -1170,10 +1209,19 @@ export default function AmieComposer({
               >
                 <CircularProgress size={17} />
                 <Typography variant="body2" fontWeight={600}>
-                  Designing and reviewing…
+                  {composeStatus}
                 </Typography>
               </Stack>
             )}
+            {composeWarnings.length ? (
+              <Alert
+                severity="warning"
+                icon={false}
+                sx={{ mt: 1, fontSize: 12 }}
+              >
+                {composeWarnings.join(" ")}
+              </Alert>
+            ) : null}
             {composeError && (
               <Alert severity="error" sx={{ mt: 2 }}>
                 {composeError}

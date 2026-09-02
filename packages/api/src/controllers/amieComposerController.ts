@@ -1,6 +1,8 @@
 import {
   BedrockRuntimeClient,
   InvokeModelCommand,
+  InvokeModelWithResponseStreamCommand,
+  ResponseStream,
 } from "@aws-sdk/client-bedrock-runtime";
 import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import { AssetStorageClient, storage } from "backend-lib/src/blobStorage";
@@ -16,6 +18,11 @@ import {
   generateAndStoreImage,
   GeneratedImage,
 } from "backend-lib/src/messaging/amieImageGeneration";
+import {
+  normalizeLiquid,
+  validateLiquid,
+} from "backend-lib/src/messaging/amieLiquid";
+import { findAllUserPropertyResources } from "backend-lib/src/userProperties";
 import { FastifyInstance } from "fastify";
 import {
   AmieAssembleRequest,
@@ -44,14 +51,28 @@ const CORRECTIVE_INSTRUCTION =
   "Return ONLY the JSON object, no fences, matching the schema";
 const PENDING_GENERATED_IMAGE_URL = "https://generated.amie.invalid/pending";
 
+type AmieComposeRequestWithFallback = AmieComposeRequest & {
+  currentSubject?: string;
+  currentPreviewText?: string;
+};
+
 export interface BedrockInvoker {
   send(command: InvokeModelCommand): Promise<{ body?: Uint8Array }>;
 }
 
+export interface BedrockStreamInvoker {
+  send(
+    command: InvokeModelWithResponseStreamCommand,
+  ): Promise<{ body?: AsyncIterable<ResponseStream> }>;
+}
+
 export interface AmieComposerControllerOptions {
   bedrockClient?: BedrockInvoker;
+  bedrockStreamClient?: BedrockStreamInvoker;
   enabled?: boolean;
   modelId?: string;
+  fastModelId?: string;
+  userPropertyNames?: (workspaceId: string) => Promise<string[]>;
   storageClient?: AssetStorageClient;
   imageGenerationEnabled?: boolean;
   imageGenerator?: (options: {
@@ -89,6 +110,7 @@ const RECIPE_SKELETONS = `Recipe priors (vary these; they are not fixed template
 function systemPrompt(
   request: AmieComposeRequest,
   imageGenerationAvailable: boolean,
+  knownUserProperties: readonly string[],
 ): string {
   const imageInstruction = request.images?.length
     ? `The workspace asset library is ${JSON.stringify(request.images)}. Use ONLY those exact image URLs, or the fixed pending URL described below for a requested generated image.`
@@ -118,6 +140,13 @@ Use recipe skeletons as priors and vary structure between composes. Convert the 
 
 Amie's voice is warm, conversational, specific, empathetic, and practically clear for women ages 35–60. No corporate boilerplate, empty wellness language, pressure tactics, hype, or unsupported medical claims.
 
+Liquid personalization rules:
+- The workspace's exact user-property catalog is ${JSON.stringify(knownUserProperties)}.
+- Reference only names in that catalog and always through user.*, never as a bare variable.
+- Every user property must have a default. Exact syntax: {{ user.firstName | default: 'there' }}.
+- Link examples, when those names exist in the catalog: {{ user.checkoutUrl | default: 'https://tryamie.com' }} and {{ user.paymentUpdateUrl | default: 'https://tryamie.com' }}.
+- Never HTML-entity-encode quotes inside {{ ... }} or {% ... %}.
+
 ${imageInstruction}
 ${generationInstruction}
 
@@ -143,6 +172,32 @@ function modelMessages(
       ].join("\n")
     : request.prompt;
   return [...(request.conversation ?? []), { role: "user", content: context }];
+}
+
+const QUICK_ACTION =
+  /\b(shorten(?: it)?|add (?:an? )?offer|sms version|subject (?:line |tweak|option)|tweak (?:the )?subject)\b/i;
+
+function wordCount(value: unknown): number {
+  return JSON.stringify(value ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
+
+export function selectComposerModelId(
+  request: AmieComposeRequest,
+  modelId: string,
+  fastModelId: string,
+): string {
+  const latest = request.conversation?.at(-1)?.content ?? request.prompt;
+  if (
+    request.currentBlocks !== undefined ||
+    QUICK_ACTION.test(latest) ||
+    (request.seedBlocks !== undefined && wordCount(request.seedBlocks) < 2500)
+  ) {
+    return fastModelId;
+  }
+  return modelId;
 }
 
 function decodeModelText(body: Uint8Array | undefined): string {
@@ -293,14 +348,20 @@ async function draftOutput({
   bedrockClient,
   modelId,
   imageGenerationAvailable,
+  knownUserProperties,
 }: {
   request: AmieComposeRequest;
   bedrockClient: BedrockInvoker;
   modelId: string;
   imageGenerationAvailable: boolean;
+  knownUserProperties: readonly string[];
 }): Promise<AmieComposerModelOutput> {
   const messages = modelMessages(request);
-  const system = systemPrompt(request, imageGenerationAvailable);
+  const system = systemPrompt(
+    request,
+    imageGenerationAvailable,
+    knownUserProperties,
+  );
   const first = await invokeModel({ bedrockClient, modelId, system, messages });
   try {
     return parseComposeOutput(first);
@@ -399,7 +460,7 @@ async function fulfillGeneratedImages({
         blocks[instruction.slot] = withGeneratedImage(
           target,
           asset.url,
-          asset.alt ?? instruction.prompt,
+          asset.alt,
         );
       }
     }
@@ -569,6 +630,137 @@ async function critiqueDesign({
   }
 }
 
+function transformStringValues(
+  value: unknown,
+  transform: (text: string) => string,
+): unknown {
+  if (typeof value === "string") return transform(value);
+  if (Array.isArray(value)) {
+    return value.map((item) => transformStringValues(item, transform));
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        transformStringValues(item, transform),
+      ]),
+    );
+  }
+  return value;
+}
+
+function transformBlockStrings(
+  blocks: AmieBlockSpec[],
+  transform: (text: string) => string,
+): AmieBlockSpec[] {
+  return blocks.map((block) => {
+    const validated = schemaValidate(
+      transformStringValues(block, transform),
+      AmieBlockSpec,
+    );
+    if (validated.isErr()) {
+      throw new Error("String-only block transformation changed its schema");
+    }
+    return validated.value;
+  });
+}
+
+function normalizeBlocks(
+  blocks: AmieBlockSpec[],
+  knownUserProperties: readonly string[],
+): AmieBlockSpec[] {
+  return transformBlockStrings(blocks, (text) =>
+    normalizeLiquid(text, knownUserProperties),
+  );
+}
+
+function withoutLiquid(text: string): string {
+  return text.replace(/{{[\s\S]*?}}|{%[\s\S]*?%}/g, "");
+}
+
+function checkedFallback(
+  preferred: string | undefined,
+  fallback: string,
+  knownUserProperties: readonly string[],
+): string {
+  const normalized = normalizeLiquid(
+    preferred ?? fallback,
+    knownUserProperties,
+  );
+  return validateLiquid(normalized, knownUserProperties) === null
+    ? normalized
+    : fallback;
+}
+
+function finalizeLiquid(
+  output: AmieCritiqueModelOutput,
+  request: AmieComposeRequestWithFallback,
+  knownUserProperties: readonly string[],
+  onChecking?: () => void,
+): AmieComposeResponse {
+  let subject = normalizeLiquid(output.subject, knownUserProperties);
+  let previewText = normalizeLiquid(output.previewText, knownUserProperties);
+  let blocks = normalizeBlocks(output.blocks, knownUserProperties);
+  const warnings: string[] = [];
+  const assembledBody = assembleEmail(blocks, "");
+  onChecking?.();
+
+  const subjectError = validateLiquid(subject, knownUserProperties);
+  if (subjectError) {
+    subject = checkedFallback(
+      request.currentSubject,
+      "A thoughtful update from Amie",
+      knownUserProperties,
+    );
+    warnings.push(
+      `Liquid check failed for the subject; kept the last valid subject. ${subjectError}`,
+    );
+  }
+
+  const previewError = validateLiquid(previewText, knownUserProperties);
+  if (previewError) {
+    previewText = checkedFallback(
+      request.currentPreviewText,
+      "A thoughtful update from Amie.",
+      knownUserProperties,
+    );
+    warnings.push(
+      `Liquid check failed for preview text; kept the last valid preview text. ${previewError}`,
+    );
+  }
+
+  const bodyError = validateLiquid(assembledBody, knownUserProperties);
+  if (bodyError) {
+    const priorBlocks = request.currentBlocks
+      ? normalizeBlocks(request.currentBlocks, knownUserProperties)
+      : undefined;
+    const priorError = priorBlocks
+      ? validateLiquid(
+          assembleEmail(priorBlocks, previewText),
+          knownUserProperties,
+        )
+      : "No prior draft";
+    blocks =
+      priorBlocks && priorError === null
+        ? priorBlocks
+        : transformBlockStrings(blocks, withoutLiquid);
+    warnings.push(
+      `Liquid check failed for the body; kept the last valid body. ${bodyError}`,
+    );
+  }
+
+  return {
+    ...output,
+    subject,
+    previewText,
+    blocks,
+    html: assembleEmail(blocks, previewText),
+    ...(warnings.length ? { warnings } : {}),
+  };
+}
+
+export type AmieComposeStage = "Writing…" | "Assembling" | "Checking Liquid";
+
 export async function composeAmieEmail({
   request,
   bedrockClient,
@@ -576,19 +768,25 @@ export async function composeAmieEmail({
   imageGenerationAvailable = false,
   storageClient,
   imageGenerator,
+  knownUserProperties = [],
+  onStage,
 }: {
-  request: AmieComposeRequest;
+  request: AmieComposeRequestWithFallback;
   bedrockClient: BedrockInvoker;
   modelId: string;
   imageGenerationAvailable?: boolean;
   storageClient?: AssetStorageClient;
   imageGenerator?: AmieComposerControllerOptions["imageGenerator"];
+  knownUserProperties?: readonly string[];
+  onStage?: (stage: AmieComposeStage) => void;
 }): Promise<AmieComposeResponse> {
+  onStage?.("Writing…");
   const drafted = await draftOutput({
     request,
     bedrockClient,
     modelId,
     imageGenerationAvailable,
+    knownUserProperties,
   });
   const generated =
     imageGenerationAvailable && storageClient
@@ -618,20 +816,22 @@ export async function composeAmieEmail({
     allowedImageBlocks(critiqued.blocks, allowedUrls),
   );
   const audited = semanticAudit({ ...critiqued, blocks: finalBlocks }, request);
-  return {
-    ...audited,
-    html: assembleEmail(audited.blocks, audited.previewText),
-  };
+  onStage?.("Assembling");
+  return finalizeLiquid(audited, request, knownUserProperties, () =>
+    onStage?.("Checking Liquid"),
+  );
 }
 
 async function importHtml({
   request,
   bedrockClient,
   modelId,
+  knownUserProperties,
 }: {
   request: AmieImportHtmlRequest;
   bedrockClient: BedrockInvoker;
   modelId: string;
+  knownUserProperties: readonly string[];
 }): Promise<AmieComposeResponse> {
   const sanitized = sanitizeAmieHtml(request.html);
   const composeRequest: AmieComposeRequest = {
@@ -643,6 +843,7 @@ async function importHtml({
       request: composeRequest,
       bedrockClient,
       modelId,
+      knownUserProperties,
     });
   } catch {
     const blocks: AmieBlockSpec[] = [
@@ -658,6 +859,65 @@ async function importHtml({
   }
 }
 
+async function streamAssistantReply({
+  request,
+  bedrockClient,
+  modelId,
+  onChunk,
+}: {
+  request: AmieComposeRequest;
+  bedrockClient: BedrockStreamInvoker;
+  modelId: string;
+  onChunk: (text: string) => void;
+}): Promise<void> {
+  const latest = request.conversation?.at(-1)?.content ?? request.prompt;
+  const response = await bedrockClient.send(
+    new InvokeModelWithResponseStreamCommand({
+      modelId,
+      accept: "application/json",
+      contentType: "application/json",
+      body: JSON.stringify({
+        anthropic_version: "bedrock-2023-05-31",
+        max_tokens: 80,
+        temperature: 0.2,
+        system:
+          "Write one short, warm sentence acknowledging the requested email edit. Use present tense while work is in progress. Return only that sentence.",
+        messages: [{ role: "user", content: latest }],
+      }),
+    }),
+  );
+  if (!response.body) throw new Error("Bedrock stream did not include a body");
+  for await (const event of response.body) {
+    if (!event.chunk?.bytes) continue;
+    const payload: unknown = JSON.parse(
+      new TextDecoder().decode(event.chunk.bytes),
+    );
+    if (
+      typeof payload === "object" &&
+      payload !== null &&
+      "type" in payload &&
+      payload.type === "content_block_delta" &&
+      "delta" in payload &&
+      typeof payload.delta === "object" &&
+      payload.delta !== null &&
+      "type" in payload.delta &&
+      payload.delta.type === "text_delta" &&
+      "text" in payload.delta &&
+      typeof payload.delta.text === "string" &&
+      payload.delta.text.length > 0
+    ) {
+      onChunk(payload.delta.text);
+    }
+  }
+}
+
+async function defaultUserPropertyNames(
+  workspaceId: string,
+): Promise<string[]> {
+  const resources = await findAllUserPropertyResources({ workspaceId });
+  return resources.map((property) => property.name).sort();
+}
+
 // Fastify detects the returned promise and completes plugin registration.
 // eslint-disable-next-line @typescript-eslint/require-await
 export default async function amieComposerController(
@@ -668,9 +928,28 @@ export default async function amieComposerController(
   const backend = backendConfig();
   const enabled = options.enabled ?? configured.amieComposerEnabled;
   const modelId = options.modelId ?? configured.amieComposerModelId;
-  const bedrockClient =
-    options.bedrockClient ??
-    new BedrockRuntimeClient({ region: BEDROCK_REGION });
+  const fastModelId = options.fastModelId ?? configured.amieComposerModelIdFast;
+  const runtimeClient = new BedrockRuntimeClient({ region: BEDROCK_REGION });
+  const bedrockClient = options.bedrockClient ?? {
+    send: (command: InvokeModelCommand) => runtimeClient.send(command),
+  };
+  const bedrockStreamClient = options.bedrockStreamClient ?? {
+    send: (command: InvokeModelWithResponseStreamCommand) =>
+      runtimeClient.send(command),
+  };
+  const userPropertyNames =
+    options.userPropertyNames ?? defaultUserPropertyNames;
+  const loadUserPropertyNames = async (workspaceId: string) => {
+    try {
+      return await userPropertyNames(workspaceId);
+    } catch (error) {
+      logger().warn(
+        { workspaceId, errorMessage: errorMessage(error) },
+        "Amie composer could not load the user-property catalog",
+      );
+      return [];
+    }
+  };
   const imageGenerationEnabled =
     options.imageGenerationEnabled ?? backend.amieImageGenEnabled;
   const providerHasKey =
@@ -722,6 +1001,118 @@ export default async function amieComposerController(
   );
 
   fastify.withTypeProvider<TypeBoxTypeProvider>().post(
+    "/compose/stream",
+    {
+      schema: {
+        description:
+          "Stream composer chat, progress, and the completed design.",
+        tags: ["Content"],
+        body: AmieComposeRequest,
+      },
+    },
+    async (request, reply) => {
+      if (!enabled) {
+        return reply.status(503).send({
+          message: "Amie composer is disabled.",
+          reasonCode: AmieComposerReasonCode.Disabled,
+        });
+      }
+
+      void reply.code(200);
+      void reply.hijack();
+      reply.raw.setHeader(
+        "Content-Type",
+        "application/x-ndjson; charset=utf-8",
+      );
+      reply.raw.setHeader("Cache-Control", "no-cache, no-transform");
+      reply.raw.setHeader("X-Accel-Buffering", "no");
+      const sendEvent = (event: unknown) => {
+        reply.raw.write(`${JSON.stringify(event)}\n`);
+      };
+      const startedAt = Date.now();
+      let stageStartedAt = startedAt;
+      let currentStage = "thinking";
+      const stageMs: Record<string, number> = {};
+      const stageKey = (status: "Thinking…" | AmieComposeStage): string => {
+        if (status === "Thinking…") return "thinking";
+        if (status === "Writing…") return "writing";
+        if (status === "Assembling") return "assemble";
+        return "liquid";
+      };
+      const beginStage = (status: "Thinking…" | AmieComposeStage) => {
+        const now = Date.now();
+        if (status !== "Thinking…")
+          stageMs[currentStage] = now - stageStartedAt;
+        currentStage = stageKey(status);
+        stageStartedAt = now;
+        sendEvent({ type: "status", status });
+      };
+
+      try {
+        beginStage("Thinking…");
+        const knownUserProperties = await loadUserPropertyNames(
+          request.body.workspaceId,
+        );
+        const selectedModelId = selectComposerModelId(
+          request.body,
+          modelId,
+          fastModelId,
+        );
+        beginStage("Writing…");
+        const composePromise = composeAmieEmail({
+          request: request.body,
+          bedrockClient,
+          modelId: selectedModelId,
+          imageGenerationAvailable,
+          storageClient,
+          imageGenerator: options.imageGenerator,
+          knownUserProperties,
+          onStage: (stage) => {
+            if (stage !== "Writing…") beginStage(stage);
+          },
+        });
+        const chatPromise = streamAssistantReply({
+          request: request.body,
+          bedrockClient: bedrockStreamClient,
+          modelId: selectedModelId,
+          onChunk: (text) => sendEvent({ type: "chunk", text }),
+        }).catch((error: unknown) => {
+          logger().warn(
+            { errorMessage: errorMessage(error), model: selectedModelId },
+            "Amie composer chat stream failed",
+          );
+        });
+        const [response] = await Promise.all([composePromise, chatPromise]);
+        stageMs[currentStage] = Date.now() - stageStartedAt;
+        sendEvent({ type: "result", response });
+        logger().info(
+          {
+            model: selectedModelId,
+            ...stageMs,
+            totalMs: Date.now() - startedAt,
+          },
+          "Amie composer timing",
+        );
+      } catch (error) {
+        sendEvent({
+          type: "error",
+          message: "That change didn’t go through. Your draft is untouched.",
+        });
+        logger().error(
+          {
+            workspaceId: request.body.workspaceId,
+            errorMessage: errorMessage(error),
+          },
+          "Amie composer stream failed",
+        );
+      } finally {
+        reply.raw.end();
+      }
+      return reply;
+    },
+  );
+
+  fastify.withTypeProvider<TypeBoxTypeProvider>().post(
     "/compose/sanitize-html",
     {
       schema: {
@@ -760,7 +1151,10 @@ export default async function amieComposerController(
             await importHtml({
               request: request.body,
               bedrockClient,
-              modelId,
+              modelId: fastModelId,
+              knownUserProperties: await loadUserPropertyNames(
+                request.body.workspaceId,
+              ),
             }),
           )
         : reply.status(503).send({
@@ -791,14 +1185,45 @@ export default async function amieComposerController(
         });
       }
       try {
+        const startedAt = Date.now();
+        const knownUserProperties = await loadUserPropertyNames(
+          request.body.workspaceId,
+        );
+        const timings: Record<string, number> = {
+          thinking: Date.now() - startedAt,
+        };
+        let stageStartedAt = Date.now();
+        let currentStage = "writing";
+        const selectedModelId = selectComposerModelId(
+          request.body,
+          modelId,
+          fastModelId,
+        );
         const response = await composeAmieEmail({
           request: request.body,
           bedrockClient,
-          modelId,
+          modelId: selectedModelId,
           imageGenerationAvailable,
           storageClient,
           imageGenerator: options.imageGenerator,
+          knownUserProperties,
+          onStage: (stage) => {
+            if (stage === "Writing…") return;
+            const now = Date.now();
+            timings[currentStage] = now - stageStartedAt;
+            currentStage = stage === "Assembling" ? "assemble" : "liquid";
+            stageStartedAt = now;
+          },
         });
+        timings[currentStage] = Date.now() - stageStartedAt;
+        logger().info(
+          {
+            model: selectedModelId,
+            ...timings,
+            totalMs: Date.now() - startedAt,
+          },
+          "Amie composer timing",
+        );
         return reply.status(200).send(response);
       } catch (error) {
         const reasonCode =
