@@ -26,18 +26,24 @@ Backfill every contact:
 node scripts/mautic-engagement-backfill.mjs --live
 ```
 
-The script reads contacts in pages of 200, uses engagement fields already
-present in the list response, and never makes a per-contact request. It merges
-only `mauticLastActiveAt`, `mauticPoints`, and `mauticEngagementTier` through
-the public identify endpoint. Message IDs and user IDs are deterministic, so a
-rerun is idempotent.
+The script first reads all Mautic `email_stats` and `page_hits` rows in pages of
+500 and aggregates them by lead ID in memory. It then reads contacts in pages of
+200 and joins those aggregates without making per-contact requests. `--sample`
+limits contacts only; both stats tables are always read in full. The output
+prints the row count fetched from each stats table and the tier distribution.
 
-`mauticLastActiveAt` is the latest valid timestamp found among Mautic's
-`lastActive`, `fields.core.last_active`, `fields.all.last_active`,
-`dateModified`, `dateAdded`, and any email open/click/read/engagement timestamp
-already included in the contact list payload. SQL-style timestamps without an
-offset are treated as UTC. Tiers are hot through 30 days, warm through 90 days,
-cool through 180 days, and cold after 180 days or when no timestamp is present.
+It merges `mauticLastSentAt`, `mauticSentCount`, `mauticLastOpenedAt`,
+`mauticOpenCount`, `mauticLastClickedAt`, `mauticClickCount`,
+`mauticLastActiveAt`, `mauticPoints`, and `mauticEngagementTier` through the
+public identify endpoint. Message IDs and user IDs are deterministic, so a
+rerun is idempotent. Open timestamps prefer `last_opened` or `date_read` when
+present and otherwise use `date_sent` for rows marked as read. Clicks are
+`page_hits` rows with a non-null `email_id`.
+
+The tier uses the newer of the last open and last click: hot through 30 days,
+warm through 90 days, cool through 180 days, and cold after 180 days or when a
+contact has never opened or clicked. `mauticLastActiveAt` and `mauticPoints` are
+still included as traits but do not affect the tier.
 
 ## 2. Provision warm-up segments
 
@@ -68,5 +74,5 @@ segments by workspace, matches the four names, and sends each definition to
 ## Tests
 
 ```bash
-node --test scripts/mautic-engagement-backfill.test.mjs scripts/provision-warmup-segments.test.mjs
+node --test scripts/*.test.mjs
 ```

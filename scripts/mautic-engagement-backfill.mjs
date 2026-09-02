@@ -13,6 +13,7 @@ export const AMIE_MAUTIC_EMAIL_NAMESPACE =
   "6ba7b811-9dad-11d1-80b4-00c04fd430c8";
 
 const CONTACT_PAGE_SIZE = 200;
+const STATS_PAGE_SIZE = 500;
 const PAGE_DELAY_MS = 100;
 const MAX_CONCURRENCY = 10;
 const MAX_RETRIES = 3;
@@ -153,8 +154,20 @@ export function resolveMauticLastActiveAt(contact) {
   );
 }
 
-export function engagementTier(lastActiveAt, now = new Date()) {
-  const timestamp = normalizeIsoTimestamp(lastActiveAt);
+function latestTimestamp(...valuesToCompare) {
+  const timestamps = valuesToCompare.map(normalizeIsoTimestamp).filter(Boolean);
+  if (timestamps.length === 0) return null;
+  return timestamps.reduce((latest, candidate) =>
+    Date.parse(candidate) > Date.parse(latest) ? candidate : latest,
+  );
+}
+
+export function engagementTier(
+  lastOpenedAt,
+  lastClickedAt,
+  now = new Date(),
+) {
+  const timestamp = latestTimestamp(lastOpenedAt, lastClickedAt);
   if (!timestamp) return "cold";
   const nowMilliseconds = now instanceof Date ? now.getTime() : Date.parse(now);
   if (!Number.isFinite(nowMilliseconds)) {
@@ -172,32 +185,129 @@ function numericPoints(value) {
   return Number.isFinite(points) ? points : 0;
 }
 
-export function contactToEngagementTraits(contact, now = new Date()) {
+function numericCount(value) {
+  const count = Number(value);
+  return Number.isFinite(count) && count >= 0 ? count : 0;
+}
+
+function leadId(value) {
+  if (value === undefined || value === null) return null;
+  const normalized = String(value).trim();
+  return normalized || null;
+}
+
+function emptyStatsAggregate() {
+  return {
+    mauticLastSentAt: null,
+    mauticSentCount: 0,
+    mauticLastOpenedAt: null,
+    mauticOpenCount: 0,
+    mauticLastClickedAt: null,
+    mauticClickCount: 0,
+  };
+}
+
+function aggregateForLead(aggregates, id) {
+  let aggregate = aggregates.get(id);
+  if (!aggregate) {
+    aggregate = emptyStatsAggregate();
+    aggregates.set(id, aggregate);
+  }
+  return aggregate;
+}
+
+function isRead(value) {
+  return value === true || String(value).trim() === "1";
+}
+
+export function aggregateEmailStats(rows, aggregates = new Map()) {
+  for (const row of values(rows)) {
+    const id = leadId(row?.lead_id);
+    if (!id) continue;
+    const aggregate = aggregateForLead(aggregates, id);
+    const sentAt = normalizeIsoTimestamp(row?.date_sent);
+    aggregate.mauticSentCount += 1;
+    aggregate.mauticLastSentAt = latestTimestamp(
+      aggregate.mauticLastSentAt,
+      sentAt,
+    );
+
+    const openCount = numericCount(row?.open_count);
+    aggregate.mauticOpenCount += openCount;
+    const explicitOpenedAt = latestTimestamp(
+      row?.last_opened,
+      row?.date_read,
+    );
+    if (explicitOpenedAt || isRead(row?.is_read) || openCount > 0) {
+      aggregate.mauticLastOpenedAt = latestTimestamp(
+        aggregate.mauticLastOpenedAt,
+        explicitOpenedAt ?? sentAt,
+      );
+    }
+  }
+  return aggregates;
+}
+
+export function aggregatePageHits(rows, aggregates = new Map()) {
+  for (const row of values(rows)) {
+    const id = leadId(row?.lead_id);
+    if (!id || row?.email_id === undefined || row?.email_id === null) continue;
+    const aggregate = aggregateForLead(aggregates, id);
+    aggregate.mauticClickCount += 1;
+    aggregate.mauticLastClickedAt = latestTimestamp(
+      aggregate.mauticLastClickedAt,
+      row?.date_hit,
+    );
+  }
+  return aggregates;
+}
+
+export function contactToEngagementTraits(
+  contact,
+  statsByLeadId = new Map(),
+  now = new Date(),
+) {
   const email = normalizeEmail(
     coreField(contact, "email") ?? allField(contact, "email"),
   );
   if (!email) return null;
   const mauticLastActiveAt = resolveMauticLastActiveAt(contact);
+  const stats = statsByLeadId.get(leadId(contact?.id)) ?? emptyStatsAggregate();
   return {
+    ...stats,
     mauticLastActiveAt,
     mauticPoints: numericPoints(contact?.points),
-    mauticEngagementTier: engagementTier(mauticLastActiveAt, now),
+    mauticEngagementTier: engagementTier(
+      stats.mauticLastOpenedAt,
+      stats.mauticLastClickedAt,
+      now,
+    ),
   };
 }
 
 function stableTraitsString(traits) {
   return JSON.stringify({
+    mauticLastSentAt: traits.mauticLastSentAt,
+    mauticSentCount: traits.mauticSentCount,
+    mauticLastOpenedAt: traits.mauticLastOpenedAt,
+    mauticOpenCount: traits.mauticOpenCount,
+    mauticLastClickedAt: traits.mauticLastClickedAt,
+    mauticClickCount: traits.mauticClickCount,
     mauticLastActiveAt: traits.mauticLastActiveAt,
     mauticPoints: traits.mauticPoints,
     mauticEngagementTier: traits.mauticEngagementTier,
   });
 }
 
-export function contactToIdentifyPayload(contact, now = new Date()) {
+export function contactToIdentifyPayload(
+  contact,
+  statsByLeadId = new Map(),
+  now = new Date(),
+) {
   const email = normalizeEmail(
     coreField(contact, "email") ?? allField(contact, "email"),
   );
-  const traits = contactToEngagementTraits(contact, now);
+  const traits = contactToEngagementTraits(contact, statsByLeadId, now);
   if (!email || !traits) return null;
   const userId = deriveUserId(email);
   return {
@@ -215,6 +325,13 @@ export function buildContactsPageUrl(baseUrl, start) {
   url.searchParams.set("start", String(start));
   url.searchParams.set("where[0][col]", "email");
   url.searchParams.set("where[0][expr]", "isNotNull");
+  return url;
+}
+
+export function buildStatsPageUrl(baseUrl, table, start) {
+  const url = joinBaseUrl(baseUrl, `api/stats/${table}`);
+  url.searchParams.set("limit", String(STATS_PAGE_SIZE));
+  url.searchParams.set("start", String(start));
   return url;
 }
 
@@ -350,6 +467,13 @@ function values(value) {
   return [];
 }
 
+function extractRows(payload, preferredKeys) {
+  for (const key of preferredKeys) {
+    if (payload?.[key] !== undefined) return values(payload[key]);
+  }
+  return [];
+}
+
 function numericTotal(payload, fallback) {
   const total = Number(payload?.total);
   return Number.isFinite(total) && total >= 0 ? total : fallback;
@@ -447,6 +571,36 @@ async function fetchContacts(config, requestOptions, sample, log) {
   return contacts;
 }
 
+async function fetchAndAggregateStats(
+  config,
+  requestOptions,
+  table,
+  preferredKeys,
+  aggregateRows,
+  aggregates,
+) {
+  let start = 0;
+  let total = Infinity;
+  let rowsFetched = 0;
+
+  while (start < total) {
+    const payload = await getJson(
+      buildStatsPageUrl(config.mauticBaseUrl, table, start),
+      config.mauticHeaders,
+      requestOptions,
+      `fetch Mautic ${table} page`,
+    );
+    const page = extractRows(payload, preferredKeys);
+    total = numericTotal(payload, start + page.length);
+    aggregateRows(page, aggregates);
+    rowsFetched += page.length;
+    start += STATS_PAGE_SIZE;
+    if (page.length === 0 || start >= total) break;
+    await requestOptions.sleep(PAGE_DELAY_MS);
+  }
+  return rowsFetched;
+}
+
 function createTierDistribution() {
   return Object.fromEntries(TIER_ORDER.map((tier) => [tier, 0]));
 }
@@ -472,6 +626,8 @@ function createSummary(flags) {
     status: "ok",
     mode: flags.live ? "live" : "dry-run",
     sample: flags.sample,
+    emailStatsRowsFetched: 0,
+    pageHitsRowsFetched: 0,
     contactsFetched: 0,
     contactsEligible: 0,
     contactsSkippedNoEmail: 0,
@@ -572,6 +728,25 @@ export async function runBackfill({
   const summary = createSummary(flags);
   const failureTracker = new FailureTracker();
   const requestOptions = { fetchImpl, sleep, random, failureTracker };
+  const statsByLeadId = new Map();
+  summary.emailStatsRowsFetched = await fetchAndAggregateStats(
+    config,
+    requestOptions,
+    "email_stats",
+    ["stats", "email_stats", "emailStats", "rows"],
+    aggregateEmailStats,
+    statsByLeadId,
+  );
+  log(`Mautic email_stats rows fetched: ${summary.emailStatsRowsFetched}`);
+  summary.pageHitsRowsFetched = await fetchAndAggregateStats(
+    config,
+    requestOptions,
+    "page_hits",
+    ["page_hits", "pageHits", "stats", "rows"],
+    aggregatePageHits,
+    statsByLeadId,
+  );
+  log(`Mautic page_hits rows fetched: ${summary.pageHitsRowsFetched}`);
   const contacts = await fetchContacts(
     config,
     requestOptions,
@@ -582,7 +757,7 @@ export async function runBackfill({
 
   const payloadsByUserId = new Map();
   for (const contact of contacts) {
-    const payload = contactToIdentifyPayload(contact, now);
+    const payload = contactToIdentifyPayload(contact, statsByLeadId, now);
     if (!payload) {
       summary.contactsSkippedNoEmail += 1;
       continue;
