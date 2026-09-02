@@ -49,14 +49,18 @@ export function useBaseApiUrl({
 
 export function useAuthHeaders(): Record<string, string> {
   const authContext = useContext(AuthContext);
-  switch (authContext.type) {
-    case AuthModeTypeEnum.Embedded:
-      return { Authorization: `Bearer ${authContext.token}` };
-    case AuthModeTypeEnum.Base:
-      return {};
-    default:
-      assertUnreachable(authContext);
-  }
+  const embeddedToken =
+    authContext.type === AuthModeTypeEnum.Embedded
+      ? authContext.token
+      : undefined;
+
+  return useMemo<Record<string, string>>(() => {
+    const headers: Record<string, string> = {};
+    if (authContext.type === AuthModeTypeEnum.Embedded) {
+      headers.Authorization = `Bearer ${embeddedToken}`;
+    }
+    return headers;
+  }, [authContext.type, embeddedToken]);
 }
 
 interface UniversalRouter {
