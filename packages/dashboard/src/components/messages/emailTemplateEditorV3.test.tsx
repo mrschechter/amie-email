@@ -11,6 +11,7 @@ import { createRoot, Root } from "react-dom/client";
 
 import { SetDraft } from "../templateEditor";
 import EmailTemplateEditorV3, {
+  relativeSavedLabel,
   StableEmailPreview,
 } from "./emailTemplateEditorV3";
 
@@ -129,6 +130,34 @@ function changeInput(
   setter?.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function pressEnter(
+  input: HTMLTextAreaElement,
+  options: { shiftKey?: boolean; isComposing?: boolean } = {},
+) {
+  const event = new KeyboardEvent("keydown", {
+    key: "Enter",
+    shiftKey: options.shiftKey,
+    bubbles: true,
+    cancelable: true,
+  });
+  Object.defineProperty(event, "isComposing", {
+    value: options.isComposing ?? false,
+  });
+  input.dispatchEvent(event);
+}
+
+function composerResponse() {
+  return {
+    data: {
+      subject: "Revised subject",
+      previewText: "Revised preview",
+      blocks: [{ type: "paragraph", params: { text: "Revised body" } }],
+      html: "<html><body>Revised body unsubscribe</body></html>",
+      designNotes: "Kept it concise.",
+    },
+  };
 }
 
 function Harness() {
@@ -277,6 +306,70 @@ describe("EmailTemplateEditorV3", () => {
     ).toContain("Updated body");
   });
 
+  it("sends the assistant prompt with Enter", async () => {
+    mockAxiosPost.mockResolvedValue(composerResponse());
+    await act(async () => root.render(<Harness />));
+    const prompt = requiredElement(
+      container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="Assistant prompt"]',
+      ),
+      "Assistant prompt",
+    );
+    act(() => changeInput(prompt, "Make it warmer"));
+
+    await act(async () => pressEnter(prompt));
+
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+    expect(mockAxiosPost.mock.calls[0]?.[1].conversation).toEqual([
+      { role: "user", content: "Make it warmer" },
+    ]);
+  });
+
+  it("does not send the assistant prompt with Shift+Enter", async () => {
+    await act(async () => root.render(<Harness />));
+    const prompt = requiredElement(
+      container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="Assistant prompt"]',
+      ),
+      "Assistant prompt",
+    );
+    act(() => changeInput(prompt, "First line"));
+
+    act(() => pressEnter(prompt, { shiftKey: true }));
+
+    expect(mockAxiosPost).not.toHaveBeenCalled();
+  });
+
+  it("does not send an empty assistant prompt with Enter", async () => {
+    await act(async () => root.render(<Harness />));
+    const prompt = requiredElement(
+      container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="Assistant prompt"]',
+      ),
+      "Assistant prompt",
+    );
+    act(() => changeInput(prompt, "   \n"));
+
+    act(() => pressEnter(prompt));
+
+    expect(mockAxiosPost).not.toHaveBeenCalled();
+  });
+
+  it("does not send the assistant prompt with Enter during IME composition", async () => {
+    await act(async () => root.render(<Harness />));
+    const prompt = requiredElement(
+      container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="Assistant prompt"]',
+      ),
+      "Assistant prompt",
+    );
+    act(() => changeInput(prompt, "Composed text"));
+
+    act(() => pressEnter(prompt, { isComposing: true }));
+
+    expect(mockAxiosPost).not.toHaveBeenCalled();
+  });
+
   it("sends hand-edited code through the rawHtml revision path", async () => {
     mockAxiosPost.mockResolvedValue({
       data: {
@@ -388,5 +481,37 @@ describe("EmailTemplateEditorV3", () => {
     act(() => bump());
     act(() => bump());
     expect(onRender).toHaveBeenCalledTimes(1);
+  });
+
+  it("humanizes saved-time boundaries", () => {
+    const now = new Date(2026, 0, 15, 12).getTime();
+    const minute = 60_000;
+    const hour = 60 * minute;
+
+    expect(relativeSavedLabel(now - minute + 1, false, now)).toBe(
+      "Saved just now",
+    );
+    expect(relativeSavedLabel(now - minute, false, now)).toBe(
+      "Saved 1 min ago",
+    );
+    expect(relativeSavedLabel(now - hour + 1, false, now)).toBe(
+      "Saved 59 min ago",
+    );
+    expect(relativeSavedLabel(now - hour, false, now)).toBe("Saved 1 h ago");
+    expect(relativeSavedLabel(now - 24 * hour + 1, false, now)).toBe(
+      "Saved 23 h ago",
+    );
+    expect(relativeSavedLabel(now - 24 * hour, false, now)).toBe(
+      "Saved yesterday",
+    );
+    expect(
+      relativeSavedLabel(new Date(2026, 0, 13, 12).getTime(), false, now),
+    ).toBe("Saved on Jan 13");
+    expect(
+      relativeSavedLabel(new Date(2025, 0, 15, 12).getTime(), false, now),
+    ).toBe("Saved on Jan 15");
+    expect(
+      relativeSavedLabel(new Date(2025, 0, 14, 12).getTime(), false, now),
+    ).toBe("Saved on Jan 14, 2025");
   });
 });

@@ -117,16 +117,45 @@ export function emailHtmlToSms(html: string): string {
     .slice(0, 1500);
 }
 
-function relativeSavedLabel(lastSavedAt: number | null, saving: boolean) {
+export function relativeSavedLabel(
+  lastSavedAt: number | null,
+  saving: boolean,
+  now = Date.now(),
+) {
   if (saving) return "Saving…";
   if (!lastSavedAt) return "Saved";
-  const elapsedMinutes = Math.max(
-    0,
-    Math.floor((Date.now() - lastSavedAt) / 60_000),
-  );
-  if (elapsedMinutes < 1) return "Saved just now";
-  if (elapsedMinutes === 1) return "Saved 1 min ago";
-  return `Saved ${elapsedMinutes} min ago`;
+  const elapsedMilliseconds = Math.max(0, now - lastSavedAt);
+  if (elapsedMilliseconds < 60_000) return "Saved just now";
+  if (elapsedMilliseconds < 60 * 60_000) {
+    return `Saved ${Math.floor(elapsedMilliseconds / 60_000)} min ago`;
+  }
+  if (elapsedMilliseconds < 24 * 60 * 60_000) {
+    return `Saved ${Math.floor(elapsedMilliseconds / (60 * 60_000))} h ago`;
+  }
+
+  const savedDate = new Date(lastSavedAt);
+  const currentDate = new Date(now);
+  const startOfToday = new Date(
+    currentDate.getFullYear(),
+    currentDate.getMonth(),
+    currentDate.getDate(),
+  ).getTime();
+  const startOfSavedDay = new Date(
+    savedDate.getFullYear(),
+    savedDate.getMonth(),
+    savedDate.getDate(),
+  ).getTime();
+  const yesterday = new Date(startOfToday);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (startOfSavedDay === yesterday.getTime()) return "Saved yesterday";
+
+  const oneYearAgo = new Date(now);
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+  return `Saved on ${savedDate.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(lastSavedAt < oneYearAgo.getTime() ? { year: "numeric" } : {}),
+  })}`;
 }
 
 function containsBrandAndFooter(html: string) {
@@ -1074,6 +1103,18 @@ export default function EmailTemplateEditorV3({
                       value={input}
                       disabled={assistantDisabled}
                       onChange={(event) => setInput(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (
+                          event.key !== "Enter" ||
+                          event.shiftKey ||
+                          event.nativeEvent.isComposing
+                        ) {
+                          return;
+                        }
+                        event.preventDefault();
+                        if (!input.trim() || assistantDisabled) return;
+                        void requestComposition(input);
+                      }}
                       placeholder="Describe a change, or ask for a new draft…"
                       InputProps={{
                         disableUnderline: true,
@@ -1106,8 +1147,9 @@ export default function EmailTemplateEditorV3({
                       textAlign: "center",
                     }}
                   >
-                    The assistant writes in Amie&apos;s voice and always
-                    includes the unsubscribe footer.
+                    ↵ to send · shift+↵ for a new line · The assistant writes in
+                    Amie&apos;s voice and always includes the unsubscribe
+                    footer.
                   </Typography>
                 </Box>
               </Stack>
