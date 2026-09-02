@@ -213,6 +213,78 @@ describe("amieComposerController", () => {
     );
   });
 
+  it("includes only the supplied image URLs in the model instructions", async () => {
+    const send = bedrockSendMock().mockResolvedValue({
+      body: bedrockBody({
+        subject: "With a hero",
+        previewText: "See what’s new.",
+        blocks: [
+          {
+            type: "heroImage",
+            params: {
+              src: "https://assets.tryamie.com/public/workspace/image.jpg",
+              alt: "Amie product",
+            },
+          },
+        ],
+      }),
+    });
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      bedrockClient: { send },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose",
+      payload: {
+        workspaceId: "workspace-1",
+        prompt: "Use the product image as a hero.",
+        images: [
+          {
+            url: "https://assets.tryamie.com/public/workspace/image.jpg",
+            alt: "Amie product",
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const command: InvokeModelCommand | undefined = send.mock.calls[0]?.[0];
+    const requestBody = String(command?.input.body);
+    expect(requestBody).toContain("Use ONLY image URLs");
+    expect(requestBody).toContain(
+      "https://assets.tryamie.com/public/workspace/image.jpg",
+    );
+    expect(response.json<AmieComposeResponse>().html).toContain(
+      'src="https://assets.tryamie.com/public/workspace/image.jpg"',
+    );
+  });
+
+  it("keeps http images and strips unsafe image sources from pasted HTML", async () => {
+    const send = bedrockSendMock();
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      bedrockClient: { send },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose/sanitize-html",
+      payload: {
+        workspaceId: "workspace-1",
+        html: '<img src="https://assets.tryamie.com/good.jpg"><img src="javascript:bad()">',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<AmieSanitizeHtmlResponse>().html).toBe(
+      '<img src="https://assets.tryamie.com/good.jpg"><img>',
+    );
+  });
+
   it("accepts a fence-wrapped model response with surrounding prose", async () => {
     const send = bedrockSendMock().mockResolvedValue({
       body: bedrockText(

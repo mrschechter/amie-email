@@ -5,6 +5,8 @@ import {
   AmieFooterParams,
   AmieHeaderParams,
   AmieHeroHeadingParams,
+  AmieHeroImageParams,
+  AmieImageParams,
   AmieParagraphParams,
   AmieProductCardParams,
   AmieTestimonialParams,
@@ -99,7 +101,7 @@ export function ctaButton(params: AmieCtaButtonParams): string {
 
 export function productCard(params: AmieProductCardParams): string {
   const imageUrl = params.imageUrl ? httpUrl(params.imageUrl) : null;
-  const image = imageUrl
+  const imageContent = imageUrl
     ? `<tr>
     <td style="padding:0 0 18px;"><img src="${imageUrl}" width="504" alt="${escapeHtml(params.title)}" style="display:block;width:100%;max-width:504px;height:auto;border:0;outline:none;text-decoration:none;"></td>
   </tr>`
@@ -122,7 +124,7 @@ export function productCard(params: AmieProductCardParams): string {
         <tr>
           <td style="padding:24px;">
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;${TABLE_RESET}">
-              ${image}
+              ${imageContent}
               <tr>
                 <td style="padding:0;font-family:Georgia,'Times New Roman',serif;font-size:22px;line-height:29px;font-weight:bold;color:#3E3733;">${textWithLineBreaks(params.title)}</td>
               </tr>
@@ -137,6 +139,35 @@ export function productCard(params: AmieProductCardParams): string {
       </table>
     </td>
   </tr>
+</table>`;
+}
+
+export function image(params: AmieImageParams): string {
+  const src = httpUrl(params.src) ?? "";
+  const width = params.width ?? 600;
+  const imageHtml = `<img src="${src}" width="${width}" alt="${escapeHtml(params.alt)}" style="display:block;width:100%;max-width:${width}px;height:auto;border:0;outline:none;text-decoration:none;">`;
+  const content = params.href
+    ? `<a href="${httpUrl(params.href) ?? "#"}" target="_blank" style="text-decoration:none;">${imageHtml}</a>`
+    : imageHtml;
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;${TABLE_RESET}">
+  <tr>
+    <td align="center" style="padding:26px 0 0;">${content}</td>
+  </tr>
+</table>`;
+}
+
+export function heroImage(params: AmieHeroImageParams): string {
+  const src = httpUrl(params.src) ?? "";
+  const imageHtml = `<img src="${src}" width="600" alt="${escapeHtml(params.alt)}" style="display:block;width:100%;max-width:600px;height:auto;border:0;outline:none;text-decoration:none;">`;
+  const content = params.href
+    ? `<a href="${httpUrl(params.href) ?? "#"}" target="_blank" style="text-decoration:none;">${imageHtml}</a>`
+    : imageHtml;
+  const headline = params.headline
+    ? `<tr><td style="padding:28px 48px 0;font-family:Georgia,'Times New Roman',serif;font-size:30px;line-height:38px;font-weight:bold;color:#3E3733;">${textWithLineBreaks(params.headline)}</td></tr>`
+    : "";
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;${TABLE_RESET}">
+  <tr><td align="center" style="padding:0;">${content}</td></tr>
+  ${headline}
 </table>`;
 }
 
@@ -192,6 +223,10 @@ export function renderBlock(block: AmieBlockSpec): string {
       return ctaButton(block.params);
     case "productCard":
       return productCard(block.params);
+    case "image":
+      return image(block.params);
+    case "heroImage":
+      return heroImage(block.params);
     case "testimonial":
       return testimonial(block.params);
     case "divider":

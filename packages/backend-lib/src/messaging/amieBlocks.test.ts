@@ -8,6 +8,8 @@ import {
   footer,
   header,
   heroHeading,
+  heroImage,
+  image,
   paragraph,
   productCard,
   testimonial,
@@ -53,6 +55,21 @@ describe("Amie email blocks", () => {
       }),
     },
     {
+      name: "image",
+      html: image({
+        src: "https://assets.example.com/lifestyle.jpg",
+        alt: "A calm morning",
+      }),
+    },
+    {
+      name: "hero image",
+      html: heroImage({
+        src: "https://assets.example.com/hero.jpg",
+        alt: "Amie products",
+        headline: "Feel like yourself again",
+      }),
+    },
+    {
       name: "testimonial",
       html: testimonial({
         quote: "It fits my routine.",
@@ -85,6 +102,32 @@ describe("Amie email blocks", () => {
     expect(html).not.toContain("<script>");
     expect(html).not.toContain(UNSAFE_SCRIPT_URL);
     expect(html).toContain('href="#"');
+  });
+
+  it("renders image attributes with email-safe defaults", () => {
+    const html = image({
+      src: "https://assets.example.com/product.jpg",
+      alt: 'Bottle <detail> "view"',
+      href: "https://example.com/product",
+    });
+
+    expect(html).toContain('src="https://assets.example.com/product.jpg"');
+    expect(html).toContain('width="600"');
+    expect(html).toContain("max-width:600px");
+    expect(html).toContain('alt="Bottle &lt;detail&gt; &quot;view&quot;"');
+    expect(html).toContain('href="https://example.com/product"');
+  });
+
+  it("renders a full-width hero image and optional headline", () => {
+    const html = heroImage({
+      src: "https://assets.example.com/hero.webp",
+      alt: "Lifestyle",
+      headline: "A brighter next chapter",
+    });
+
+    expect(html).toContain('src="https://assets.example.com/hero.webp"');
+    expect(html).toContain('width="600"');
+    expect(html).toContain("A brighter next chapter");
   });
 
   it("wraps blocks in the Outlook-proofed 600px shell", () => {

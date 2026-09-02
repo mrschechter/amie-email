@@ -59,7 +59,10 @@ function errorName(error: unknown): string {
   return error instanceof Error ? error.name : typeof error;
 }
 
-function systemPrompt(): string {
+function systemPrompt(images: AmieComposeRequest["images"]): string {
+  const imageInstruction = images?.length
+    ? `You may use images where they are sensible, especially for a hero or product card. Use ONLY image URLs from this provided list and never invent or modify an image URL: ${JSON.stringify(images)}.`
+    : "No image URLs were provided. Do not emit image, heroImage, or productCard imageUrl values, and never invent an image URL.";
   return `You compose polished marketing emails for Amie using only the supplied block schema.
 
 Amie's voice is warm, conversational, and specific. Speak to women ages 35–60 about health with empathy and practical clarity. Never use corporate boilerplate, empty wellness language, pressure tactics, or hype. Do not make unsupported medical claims.
@@ -70,6 +73,8 @@ BlockSpec JSON Schema:
 ${JSON.stringify(AmieComposerModelOutput.properties.blocks)}
 
 Use only schema-defined block types and parameters. Include a header and footer unless the user's request explicitly says otherwise. Paragraph values are plain text, not HTML. All links and image URLs must begin with http:// or https://. The footer's unsubscribe parameter is the visible link label; the server supplies the platform unsubscribe URL. The server replaces every footer addressLine with the configured mailing address before rendering, so do not invent a mailing address; any addressLine value you emit is ignored.
+
+${imageInstruction}
 
 For a revision, preserve the existing structure and wording wherever possible. Make only the changes requested by the latest user message.`;
 }
@@ -194,11 +199,13 @@ async function invokeComposerModel({
   modelId,
   messages,
   previousModelOutput = "",
+  images,
 }: {
   bedrockClient: BedrockInvoker;
   modelId: string;
   messages: ReturnType<typeof modelMessages>;
   previousModelOutput?: string;
+  images?: AmieComposeRequest["images"];
 }): Promise<string> {
   let response: { body?: Uint8Array };
   try {
@@ -211,7 +218,7 @@ async function invokeComposerModel({
           anthropic_version: "bedrock-2023-05-31",
           max_tokens: MAX_MODEL_OUTPUT_TOKENS,
           temperature: 0.3,
-          system: systemPrompt(),
+          system: systemPrompt(images),
           messages,
         }),
       }),
@@ -241,6 +248,7 @@ export async function composeAmieEmail({
     bedrockClient,
     modelId,
     messages,
+    images: request.images,
   });
 
   let output: AmieComposerModelOutput;
@@ -255,6 +263,7 @@ export async function composeAmieEmail({
       bedrockClient,
       modelId,
       previousModelOutput: firstModelOutput,
+      images: request.images,
       messages: [
         ...messages,
         { role: "assistant", content: firstModelOutput },
