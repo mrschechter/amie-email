@@ -1,10 +1,18 @@
 import {
+  Add,
   ArrowBack,
   ArrowDownward,
   ArrowUpward,
   AutoAwesome,
+  ContentCopy,
   DeleteOutline,
+  DragIndicator,
+  FormatQuote,
+  ImageOutlined,
   Send,
+  TextFields,
+  ViewAgenda,
+  ViewColumn,
 } from "@mui/icons-material";
 import {
   Alert,
@@ -15,8 +23,13 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControl,
   IconButton,
+  InputLabel,
+  Menu,
+  MenuItem,
   Paper,
+  Select,
   Stack,
   TextField,
   ToggleButton,
@@ -25,14 +38,18 @@ import {
   Typography,
 } from "@mui/material";
 import axios from "axios";
-import { AmieAsset } from "isomorphic-lib/src/amieAssets";
+import {
+  AmieAsset,
+  AmieAssetListResponse,
+} from "isomorphic-lib/src/amieAssets";
 import {
   AmieAssembleResponse,
   AmieBlockSpec,
+  AmieBlockStyle,
+  AmieBrandBackground,
   AmieComposeRequest,
   AmieComposeResponse,
-  AmieSanitizeHtmlResponse,
-  sanitizeAmieHtml,
+  AmieDesignBrief,
 } from "isomorphic-lib/src/amieComposer";
 import { defaultEmailDefinition } from "isomorphic-lib/src/email";
 import {
@@ -41,7 +58,13 @@ import {
   EmailContentsType,
   ResourceTypeEnum,
 } from "isomorphic-lib/src/types";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { useAppStorePick } from "../../lib/appStore";
 import {
@@ -53,6 +76,13 @@ import { useAmieComposerConfigQuery } from "../../lib/useAmieComposerConfigQuery
 import { useMessageTemplateQuery } from "../../lib/useMessageTemplateQuery";
 import { useMessageTemplateUpdateMutation } from "../../lib/useMessageTemplateUpdateMutation";
 import tokens from "../../themeCustomization/tokens";
+import {
+  AddableBlockType,
+  BLOCK_LIBRARY,
+  blockSummary,
+  createBlock,
+} from "./amieComposer/blockLibrary";
+import { AMIE_RECIPES, AmieRecipe } from "./amieComposer/recipes";
 import ImageAssetsPanel from "./imageAssetsPanel";
 
 type ConversationMessage = NonNullable<
@@ -64,20 +94,38 @@ interface EditableField {
   label: string;
   multiline?: boolean;
   optional?: boolean;
+  helperText?: string;
 }
+
+const BACKGROUNDS: { token: AmieBrandBackground; hex: string }[] = [
+  { token: "ivory", hex: "#FAF8F5" },
+  { token: "blush", hex: "#F5E6E0" },
+  { token: "white", hex: "#FFFFFF" },
+  { token: "teal", hex: "#2D7A7A" },
+  { token: "sage", hex: "#9CAF88" },
+];
 
 function editableFields(block: AmieBlockSpec): EditableField[] {
   switch (block.type) {
     case "header":
     case "divider":
+    case "spacer":
+    case "sectionBreak":
       return [];
     case "heroHeading":
       return [
-        { key: "title", label: "Title" },
+        { key: "title", label: "Title", multiline: true },
         { key: "subtitle", label: "Subtitle", multiline: true, optional: true },
       ];
     case "paragraph":
-      return [{ key: "text", label: "Text", multiline: true }];
+      return [
+        {
+          key: "text",
+          label: "Text",
+          multiline: true,
+          helperText: "Supports bold, italic, links, and line breaks.",
+        },
+      ];
     case "ctaButton":
       return [
         { key: "label", label: "Button label" },
@@ -115,7 +163,59 @@ function editableFields(block: AmieBlockSpec): EditableField[] {
         { key: "addressLine", label: "Address" },
         { key: "unsubscribe", label: "Unsubscribe label" },
       ];
+    case "twoColumn":
+      return [
+        { key: "image.src", label: "Image URL" },
+        { key: "image.alt", label: "Image alt text" },
+        { key: "heading", label: "Heading", optional: true },
+        { key: "body", label: "Body", multiline: true },
+        { key: "cta.label", label: "CTA label", optional: true },
+        { key: "cta.url", label: "CTA URL", optional: true },
+      ];
+    case "bulletList":
+      return [
+        { key: "heading", label: "Heading", optional: true },
+        {
+          key: "items",
+          label: "Items",
+          multiline: true,
+          helperText: "One item per line.",
+        },
+      ];
+    case "statsRow":
+      return [
+        {
+          key: "items",
+          label: "Stats",
+          multiline: true,
+          helperText: "One per line: value | label (2–4 rows).",
+        },
+      ];
+    case "quoteCallout":
+      return [
+        { key: "quote", label: "Quote", multiline: true },
+        { key: "attribution", label: "Attribution", optional: true },
+      ];
+    case "rawHtml":
+      return [{ key: "html", label: "Imported HTML", multiline: true }];
   }
+}
+
+function fieldValue(block: AmieBlockSpec, key: string): string {
+  if (block.type === "bulletList" && key === "items")
+    return block.params.items.join("\n");
+  if (block.type === "statsRow" && key === "items") {
+    return block.params.items
+      .map((item) => `${item.value} | ${item.label}`)
+      .join("\n");
+  }
+  const path = key.split(".");
+  let value: unknown = block.params;
+  for (const part of path) {
+    value =
+      value && typeof value === "object" ? Reflect.get(value, part) : undefined;
+  }
+  return typeof value === "string" ? value : "";
 }
 
 function updateBlockField(
@@ -123,35 +223,55 @@ function updateBlockField(
   field: EditableField,
   value: string,
 ): AmieBlockSpec {
-  const params: Record<string, unknown> = { ...block.params };
-  if (field.optional && value === "") {
-    Reflect.deleteProperty(params, field.key);
-  } else {
-    params[field.key] = value;
+  if (block.type === "bulletList" && field.key === "items") {
+    const items = value.split(/\r?\n/).filter((item) => item.trim().length > 0);
+    return {
+      ...block,
+      params: { ...block.params, items: items.length ? items : [""] },
+    };
   }
-  // The editable field list above is exhaustive for each discriminated block.
+  if (block.type === "statsRow" && field.key === "items") {
+    const items = value
+      .split(/\r?\n/)
+      .slice(0, 4)
+      .map((line) => {
+        const [statValue, ...label] = line.split("|");
+        return {
+          value: statValue?.trim() ?? "",
+          label: label.join("|").trim(),
+        };
+      });
+    while (items.length < 2) items.push({ value: "", label: "" });
+    return { ...block, params: { ...block.params, items } };
+  }
+  const params: Record<string, unknown> = { ...block.params };
+  const [first, second] = field.key.split(".");
+  if (!first) return block;
+  if (second) {
+    const nested = params[first];
+    const next = nested && typeof nested === "object" ? { ...nested } : {};
+    if (field.optional && value === "") Reflect.deleteProperty(next, second);
+    else Reflect.set(next, second, value);
+    params[first] = next;
+  } else if (field.optional && value === "") {
+    Reflect.deleteProperty(params, first);
+  } else {
+    params[first] = value;
+  }
+  // Field definitions are exhaustive for the discriminated block contract.
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   return { ...block, params } as AmieBlockSpec;
 }
 
-function fieldValue(block: AmieBlockSpec, key: string): string {
-  const value: unknown = Reflect.get(block.params, key);
-  return typeof value === "string" ? value : "";
-}
-
 function swapBlocks(
   blocks: AmieBlockSpec[],
-  firstIndex: number,
-  secondIndex: number,
+  from: number,
+  to: number,
 ): AmieBlockSpec[] {
-  const first = blocks[firstIndex];
-  const second = blocks[secondIndex];
-  if (first === undefined || second === undefined) {
-    return blocks;
-  }
+  if (from === to || !blocks[from] || !blocks[to]) return blocks;
   const next = [...blocks];
-  next[firstIndex] = second;
-  next[secondIndex] = first;
+  const [moved] = next.splice(from, 1);
+  if (moved) next.splice(to, 0, moved);
   return next;
 }
 
@@ -167,30 +287,386 @@ function escapePreviewText(value: string): string {
 function withPreviewText(html: string, previewText: string): string {
   const marker = 'mso-hide:all;">';
   const textStart = html.indexOf(marker);
-  if (textStart === -1) {
-    return html;
-  }
+  if (textStart === -1) return html;
   const valueStart = textStart + marker.length;
   const valueEnd = html.indexOf("</td></tr>", valueStart);
-  if (valueEnd === -1) {
-    return html;
-  }
-  return `${html.slice(0, valueStart)}${escapePreviewText(previewText)}${html.slice(valueEnd)}`;
+  return valueEnd === -1
+    ? html
+    : `${html.slice(0, valueStart)}${escapePreviewText(previewText)}${html.slice(valueEnd)}`;
+}
+
+function previewTextFromHtml(html: string): string {
+  const marker = 'mso-hide:all;">';
+  const start = html.indexOf(marker);
+  if (start === -1) return "";
+  const valueStart = start + marker.length;
+  const end = html.indexOf("</td></tr>", valueStart);
+  return end === -1
+    ? ""
+    : html
+        .slice(valueStart, end)
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+}
+
+function designerPreviewHtml(html: string): string {
+  const bridge = `<script>(function(){function select(index){document.querySelectorAll('[data-amie-block]').forEach(function(node){node.style.outline='';node.style.outlineOffset='';});var node=document.querySelector('[data-amie-block="'+index+'"]');if(node){node.style.outline='3px solid #2D7A7A';node.style.outlineOffset='-3px';}}document.addEventListener('click',function(event){var target=event.target&&event.target.closest?event.target.closest('[data-amie-block]'):null;if(target){event.preventDefault();parent.postMessage({type:'amie-block-select',index:Number(target.getAttribute('data-amie-block'))},'*');}});window.addEventListener('message',function(event){if(event.data&&event.data.type==='amie-block-highlight')select(event.data.index);});})();</script>`;
+  return html.includes("</body>")
+    ? html.replace("</body>", `${bridge}</body>`)
+    : `${html}${bridge}`;
+}
+
+function blockIcon(type: AmieBlockSpec["type"]) {
+  if (type === "image" || type === "heroImage" || type === "productCard")
+    return <ImageOutlined fontSize="small" />;
+  if (type === "twoColumn") return <ViewColumn fontSize="small" />;
+  if (type === "testimonial" || type === "quoteCallout")
+    return <FormatQuote fontSize="small" />;
+  if (type === "paragraph" || type === "heroHeading" || type === "bulletList")
+    return <TextFields fontSize="small" />;
+  return <ViewAgenda fontSize="small" />;
+}
+
+function brandBackground(value: unknown): AmieBrandBackground | null {
+  return BACKGROUNDS.find((item) => item.token === value)?.token ?? null;
+}
+
+function designGoal(value: unknown): AmieDesignBrief["goal"] {
+  if (
+    value === "winback" ||
+    value === "launch" ||
+    value === "newsletter" ||
+    value === "promo" ||
+    value === "welcome"
+  )
+    return value;
+  return undefined;
+}
+
+function designTone(value: unknown): AmieDesignBrief["tone"] {
+  if (value === "warm" || value === "clinical" || value === "playful")
+    return value;
+  return undefined;
+}
+
+function designDensity(value: unknown): AmieDesignBrief["density"] {
+  if (value === "airy" || value === "standard" || value === "dense")
+    return value;
+  return undefined;
+}
+
+function designHero(value: unknown): AmieDesignBrief["heroStyle"] {
+  if (
+    value === "bigImage" ||
+    value === "headlineFirst" ||
+    value === "productFirst"
+  )
+    return value;
+  return undefined;
+}
+
+function fieldMinRows(
+  block: AmieBlockSpec,
+  field: EditableField,
+): number | undefined {
+  if (!field.multiline) return undefined;
+  return block.type === "rawHtml" ? 10 : 2;
+}
+
+function AddBlockPicker({
+  disabled,
+  onAdd,
+}: {
+  disabled: boolean;
+  onAdd: (type: AddableBlockType) => void;
+}) {
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  return (
+    <>
+      <Button
+        size="small"
+        startIcon={<Add />}
+        disabled={disabled}
+        onClick={(event) => setAnchor(event.currentTarget)}
+      >
+        Add block
+      </Button>
+      <Menu
+        anchorEl={anchor}
+        open={Boolean(anchor)}
+        onClose={() => setAnchor(null)}
+        PaperProps={{ sx: { maxHeight: 480, width: 340 } }}
+      >
+        {BLOCK_LIBRARY.map((item) => (
+          <MenuItem
+            key={item.type}
+            onClick={() => {
+              onAdd(item.type);
+              setAnchor(null);
+            }}
+            sx={{ gap: 1.5, py: 1 }}
+          >
+            <Box
+              sx={{
+                width: 42,
+                height: 32,
+                borderRadius: 1,
+                bgcolor: item.color,
+                border: "1px solid",
+                borderColor: "divider",
+                flex: "0 0 auto",
+              }}
+            />
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="body2" fontWeight={600}>
+                {item.label}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {item.description}
+              </Typography>
+            </Box>
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
+  );
+}
+
+function Inspector({
+  block,
+  onChange,
+  onChooseImage,
+}: {
+  block: AmieBlockSpec;
+  onChange: (block: AmieBlockSpec) => void;
+  onChooseImage: (asset: AmieAsset) => void;
+}) {
+  const style = block.style ?? {};
+  const setStyle = (key: keyof AmieBlockStyle, value: string | null) => {
+    const next = { ...style };
+    if (!value) Reflect.deleteProperty(next, key);
+    else Reflect.set(next, key, value);
+    onChange({ ...block, style: next });
+  };
+  const imageBearing = [
+    "image",
+    "heroImage",
+    "productCard",
+    "twoColumn",
+  ].includes(block.type);
+  return (
+    <Stack spacing={2}>
+      <Box>
+        <Typography
+          variant="overline"
+          sx={{ color: tokens.colors.deepTeal, fontWeight: 700 }}
+        >
+          Inspector
+        </Typography>
+        <Typography sx={{ fontWeight: 600 }}>
+          {BLOCK_LIBRARY.find((item) => item.type === block.type)?.label ??
+            "Imported HTML"}
+        </Typography>
+      </Box>
+      {imageBearing && (
+        <ImageAssetsPanel
+          label="Choose image"
+          onInsert={onChooseImage}
+          onUploaded={onChooseImage}
+        />
+      )}
+      {block.type === "twoColumn" && (
+        <FormControl size="small" fullWidth>
+          <InputLabel>Image side</InputLabel>
+          <Select
+            label="Image side"
+            value={block.params.imageSide}
+            onChange={(event) =>
+              onChange({
+                ...block,
+                params: {
+                  ...block.params,
+                  imageSide: event.target.value === "right" ? "right" : "left",
+                },
+              })
+            }
+          >
+            <MenuItem value="left">Left</MenuItem>
+            <MenuItem value="right">Right</MenuItem>
+          </Select>
+        </FormControl>
+      )}
+      {block.type === "spacer" && (
+        <FormControl size="small" fullWidth>
+          <InputLabel>Height</InputLabel>
+          <Select
+            label="Height"
+            value={block.params.height}
+            onChange={(event) => {
+              const height = Number(event.target.value);
+              if (
+                height === 16 ||
+                height === 24 ||
+                height === 32 ||
+                height === 48
+              )
+                onChange({ ...block, params: { height } });
+            }}
+          >
+            {[16, 24, 32, 48].map((height) => (
+              <MenuItem key={height} value={height}>
+                {height}px
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+      )}
+      {block.type === "sectionBreak" && (
+        <FormControl size="small" fullWidth>
+          <InputLabel>Section background</InputLabel>
+          <Select
+            label="Section background"
+            value={block.params.background}
+            onChange={(event) => {
+              const background = brandBackground(event.target.value);
+              if (background) onChange({ ...block, params: { background } });
+            }}
+          >
+            {BACKGROUNDS.map((item) => (
+              <MenuItem key={item.token} value={item.token}>
+                {item.token}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+      )}
+      {editableFields(block).map((field) => (
+        <TextField
+          key={field.key}
+          label={field.label}
+          value={fieldValue(block, field.key)}
+          multiline={field.multiline}
+          minRows={fieldMinRows(block, field)}
+          helperText={field.helperText}
+          size="small"
+          fullWidth
+          onChange={(event) =>
+            onChange(updateBlockField(block, field, event.target.value))
+          }
+        />
+      ))}
+      {block.type !== "rawHtml" && (
+        <Stack spacing={1.25}>
+          <Typography variant="caption" fontWeight={700}>
+            Background
+          </Typography>
+          <Stack direction="row" spacing={0.75}>
+            {BACKGROUNDS.map((item) => (
+              <Tooltip key={item.token} title={item.token}>
+                <IconButton
+                  aria-label={`${item.token} background`}
+                  size="small"
+                  onClick={() =>
+                    setStyle(
+                      "background",
+                      style.background === item.token ? null : item.token,
+                    )
+                  }
+                  sx={{
+                    width: 28,
+                    height: 28,
+                    bgcolor: item.hex,
+                    border: "2px solid",
+                    borderColor:
+                      style.background === item.token
+                        ? tokens.colors.deepTeal
+                        : tokens.colors.borderCard,
+                    "&:hover": { bgcolor: item.hex },
+                  }}
+                />
+              </Tooltip>
+            ))}
+          </Stack>
+          <Typography variant="caption" fontWeight={700}>
+            Alignment
+          </Typography>
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={style.align ?? null}
+            onChange={(_event, value) => setStyle("align", value)}
+            fullWidth
+          >
+            <ToggleButton value="left">Left</ToggleButton>
+            <ToggleButton value="center">Center</ToggleButton>
+          </ToggleButtonGroup>
+          <Typography variant="caption" fontWeight={700}>
+            Padding
+          </Typography>
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={style.padding ?? null}
+            onChange={(_event, value) => setStyle("padding", value)}
+            fullWidth
+          >
+            <ToggleButton value="tight">Tight</ToggleButton>
+            <ToggleButton value="normal">Normal</ToggleButton>
+            <ToggleButton value="loose">Loose</ToggleButton>
+          </ToggleButtonGroup>
+          <Typography variant="caption" fontWeight={700}>
+            Text size
+          </Typography>
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={style.textSize ?? null}
+            onChange={(_event, value) => setStyle("textSize", value)}
+            fullWidth
+          >
+            <ToggleButton value="s">S</ToggleButton>
+            <ToggleButton value="m">M</ToggleButton>
+            <ToggleButton value="l">L</ToggleButton>
+          </ToggleButtonGroup>
+          {(block.type === "ctaButton" || block.type === "twoColumn") && (
+            <>
+              <Typography variant="caption" fontWeight={700}>
+                Button
+              </Typography>
+              <ToggleButtonGroup
+                exclusive
+                size="small"
+                value={style.buttonVariant ?? null}
+                onChange={(_event, value) => setStyle("buttonVariant", value)}
+                fullWidth
+              >
+                <ToggleButton value="primary">Primary</ToggleButton>
+                <ToggleButton value="secondary">Outline</ToggleButton>
+                <ToggleButton value="roseGold">Rose</ToggleButton>
+              </ToggleButtonGroup>
+            </>
+          )}
+        </Stack>
+      )}
+    </Stack>
+  );
 }
 
 function assistantConfirmation(revision: boolean): ConversationMessage {
   return {
     role: "assistant",
     content: revision
-      ? "Done — I updated the email."
-      : "Your draft is ready. Tell me what you’d like to refine.",
+      ? "Done — I updated the design."
+      : "Your designed draft is ready. Tell me what you’d like to refine.",
   };
 }
 
 function hasLiquidField(value: string): boolean {
   return /{{[\s\S]*?}}|{%[\s\S]*?%}/.test(value);
 }
-
 function hasUnsubscribeField(value: string): boolean {
   return /(?:{{[\s\S]*?unsubscribe[\s\S]*?}}|{%[\s\S]*?unsubscribe[\s\S]*?%})/i.test(
     value,
@@ -207,7 +683,7 @@ export default function AmieComposer({
   isNew?: boolean;
 }) {
   const baseApiUrl = useBaseApiUrl();
-  const authorization = useAuthHeaders().Authorization;
+  const authHeaders = useAuthHeaders();
   const universalRouter = useUniversalRouter();
   const { workspace } = useAppStorePick(["workspace"]);
   const composerConfig = useAmieComposerConfigQuery();
@@ -216,6 +692,8 @@ export default function AmieComposer({
   });
   const { data: template } = templateQuery;
   const saveTemplate = useMessageTemplateUpdateMutation();
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const restoredTemplateId = useRef<string | null>(null);
 
   const [input, setInput] = useState("");
   const [originalPrompt, setOriginalPrompt] = useState("");
@@ -224,6 +702,8 @@ export default function AmieComposer({
   const [previewText, setPreviewText] = useState("");
   const [blocks, setBlocks] = useState<AmieBlockSpec[] | null>(null);
   const [html, setHtml] = useState("");
+  const [designNotes, setDesignNotes] = useState("");
+  const [selectedBlock, setSelectedBlock] = useState<number | null>(null);
   const [previewWidth, setPreviewWidth] = useState<"desktop" | "mobile">(
     "desktop",
   );
@@ -238,43 +718,102 @@ export default function AmieComposer({
   const [pasteHtmlDialogOpen, setPasteHtmlDialogOpen] = useState(false);
   const [pastedHtml, setPastedHtml] = useState("");
   const [pasteHtmlError, setPasteHtmlError] = useState<string | null>(null);
-  const [isSanitizingHtml, setIsSanitizingHtml] = useState(false);
-  const [images, setImages] = useState<
-    NonNullable<AmieComposeRequest["images"]>
-  >([]);
+  const [isImportingHtml, setIsImportingHtml] = useState(false);
+  const [assets, setAssets] = useState<AmieAsset[]>([]);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [designBrief, setDesignBrief] = useState<AmieDesignBrief>({});
 
   const workspaceId =
     workspace.type === CompletionStatus.Successful ? workspace.value.id : null;
   const hasDraft = blocks !== null || isRawHtml;
+  const previewHtml = useMemo(() => designerPreviewHtml(html), [html]);
 
-  const requestHeaders = useMemo(
-    () => ({
-      "Content-Type": "application/json",
-      ...(authorization ? { Authorization: authorization } : {}),
-    }),
-    [authorization],
-  );
+  useEffect(() => {
+    if (!workspaceId) return;
+    void axios
+      .get<AmieAssetListResponse>(`${baseApiUrl}/content/assets`, {
+        params: { workspaceId },
+        headers: authHeaders,
+      })
+      .then((response) => setAssets(response.data.assets))
+      .catch(() => setAssets([]));
+  }, [authHeaders, baseApiUrl, workspaceId]);
+
+  useEffect(() => {
+    if (isNew || !template || restoredTemplateId.current === template.id)
+      return;
+    const definition = template.definition ?? template.draft;
+    if (
+      definition?.type !== ChannelType.Email ||
+      typeof definition.body !== "string"
+    )
+      return;
+    restoredTemplateId.current = template.id;
+    setSubject(definition.subject);
+    setHtml(definition.body);
+    setPreviewText(previewTextFromHtml(definition.body));
+    const restoredBlocks =
+      "amieBlocks" in definition ? definition.amieBlocks : undefined;
+    if (restoredBlocks?.length) {
+      setBlocks(restoredBlocks);
+      setSelectedBlock(0);
+      setIsRawHtml(false);
+      setOriginalPrompt("Saved Amie block design");
+    } else {
+      setBlocks(null);
+      setIsRawHtml(true);
+    }
+  }, [isNew, template]);
+
+  useEffect(() => {
+    const listener = (event: MessageEvent) => {
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      if (
+        event.data?.type === "amie-block-select" &&
+        Number.isInteger(event.data.index)
+      )
+        setSelectedBlock(event.data.index);
+    };
+    window.addEventListener("message", listener);
+    return () => window.removeEventListener("message", listener);
+  }, []);
+
+  useEffect(() => {
+    if (selectedBlock !== null)
+      iframeRef.current?.contentWindow?.postMessage(
+        { type: "amie-block-highlight", index: selectedBlock },
+        "*",
+      );
+  }, [previewHtml, selectedBlock]);
 
   const compose = useCallback(
-    async (message: string) => {
+    async (message: string, recipe?: AmieRecipe) => {
       const cleanMessage = message.trim();
-      if (!cleanMessage || !workspaceId || isComposing || isRawHtml) {
-        return;
-      }
-
-      const revision = blocks !== null;
+      if (!cleanMessage || !workspaceId || isComposing || isRawHtml) return;
+      const revision = blocks !== null && !recipe;
       const nextConversation: ConversationMessage[] = revision
         ? [...conversation, { role: "user", content: cleanMessage }]
         : [{ role: "user", content: cleanMessage }];
       const request: AmieComposeRequest = {
         workspaceId,
         prompt: revision ? originalPrompt : cleanMessage,
-        ...(images.length ? { images } : {}),
+        images: assets.map((asset) => ({
+          url: asset.url,
+          name: asset.name,
+          alt: asset.alt,
+        })),
+        ...(Object.keys(designBrief).length > 0 || recipe !== undefined
+          ? {
+              designBrief: recipe
+                ? { ...designBrief, goal: recipe.id }
+                : designBrief,
+            }
+          : {}),
+        ...(recipe ? { seedBlocks: recipe.seedBlocks } : {}),
         ...(revision
           ? { currentBlocks: blocks, conversation: nextConversation }
           : {}),
       };
-
       setIsComposing(true);
       setComposeError(null);
       setRetryMessage(cleanMessage);
@@ -282,122 +821,42 @@ export default function AmieComposer({
         const response = await axios.post<AmieComposeResponse>(
           `${baseApiUrl}/content/templates/compose`,
           request,
-          { headers: requestHeaders },
+          { headers: authHeaders },
         );
         setSubject(response.data.subject);
         setPreviewText(response.data.previewText);
         setBlocks(response.data.blocks);
         setHtml(response.data.html);
+        setDesignNotes(response.data.designNotes);
+        setSelectedBlock(response.data.blocks.length ? 0 : null);
         setBlockEditVersion(0);
         setConversation([...nextConversation, assistantConfirmation(revision)]);
-        if (!revision) {
-          setOriginalPrompt(cleanMessage);
-        }
+        if (!revision) setOriginalPrompt(cleanMessage);
         setInput("");
         setRetryMessage(null);
       } catch {
         setComposeError(
           revision
             ? "That change didn’t go through. Your draft is untouched."
-            : "The draft couldn’t be composed just now.",
+            : "The designed draft couldn’t be composed just now.",
         );
       } finally {
         setIsComposing(false);
       }
     },
     [
+      assets,
+      authHeaders,
       baseApiUrl,
       blocks,
       conversation,
+      designBrief,
       isComposing,
-      originalPrompt,
-      requestHeaders,
       isRawHtml,
-      images,
+      originalPrompt,
       workspaceId,
     ],
   );
-
-  const attachImage = useCallback((asset: AmieAsset) => {
-    setImages((current) =>
-      current.some((image) => image.url === asset.url)
-        ? current
-        : [...current, { url: asset.url, alt: "" }],
-    );
-  }, []);
-
-  const handlePasteHtml = async () => {
-    if (!workspaceId || !pastedHtml.trim() || isSanitizingHtml) {
-      return;
-    }
-
-    const clientSanitizedHtml = sanitizeAmieHtml(pastedHtml);
-    if (!clientSanitizedHtml.trim()) {
-      setPasteHtmlError("The pasted content did not contain usable HTML.");
-      return;
-    }
-
-    setIsSanitizingHtml(true);
-    setPasteHtmlError(null);
-    try {
-      const response = await axios.post<AmieSanitizeHtmlResponse>(
-        `${baseApiUrl}/content/templates/compose/sanitize-html`,
-        { workspaceId, html: clientSanitizedHtml },
-        { headers: requestHeaders },
-      );
-      setHtml(response.data.html);
-      setBlocks(null);
-      setIsRawHtml(true);
-      setPreviewText("");
-      setConversation([]);
-      setInput("");
-      setComposeError(null);
-      setAssembleError(null);
-      setPastedHtml("");
-      setPasteHtmlDialogOpen(false);
-    } catch {
-      setPasteHtmlError("The HTML couldn’t be prepared. Please try again.");
-    } finally {
-      setIsSanitizingHtml(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!blocks || blockEditVersion === 0 || !workspaceId) {
-      return undefined;
-    }
-    const controller = new AbortController();
-    const timeout = window.setTimeout(async () => {
-      setIsAssembling(true);
-      setAssembleError(null);
-      try {
-        const response = await axios.post<AmieAssembleResponse>(
-          `${baseApiUrl}/content/templates/compose/assemble`,
-          { workspaceId, blocks },
-          { headers: requestHeaders, signal: controller.signal },
-        );
-        setHtml(withPreviewText(response.data.html, previewText));
-      } catch (error) {
-        if (!axios.isCancel(error)) {
-          setAssembleError("Preview refresh paused. Edit again or retry.");
-        }
-      } finally {
-        setIsAssembling(false);
-      }
-    }, 350);
-
-    return () => {
-      window.clearTimeout(timeout);
-      controller.abort();
-    };
-  }, [
-    baseApiUrl,
-    blockEditVersion,
-    blocks,
-    previewText,
-    requestHeaders,
-    workspaceId,
-  ]);
 
   const editBlocks = useCallback(
     (updater: (current: AmieBlockSpec[]) => AmieBlockSpec[]) => {
@@ -407,26 +866,123 @@ export default function AmieComposer({
     [],
   );
 
+  useEffect(() => {
+    if (!blocks || blockEditVersion === 0 || !workspaceId) return undefined;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setIsAssembling(true);
+      setAssembleError(null);
+      try {
+        const response = await axios.post<AmieAssembleResponse>(
+          `${baseApiUrl}/content/templates/compose/assemble`,
+          { workspaceId, blocks },
+          { headers: authHeaders, signal: controller.signal },
+        );
+        setHtml(withPreviewText(response.data.html, previewText));
+      } catch (error) {
+        if (!axios.isCancel(error))
+          setAssembleError(
+            "Preview refresh paused. Check required fields and try again.",
+          );
+      } finally {
+        setIsAssembling(false);
+      }
+    }, 350);
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [
+    authHeaders,
+    baseApiUrl,
+    blockEditVersion,
+    blocks,
+    previewText,
+    workspaceId,
+  ]);
+
+  const chooseImage = (index: number, asset: AmieAsset) => {
+    setAssets((current) =>
+      current.some((item) => item.id === asset.id)
+        ? current
+        : [asset, ...current],
+    );
+    editBlocks((current) =>
+      current.map((block, blockIndex) => {
+        if (blockIndex !== index) return block;
+        if (block.type === "image" || block.type === "heroImage")
+          return {
+            ...block,
+            params: {
+              ...block.params,
+              src: asset.url,
+              alt: asset.alt ?? asset.name,
+            },
+          };
+        if (block.type === "productCard")
+          return { ...block, params: { ...block.params, imageUrl: asset.url } };
+        if (block.type === "twoColumn")
+          return {
+            ...block,
+            params: {
+              ...block.params,
+              image: {
+                ...block.params.image,
+                src: asset.url,
+                alt: asset.alt ?? asset.name,
+              },
+            },
+          };
+        return block;
+      }),
+    );
+  };
+
+  const handleImportHtml = async () => {
+    if (!workspaceId || !pastedHtml.trim() || isImportingHtml) return;
+    setIsImportingHtml(true);
+    setPasteHtmlError(null);
+    try {
+      const response = await axios.post<AmieComposeResponse>(
+        `${baseApiUrl}/content/templates/compose/import-html`,
+        { workspaceId, html: pastedHtml },
+        { headers: authHeaders },
+      );
+      const rawFallback =
+        response.data.blocks.length === 1 &&
+        response.data.blocks[0]?.type === "rawHtml";
+      setSubject(response.data.subject);
+      setPreviewText(response.data.previewText);
+      setBlocks(response.data.blocks);
+      setHtml(response.data.html);
+      setDesignNotes(response.data.designNotes);
+      setIsRawHtml(rawFallback);
+      setSelectedBlock(0);
+      setPastedHtml("");
+      setPasteHtmlDialogOpen(false);
+    } catch {
+      setPasteHtmlError("The HTML couldn’t be converted. Please try again.");
+    } finally {
+      setIsImportingHtml(false);
+    }
+  };
+
   const handleSave = async () => {
     if (
       !hasDraft ||
       !workspaceId ||
       !subject.trim() ||
       (!isNew && templateQuery.isLoading)
-    ) {
+    )
       return;
-    }
     setSaveError(null);
     try {
       let body = html;
-      if (!isRawHtml) {
-        if (!blocks) {
-          return;
-        }
+      if (!isRawHtml && blocks) {
         const assembled = await axios.post<AmieAssembleResponse>(
           `${baseApiUrl}/content/templates/compose/assemble`,
           { workspaceId, blocks },
-          { headers: requestHeaders },
+          { headers: authHeaders },
         );
         body = withPreviewText(assembled.data.html, previewText);
       }
@@ -449,6 +1005,7 @@ export default function AmieComposer({
           emailContentsType: EmailContentsType.Code,
           subject: subject.trim(),
           body,
+          amieBlocks: isRawHtml ? null : blocks,
         },
         ...(isNew ? { resourceType: ResourceTypeEnum.Declarative } : {}),
       });
@@ -458,15 +1015,7 @@ export default function AmieComposer({
     }
   };
 
-  const goBack = () => {
-    universalRouter.push(
-      isNew ? "/templates" : `/templates/email/${templateId}`,
-    );
-  };
-
-  if (!composerConfig.data?.enabled) {
-    return null;
-  }
+  if (!composerConfig.data?.enabled) return null;
 
   return (
     <Stack sx={{ height: "100%", minHeight: 0 }}>
@@ -477,7 +1026,14 @@ export default function AmieComposer({
         sx={{ pb: 2 }}
       >
         <Stack direction="row" alignItems="center" spacing={1.5}>
-          <IconButton onClick={goBack} aria-label="Back to template">
+          <IconButton
+            onClick={() =>
+              universalRouter.push(
+                isNew ? "/templates" : `/templates/email/${templateId}`,
+              )
+            }
+            aria-label="Back to template"
+          >
             <ArrowBack />
           </IconButton>
           <Box>
@@ -493,7 +1049,7 @@ export default function AmieComposer({
               Compose with AI
             </Typography>
             <Typography variant="body2" sx={{ color: tokens.colors.caption }}>
-              Shape a polished Amie email, then fine-tune every block.
+              AI builds the full design; you refine brand-safe blocks.
             </Typography>
           </Box>
         </Stack>
@@ -515,17 +1071,10 @@ export default function AmieComposer({
           {saveTemplate.isPending ? "Saving…" : "Save as template"}
         </Button>
       </Stack>
-
       {saveError && (
-        <Typography
-          variant="body2"
-          sx={{ color: tokens.colors.roseText, mb: 1 }}
-        >
-          {saveError}{" "}
-          <Button size="small" onClick={handleSave}>
-            Retry
-          </Button>
-        </Typography>
+        <Alert severity="error" sx={{ mb: 1 }}>
+          {saveError}
+        </Alert>
       )}
 
       <Box
@@ -533,7 +1082,7 @@ export default function AmieComposer({
           display: "grid",
           gridTemplateColumns: {
             xs: "1fr",
-            lg: "minmax(320px, 0.8fr) minmax(0, 1.4fr)",
+            lg: "minmax(270px,.7fr) minmax(420px,1.25fr) minmax(330px,.8fr)",
           },
           flex: 1,
           minHeight: 0,
@@ -541,131 +1090,91 @@ export default function AmieComposer({
           border: `1px solid ${tokens.colors.borderCard}`,
           borderRadius: `${tokens.radii.card}px`,
           boxShadow: tokens.shadows.medium,
-          backgroundColor: tokens.colors.surface,
+          bgcolor: tokens.colors.surface,
         }}
       >
         <Stack
           sx={{
             minHeight: 0,
             borderRight: { lg: `1px solid ${tokens.colors.chromeDivider}` },
-            backgroundColor: tokens.colors.ivory,
+            bgcolor: tokens.colors.ivory,
           }}
         >
-          <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", p: 3 }}>
-            {!hasDraft && (
-              <Stack spacing={2.5} sx={{ maxWidth: 440, mx: "auto", pt: 5 }}>
-                <Box
-                  sx={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: "50%",
-                    display: "grid",
-                    placeItems: "center",
-                    color: tokens.colors.deepTeal,
-                    backgroundColor: tokens.colors.tealTint,
-                  }}
-                >
-                  <AutoAwesome />
-                </Box>
+          <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", p: 2.5 }}>
+            {!hasDraft ? (
+              <Stack spacing={2.25}>
                 <Box>
+                  <AutoAwesome sx={{ color: tokens.colors.deepTeal }} />
                   <Typography
                     sx={{
-                      color: tokens.colors.heading,
                       fontFamily: tokens.typography.displayFontFamily,
-                      fontSize: 24,
+                      fontSize: 22,
                       fontWeight: 600,
                     }}
                   >
-                    What are we writing?
+                    Start from
                   </Typography>
-                  <Typography
-                    variant="body2"
-                    sx={{ color: tokens.colors.caption, mt: 0.5 }}
-                  >
-                    Include the goal, audience, offer, and any must-have
-                    details.
+                  <Typography variant="body2" color="text.secondary">
+                    Choose a proven shape or describe your own.
                   </Typography>
+                </Box>
+                <Box sx={{ display: "grid", gap: 1 }}>
+                  {AMIE_RECIPES.map((recipe) => (
+                    <Button
+                      key={recipe.id}
+                      variant="outlined"
+                      disabled={isComposing}
+                      onClick={() => {
+                        setDesignBrief((current) => ({
+                          ...current,
+                          goal: recipe.id,
+                        }));
+                        void compose(recipe.prompt, recipe);
+                      }}
+                      sx={{ display: "block", textAlign: "left", p: 1.5 }}
+                    >
+                      <Typography variant="body2" fontWeight={700}>
+                        {recipe.name}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {recipe.description}
+                      </Typography>
+                    </Button>
+                  ))}
                 </Box>
                 <TextField
                   multiline
-                  minRows={7}
+                  minRows={5}
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
-                  placeholder="Describe the email…"
+                  placeholder="Or describe the email…"
                   disabled={isComposing}
                   fullWidth
                 />
-                <Stack
-                  direction="row"
-                  alignItems="center"
-                  justifyContent="space-between"
+                <Button
+                  variant="contained"
+                  onClick={() => void compose(input)}
+                  disabled={!input.trim() || isComposing || !workspaceId}
+                  endIcon={<Send fontSize="small" />}
                 >
-                  <Stack direction="row" spacing={0.5}>
-                    <Button
-                      size="small"
-                      variant="text"
-                      onClick={() => {
-                        setPasteHtmlError(null);
-                        setPasteHtmlDialogOpen(true);
-                      }}
-                      sx={{ color: tokens.colors.caption }}
-                    >
-                      Paste HTML
-                    </Button>
-                    <ImageAssetsPanel
-                      label="Add image"
-                      onInsert={attachImage}
-                      onUploaded={attachImage}
-                    />
-                  </Stack>
-                  <Button
-                    variant="contained"
-                    onClick={() => compose(input)}
-                    disabled={!input.trim() || isComposing || !workspaceId}
-                    endIcon={<Send fontSize="small" />}
-                  >
-                    Send
-                  </Button>
-                </Stack>
+                  Design email
+                </Button>
               </Stack>
-            )}
-            {hasDraft && isRawHtml && (
-              <Paper
-                variant="outlined"
-                sx={{ p: 2, borderColor: tokens.colors.borderCard }}
-              >
-                <Typography
-                  sx={{ color: tokens.colors.heading, fontWeight: 600 }}
-                >
-                  Raw HTML template
-                </Typography>
-                <Typography
-                  variant="body2"
-                  sx={{ color: tokens.colors.caption, mt: 0.5 }}
-                >
-                  AI editing is unavailable for pasted HTML.
-                </Typography>
-              </Paper>
-            )}
-            {hasDraft && !isRawHtml && (
-              <Stack spacing={2}>
-                {conversation.map((message, index) => (
+            ) : (
+              <Stack spacing={1.5}>
+                {conversation.map((message) => (
                   <Box
-                    // Conversation order is stable and messages have no server IDs.
-                    // eslint-disable-next-line react/no-array-index-key
-                    key={index}
+                    key={`${message.role}-${message.content}`}
                     sx={{
                       alignSelf:
                         message.role === "user" ? "flex-end" : "flex-start",
-                      maxWidth: "88%",
-                      px: 1.75,
-                      py: 1.25,
-                      borderRadius: `${tokens.radii.card}px`,
+                      maxWidth: "90%",
+                      px: 1.5,
+                      py: 1,
+                      borderRadius: 2,
                       color:
-                        message.role === "user"
-                          ? tokens.colors.surface
-                          : tokens.colors.text,
-                      backgroundColor:
+                        message.role === "user" ? "white" : tokens.colors.text,
+                      bgcolor:
                         message.role === "user"
                           ? tokens.colors.deepTeal
                           : tokens.colors.surface,
@@ -673,18 +1182,21 @@ export default function AmieComposer({
                         message.role === "assistant"
                           ? `1px solid ${tokens.colors.borderSoft}`
                           : "none",
-                      boxShadow:
-                        message.role === "assistant"
-                          ? tokens.shadows.small
-                          : "none",
                     }}
                   >
                     <Typography variant="body2">{message.content}</Typography>
                   </Box>
                 ))}
+                {designNotes && (
+                  <Alert
+                    severity="info"
+                    icon={<AutoAwesome fontSize="small" />}
+                  >
+                    {designNotes}
+                  </Alert>
+                )}
               </Stack>
             )}
-
             {isComposing && (
               <Stack
                 direction="row"
@@ -692,88 +1204,208 @@ export default function AmieComposer({
                 alignItems="center"
                 sx={{ mt: 2 }}
               >
-                <CircularProgress
-                  size={17}
-                  sx={{ color: tokens.colors.deepTeal }}
-                />
-                <Typography
-                  variant="body2"
-                  sx={{ color: tokens.colors.deepTeal, fontWeight: 600 }}
-                >
-                  Composing…
+                <CircularProgress size={17} />
+                <Typography variant="body2" fontWeight={600}>
+                  Designing and reviewing…
                 </Typography>
               </Stack>
             )}
-
             {composeError && (
-              <Typography
-                variant="body2"
-                sx={{ color: tokens.colors.roseText, mt: 2 }}
-              >
-                {composeError}{" "}
+              <Alert severity="error" sx={{ mt: 2 }}>
+                {composeError}
                 <Button
                   size="small"
-                  onClick={() => retryMessage && compose(retryMessage)}
-                  disabled={!retryMessage || isComposing}
+                  onClick={() => retryMessage && void compose(retryMessage)}
                 >
                   Retry
                 </Button>
-              </Typography>
+              </Alert>
             )}
           </Box>
-
-          {hasDraft && (
-            <Box
-              sx={{
-                p: 2,
-                borderTop: `1px solid ${tokens.colors.chromeDivider}`,
-              }}
-            >
-              <TextField
-                multiline
-                minRows={3}
-                maxRows={6}
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                placeholder={
-                  isRawHtml
-                    ? "AI editing is unavailable for pasted HTML"
-                    : "Tell it what to change…"
-                }
-                disabled={isComposing || isRawHtml}
-                fullWidth
-              />
-              <Stack direction="row" justifyContent="flex-end" sx={{ mt: 1 }}>
-                {!isRawHtml && (
-                  <ImageAssetsPanel
-                    label="Add image"
-                    onInsert={attachImage}
-                    onUploaded={attachImage}
-                    disabled={isComposing}
-                  />
-                )}
-                <Button
-                  variant="contained"
-                  onClick={() => compose(input)}
-                  disabled={!input.trim() || isComposing || isRawHtml}
-                  endIcon={<Send fontSize="small" />}
-                >
-                  Send
-                </Button>
+          <Box
+            sx={{ p: 2, borderTop: `1px solid ${tokens.colors.chromeDivider}` }}
+          >
+            <Stack spacing={1.25}>
+              <Stack direction="row" spacing={1}>
+                <FormControl size="small" fullWidth>
+                  <InputLabel>Goal</InputLabel>
+                  <Select
+                    label="Goal"
+                    value={designBrief.goal ?? ""}
+                    onChange={(event) =>
+                      setDesignBrief((current) => ({
+                        ...current,
+                        goal: designGoal(event.target.value),
+                      }))
+                    }
+                  >
+                    <MenuItem value="">
+                      <em>Auto</em>
+                    </MenuItem>
+                    {[
+                      ["winback", "Winback"],
+                      ["launch", "Launch"],
+                      ["newsletter", "Newsletter"],
+                      ["promo", "Promo"],
+                      ["welcome", "Welcome"],
+                    ].map(([value, label]) => (
+                      <MenuItem key={value} value={value}>
+                        {label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                <FormControl size="small" fullWidth>
+                  <InputLabel>Tone</InputLabel>
+                  <Select
+                    label="Tone"
+                    value={designBrief.tone ?? ""}
+                    onChange={(event) =>
+                      setDesignBrief((current) => ({
+                        ...current,
+                        tone: designTone(event.target.value),
+                      }))
+                    }
+                  >
+                    <MenuItem value="">
+                      <em>Auto</em>
+                    </MenuItem>
+                    <MenuItem value="warm">Warm</MenuItem>
+                    <MenuItem value="clinical">Clinical</MenuItem>
+                    <MenuItem value="playful">Playful</MenuItem>
+                  </Select>
+                </FormControl>
               </Stack>
-            </Box>
-          )}
+              <Stack direction="row" spacing={1}>
+                <FormControl size="small" fullWidth>
+                  <InputLabel>Density</InputLabel>
+                  <Select
+                    label="Density"
+                    value={designBrief.density ?? ""}
+                    onChange={(event) =>
+                      setDesignBrief((current) => ({
+                        ...current,
+                        density: designDensity(event.target.value),
+                      }))
+                    }
+                  >
+                    <MenuItem value="">
+                      <em>Auto</em>
+                    </MenuItem>
+                    <MenuItem value="airy">Airy</MenuItem>
+                    <MenuItem value="standard">Standard</MenuItem>
+                    <MenuItem value="dense">Dense</MenuItem>
+                  </Select>
+                </FormControl>
+                <FormControl size="small" fullWidth>
+                  <InputLabel>Hero</InputLabel>
+                  <Select
+                    label="Hero"
+                    value={designBrief.heroStyle ?? ""}
+                    onChange={(event) =>
+                      setDesignBrief((current) => ({
+                        ...current,
+                        heroStyle: designHero(event.target.value),
+                      }))
+                    }
+                  >
+                    <MenuItem value="">
+                      <em>Auto</em>
+                    </MenuItem>
+                    <MenuItem value="bigImage">Big image</MenuItem>
+                    <MenuItem value="headlineFirst">Headline first</MenuItem>
+                    <MenuItem value="productFirst">Product first</MenuItem>
+                  </Select>
+                </FormControl>
+              </Stack>
+              <TextField
+                size="small"
+                label="CTA text"
+                value={designBrief.ctaText ?? ""}
+                onChange={(event) =>
+                  setDesignBrief((current) => ({
+                    ...current,
+                    ctaText: event.target.value || undefined,
+                  }))
+                }
+              />
+              <TextField
+                size="small"
+                label="CTA URL"
+                value={designBrief.ctaUrl ?? ""}
+                onChange={(event) =>
+                  setDesignBrief((current) => ({
+                    ...current,
+                    ctaUrl: event.target.value ? event.target.value : undefined,
+                  }))
+                }
+              />
+              {hasDraft && (
+                <>
+                  <TextField
+                    multiline
+                    minRows={3}
+                    maxRows={5}
+                    value={input}
+                    onChange={(event) => setInput(event.target.value)}
+                    placeholder={
+                      isRawHtml
+                        ? "AI revision is unavailable for raw HTML"
+                        : "Tell AI what to revise…"
+                    }
+                    disabled={isComposing || isRawHtml}
+                  />
+                  <Button
+                    variant="contained"
+                    onClick={() => void compose(input)}
+                    disabled={!input.trim() || isComposing || isRawHtml}
+                    endIcon={<Send fontSize="small" />}
+                  >
+                    Revise
+                  </Button>
+                </>
+              )}
+              <Stack direction="row" spacing={0.5}>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    setPasteHtmlError(null);
+                    setPasteHtmlDialogOpen(true);
+                  }}
+                >
+                  Paste HTML
+                </Button>
+                <ImageAssetsPanel
+                  label="Images"
+                  onInsert={(asset) =>
+                    setAssets((current) =>
+                      current.some((item) => item.id === asset.id)
+                        ? current
+                        : [asset, ...current],
+                    )
+                  }
+                  onUploaded={(asset) =>
+                    setAssets((current) => [
+                      asset,
+                      ...current.filter((item) => item.id !== asset.id),
+                    ])
+                  }
+                />
+              </Stack>
+            </Stack>
+          </Box>
         </Stack>
 
         <Box
           sx={{
             minHeight: 0,
             overflowY: "auto",
-            backgroundColor: tokens.colors.surfaceWarm,
+            bgcolor: tokens.colors.surfaceWarm,
+            p: { xs: 2, md: 2.5 },
           }}
         >
-          <Stack spacing={2.5} sx={{ p: { xs: 2, md: 3 } }}>
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+          <Stack spacing={2}>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
               <TextField
                 label="Subject"
                 value={subject}
@@ -781,68 +1413,76 @@ export default function AmieComposer({
                 disabled={!hasDraft}
                 fullWidth
                 size="small"
+                inputProps={{ maxLength: 60 }}
+                helperText={`${subject.length}/60`}
               />
               <TextField
                 label="Preview text"
                 value={previewText}
                 onChange={(event) => setPreviewText(event.target.value)}
                 disabled={!hasDraft || isRawHtml}
-                helperText={
-                  isRawHtml
-                    ? "Use the pasted HTML’s own preview text."
-                    : undefined
-                }
                 fullWidth
                 size="small"
               />
             </Stack>
-
             <Stack
               direction="row"
               justifyContent="space-between"
               alignItems="center"
             >
-              <Typography
-                variant="overline"
-                sx={{ color: tokens.colors.faint }}
-              >
+              <Typography variant="overline" color="text.secondary">
                 Live preview
               </Typography>
               <ToggleButtonGroup
                 exclusive
                 size="small"
                 value={previewWidth}
-                onChange={(_event, value: "desktop" | "mobile" | null) => {
-                  if (value) setPreviewWidth(value);
-                }}
+                onChange={(_event, value) => value && setPreviewWidth(value)}
               >
                 <ToggleButton value="desktop">Desktop</ToggleButton>
                 <ToggleButton value="mobile">Mobile</ToggleButton>
               </ToggleButtonGroup>
             </Stack>
-
-            <Box sx={{ overflowX: "auto", pb: 0.5 }}>
+            {assembleError && (
+              <Alert severity="warning">
+                {assembleError}
+                <Button
+                  size="small"
+                  onClick={() => setBlockEditVersion((version) => version + 1)}
+                >
+                  Retry
+                </Button>
+              </Alert>
+            )}
+            <Box sx={{ overflowX: "auto" }}>
               <Paper
                 sx={{
                   width: previewWidth === "desktop" ? 600 : 375,
                   maxWidth: "100%",
                   mx: "auto",
                   overflow: "hidden",
-                  borderRadius: `${tokens.radii.card}px`,
                   border: `1px solid ${tokens.colors.borderCard}`,
                   boxShadow: tokens.shadows.medium,
-                  backgroundColor: tokens.colors.emailPreview,
+                  bgcolor: tokens.colors.emailPreview,
                 }}
               >
                 {html ? (
                   <iframe
-                    sandbox=""
-                    srcDoc={html}
+                    ref={iframeRef}
+                    sandbox="allow-scripts"
+                    srcDoc={previewHtml}
                     title="Composed email preview"
+                    onLoad={() =>
+                      selectedBlock !== null &&
+                      iframeRef.current?.contentWindow?.postMessage(
+                        { type: "amie-block-highlight", index: selectedBlock },
+                        "*",
+                      )
+                    }
                     style={{
                       display: "block",
                       width: "100%",
-                      height: 700,
+                      height: 760,
                       border: 0,
                     }}
                   />
@@ -850,233 +1490,264 @@ export default function AmieComposer({
                   <Stack
                     alignItems="center"
                     justifyContent="center"
-                    sx={{ height: 520, px: 4 }}
+                    sx={{ height: 520 }}
                   >
-                    <AutoAwesome
-                      sx={{ color: tokens.colors.placeholder, mb: 1 }}
-                    />
-                    <Typography
-                      variant="body2"
-                      align="center"
-                      sx={{ color: tokens.colors.hint }}
-                    >
-                      Your email preview will appear here.
+                    <AutoAwesome color="disabled" />
+                    <Typography variant="body2" color="text.secondary">
+                      Your preview will appear here.
                     </Typography>
                   </Stack>
                 )}
               </Paper>
             </Box>
+          </Stack>
+        </Box>
 
-            {isRawHtml && (
-              <Paper
-                variant="outlined"
-                sx={{ p: 2, borderColor: tokens.colors.borderCard }}
+        <Stack
+          sx={{
+            minHeight: 0,
+            borderLeft: { lg: `1px solid ${tokens.colors.chromeDivider}` },
+            bgcolor: tokens.colors.surface,
+          }}
+        >
+          {blocks ? (
+            <>
+              <Box
+                sx={{
+                  p: 2,
+                  borderBottom: `1px solid ${tokens.colors.chromeDivider}`,
+                }}
               >
-                <Typography
-                  sx={{ color: tokens.colors.heading, fontWeight: 600 }}
-                >
-                  Raw HTML template
-                </Typography>
-                <Typography
-                  variant="body2"
-                  sx={{ color: tokens.colors.caption, mt: 0.5 }}
-                >
-                  This preview uses your pasted HTML directly. The block editor
-                  does not apply to this template.
-                </Typography>
-              </Paper>
-            )}
-
-            {blocks && (
-              <Stack spacing={1.5}>
-                <Stack
-                  direction="row"
-                  justifyContent="space-between"
-                  alignItems="center"
-                >
+                <Stack direction="row" justifyContent="space-between">
                   <Box>
-                    <Typography
-                      sx={{ color: tokens.colors.heading, fontWeight: 600 }}
-                    >
-                      Email blocks
-                    </Typography>
-                    <Typography
-                      variant="body2"
-                      sx={{ color: tokens.colors.caption }}
-                    >
-                      Edit copy, reorder sections, or remove anything you don’t
-                      need.
+                    <Typography fontWeight={700}>Email blocks</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Drag to reorder · {blocks.length}/12
                     </Typography>
                   </Box>
-                  {isAssembling && (
-                    <Typography
-                      variant="caption"
-                      sx={{ color: tokens.colors.deepTeal }}
-                    >
-                      Refreshing preview…
-                    </Typography>
-                  )}
+                  {isAssembling && <CircularProgress size={16} />}
                 </Stack>
-
-                {assembleError && (
-                  <Typography
-                    variant="body2"
-                    sx={{ color: tokens.colors.roseText }}
-                  >
-                    {assembleError}{" "}
-                    <Button
-                      size="small"
-                      onClick={() =>
-                        setBlockEditVersion((version) => version + 1)
-                      }
-                    >
-                      Retry
-                    </Button>
-                  </Typography>
-                )}
-
+              </Box>
+              <Box
+                sx={{
+                  p: 1.5,
+                  maxHeight: "44%",
+                  overflowY: "auto",
+                  borderBottom: `1px solid ${tokens.colors.chromeDivider}`,
+                }}
+              >
+                <Stack alignItems="center">
+                  <AddBlockPicker
+                    disabled={blocks.length >= 12}
+                    onAdd={(type) => {
+                      editBlocks((current) => [createBlock(type), ...current]);
+                      setSelectedBlock(0);
+                    }}
+                  />
+                </Stack>
                 {blocks.map((block, index) => (
-                  // Reordering means a positional key reflects the visible order.
+                  // Blocks do not carry IDs; position is the persisted list identity.
                   // eslint-disable-next-line react/no-array-index-key
                   <React.Fragment key={`${block.type}-${index}`}>
                     <Paper
+                      draggable
+                      onDragStart={() => setDragIndex(index)}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={() => {
+                        if (dragIndex !== null) {
+                          editBlocks((current) =>
+                            swapBlocks(current, dragIndex, index),
+                          );
+                          setSelectedBlock(index);
+                        }
+                        setDragIndex(null);
+                      }}
+                      onClick={() => setSelectedBlock(index)}
                       variant="outlined"
-                      sx={{ p: 2, borderColor: tokens.colors.borderCard }}
+                      sx={{
+                        my: 1,
+                        p: 1,
+                        cursor: "pointer",
+                        borderColor:
+                          selectedBlock === index
+                            ? tokens.colors.deepTeal
+                            : tokens.colors.borderCard,
+                        bgcolor:
+                          selectedBlock === index
+                            ? tokens.colors.tealTint
+                            : "white",
+                      }}
                     >
-                      <Stack
-                        direction="row"
-                        alignItems="center"
-                        justifyContent="space-between"
-                        sx={{ mb: editableFields(block).length ? 1.5 : 0 }}
-                      >
-                        <Typography
-                          variant="overline"
-                          sx={{
-                            color: tokens.colors.deepTeal,
-                            fontWeight: 700,
-                          }}
-                        >
-                          {block.type}
-                        </Typography>
-                        <Stack direction="row" spacing={0.25}>
-                          <Tooltip title="Move up">
-                            <span>
-                              <IconButton
-                                size="small"
-                                disabled={index === 0}
-                                onClick={() =>
-                                  editBlocks((current) =>
-                                    swapBlocks(current, index - 1, index),
-                                  )
-                                }
-                              >
-                                <ArrowUpward fontSize="small" />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-                          <Tooltip title="Move down">
-                            <span>
-                              <IconButton
-                                size="small"
-                                disabled={index === blocks.length - 1}
-                                onClick={() =>
-                                  editBlocks((current) =>
-                                    swapBlocks(current, index, index + 1),
-                                  )
-                                }
-                              >
-                                <ArrowDownward fontSize="small" />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-                          <Tooltip title="Delete block">
+                      <Stack direction="row" alignItems="center" spacing={0.75}>
+                        <DragIndicator fontSize="small" color="disabled" />
+                        {blockIcon(block.type)}
+                        <Box sx={{ minWidth: 0, flex: 1 }}>
+                          <Typography variant="caption" fontWeight={700}>
+                            {block.type}
+                          </Typography>
+                          <Typography
+                            variant="caption"
+                            display="block"
+                            noWrap
+                            color="text.secondary"
+                          >
+                            {blockSummary(block)}
+                          </Typography>
+                        </Box>
+                        <Tooltip title="Move up">
+                          <span>
                             <IconButton
                               size="small"
-                              onClick={() =>
+                              disabled={index === 0}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                editBlocks((current) =>
+                                  swapBlocks(current, index, index - 1),
+                                );
+                                setSelectedBlock(index - 1);
+                              }}
+                            >
+                              <ArrowUpward fontSize="inherit" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                        <Tooltip title="Move down">
+                          <span>
+                            <IconButton
+                              size="small"
+                              disabled={index === blocks.length - 1}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                editBlocks((current) =>
+                                  swapBlocks(current, index, index + 1),
+                                );
+                                setSelectedBlock(index + 1);
+                              }}
+                            >
+                              <ArrowDownward fontSize="inherit" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                        <Tooltip title="Duplicate">
+                          <span>
+                            <IconButton
+                              size="small"
+                              disabled={blocks.length >= 12}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                editBlocks((current) => [
+                                  ...current.slice(0, index + 1),
+                                  structuredClone(block),
+                                  ...current.slice(index + 1),
+                                ]);
+                                setSelectedBlock(index + 1);
+                              }}
+                            >
+                              <ContentCopy fontSize="inherit" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                        <Tooltip
+                          title={
+                            block.type === "footer"
+                              ? "Footer is required"
+                              : "Delete"
+                          }
+                        >
+                          <span>
+                            <IconButton
+                              size="small"
+                              disabled={block.type === "footer"}
+                              onClick={(event) => {
+                                event.stopPropagation();
                                 editBlocks((current) =>
                                   current.filter(
                                     (_item, itemIndex) => itemIndex !== index,
                                   ),
-                                )
-                              }
-                              sx={{ color: tokens.colors.roseGold }}
+                                );
+                                setSelectedBlock((current) =>
+                                  current === null
+                                    ? null
+                                    : Math.max(
+                                        0,
+                                        Math.min(current, blocks.length - 2),
+                                      ),
+                                );
+                              }}
                             >
-                              <DeleteOutline fontSize="small" />
+                              <DeleteOutline fontSize="inherit" />
                             </IconButton>
-                          </Tooltip>
-                        </Stack>
-                      </Stack>
-
-                      <Stack spacing={1.25}>
-                        {editableFields(block).map((field) => (
-                          <TextField
-                            key={field.key}
-                            label={field.label}
-                            value={fieldValue(block, field.key)}
-                            multiline={field.multiline}
-                            minRows={field.multiline ? 2 : undefined}
-                            size="small"
-                            fullWidth
-                            onChange={(event) =>
-                              editBlocks((current) =>
-                                current.map((item, itemIndex) =>
-                                  itemIndex === index
-                                    ? updateBlockField(
-                                        item,
-                                        field,
-                                        event.target.value,
-                                      )
-                                    : item,
-                                ),
-                              )
-                            }
-                          />
-                        ))}
+                          </span>
+                        </Tooltip>
                       </Stack>
                     </Paper>
-                    {index < blocks.length - 1 && (
-                      <Box sx={{ display: "flex", justifyContent: "center" }}>
-                        <ImageAssetsPanel
-                          label="Insert image block"
-                          onInsert={(asset) => {
-                            attachImage(asset);
-                            editBlocks((current) => [
-                              ...current.slice(0, index + 1),
-                              {
-                                type: "image",
-                                params: { src: asset.url, alt: "", width: 600 },
-                              },
-                              ...current.slice(index + 1),
-                            ]);
-                          }}
-                          onUploaded={attachImage}
-                        />
-                      </Box>
-                    )}
+                    <Stack alignItems="center">
+                      <AddBlockPicker
+                        disabled={blocks.length >= 12}
+                        onAdd={(type) => {
+                          editBlocks((current) => [
+                            ...current.slice(0, index + 1),
+                            createBlock(type),
+                            ...current.slice(index + 1),
+                          ]);
+                          setSelectedBlock(index + 1);
+                        }}
+                      />
+                    </Stack>
                   </React.Fragment>
                 ))}
-              </Stack>
-            )}
-          </Stack>
-        </Box>
+              </Box>
+              <Box sx={{ p: 2, flex: 1, minHeight: 0, overflowY: "auto" }}>
+                {selectedBlock !== null && blocks[selectedBlock] ? (
+                  <Inspector
+                    block={blocks[selectedBlock]}
+                    onChange={(next) =>
+                      editBlocks((current) =>
+                        current.map((block, index) =>
+                          index === selectedBlock ? next : block,
+                        ),
+                      )
+                    }
+                    onChooseImage={(asset) => chooseImage(selectedBlock, asset)}
+                  />
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    Select a block to edit it.
+                  </Typography>
+                )}
+              </Box>
+            </>
+          ) : (
+            <Stack
+              alignItems="center"
+              justifyContent="center"
+              sx={{ height: "100%", p: 4 }}
+            >
+              <ViewAgenda color="disabled" />
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                textAlign="center"
+              >
+                The block list and inspector appear after AI creates a design.
+              </Typography>
+            </Stack>
+          )}
+        </Stack>
       </Box>
 
       <Dialog
         open={pasteHtmlDialogOpen}
-        onClose={() => {
-          if (!isSanitizingHtml) {
-            setPasteHtmlDialogOpen(false);
-          }
-        }}
+        onClose={() => !isImportingHtml && setPasteHtmlDialogOpen(false)}
         fullWidth
         maxWidth="md"
       >
-        <DialogTitle>Paste email HTML</DialogTitle>
+        <DialogTitle>Import email HTML</DialogTitle>
         <DialogContent>
           <Stack spacing={1.5} sx={{ pt: 0.5 }}>
-            <Typography variant="body2" sx={{ color: tokens.colors.caption }}>
-              Paste the complete email markup. Scripts and inline event handlers
-              will be removed.
+            <Typography variant="body2" color="text.secondary">
+              AI will convert the design into editable blocks. If conversion
+              fails, the sanitized HTML stays intact as one block.
             </Typography>
             <TextField
               autoFocus
@@ -1088,17 +1759,15 @@ export default function AmieComposer({
                 setPasteHtmlError(null);
               }}
               placeholder="<!doctype html>…"
-              disabled={isSanitizingHtml}
+              disabled={isImportingHtml}
               fullWidth
-              inputProps={{ "aria-label": "Email HTML" }}
             />
-            {pastedHtml.length > 0 && !hasUnsubscribeField(pastedHtml) && (
+            {pastedHtml && !hasUnsubscribeField(pastedHtml) && (
               <Alert severity="warning">
-                No unsubscribe merge tag was found. You can still use this HTML,
-                but marketing emails should include one.
+                No unsubscribe merge tag was found.
               </Alert>
             )}
-            {pastedHtml.length > 0 && !hasLiquidField(pastedHtml) && (
+            {pastedHtml && !hasLiquidField(pastedHtml) && (
               <Alert severity="warning">
                 No Liquid fields using {"{{ }}"} or {"{% %}"} were found.
               </Alert>
@@ -1109,17 +1778,17 @@ export default function AmieComposer({
         <DialogActions>
           <Button
             onClick={() => setPasteHtmlDialogOpen(false)}
-            disabled={isSanitizingHtml}
+            disabled={isImportingHtml}
           >
             Cancel
           </Button>
           <Button
             variant="contained"
-            onClick={handlePasteHtml}
-            disabled={!pastedHtml.trim() || !workspaceId || isSanitizingHtml}
-            startIcon={isSanitizingHtml ? <CircularProgress size={16} /> : null}
+            onClick={() => void handleImportHtml()}
+            disabled={!pastedHtml.trim() || !workspaceId || isImportingHtml}
+            startIcon={isImportingHtml ? <CircularProgress size={16} /> : null}
           >
-            {isSanitizingHtml ? "Preparing…" : "Use HTML"}
+            {isImportingHtml ? "Converting…" : "Convert to blocks"}
           </Button>
         </DialogActions>
       </Dialog>

@@ -49,6 +49,7 @@ describe("amieComposerController", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json<AmieComposerConfigResponse>()).toEqual({
       enabled: true,
+      imageGenerationEnabled: false,
     });
     expect(send).not.toHaveBeenCalled();
   });
@@ -198,18 +199,18 @@ describe("amieComposerController", () => {
     expect(response.statusCode).toBe(200);
     const body = response.json<AmieComposeResponse>();
     expect(body.subject).toBe("A calmer evening routine");
-    expect(body.blocks).toHaveLength(3);
+    expect(body.blocks).toHaveLength(4);
     expect(body.html).toContain("<!doctype html>");
     expect(body.html).toContain("A gentler way to wind down");
     expect(body.html).toContain("{% unsubscribe_url %}");
     expect(body.html).not.toContain("123 Main St, New York, NY");
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(2);
     const command: InvokeModelCommand | undefined = send.mock.calls[0]?.[0];
     expect(command).toBeInstanceOf(InvokeModelCommand);
     expect(command?.input.modelId).toBe("test-model");
     expect(String(command?.input.body)).toContain('"max_tokens":4096');
     expect(String(command?.input.body)).toContain(
-      "The server replaces every footer addressLine with the configured mailing address before rendering",
+      "replaces addressLine with the configured mailing address",
     );
   });
 
@@ -253,7 +254,7 @@ describe("amieComposerController", () => {
     expect(response.statusCode).toBe(200);
     const command: InvokeModelCommand | undefined = send.mock.calls[0]?.[0];
     const requestBody = String(command?.input.body);
-    expect(requestBody).toContain("Use ONLY image URLs");
+    expect(requestBody).toContain("Use ONLY those exact image URLs");
     expect(requestBody).toContain(
       "https://assets.tryamie.com/public/workspace/image.jpg",
     );
@@ -316,7 +317,7 @@ describe("amieComposerController", () => {
     expect(response.json<AmieComposeResponse>().subject).toBe(
       "A thoughtful hello",
     );
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(2);
   });
 
   it("retries once with the failed output and corrective instruction", async () => {
@@ -346,7 +347,7 @@ describe("amieComposerController", () => {
     expect(response.json<AmieComposeResponse>().subject).toBe(
       "Corrected response",
     );
-    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenCalledTimes(3);
     const retryCommand: InvokeModelCommand | undefined =
       send.mock.calls[1]?.[0];
     const failedOutputMessage = JSON.stringify({
@@ -418,6 +419,261 @@ describe("amieComposerController", () => {
       reasonCode: AmieComposerReasonCode.ModelFailure,
     });
     expect(response.body).not.toContain("AWS secret details");
+  });
+
+  it("runs the critique pass and returns its automatic design fix", async () => {
+    const send = bedrockSendMock()
+      .mockResolvedValueOnce({
+        body: bedrockBody({
+          subject: "Draft subject",
+          previewText: "Draft preview",
+          blocks: [
+            { type: "header", params: {} },
+            { type: "paragraph", params: { text: "Draft body" } },
+            {
+              type: "footer",
+              params: { addressLine: "Server", unsubscribe: "Unsubscribe" },
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        body: bedrockBody({
+          subject: "Reviewed subject",
+          previewText: "Reviewed preview",
+          blocks: [
+            { type: "header", params: {} },
+            {
+              type: "ctaButton",
+              params: { label: "Start now", url: "https://tryamie.com" },
+              style: { align: "center", buttonVariant: "primary" },
+            },
+            {
+              type: "paragraph",
+              params: { text: "Reviewed body" },
+              style: { background: "ivory", padding: "loose" },
+            },
+            {
+              type: "footer",
+              params: { addressLine: "Server", unsubscribe: "Unsubscribe" },
+            },
+          ],
+          designNotes: "Moved the CTA up and clarified the hierarchy.",
+        }),
+      });
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      bedrockClient: { send },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose",
+      payload: { workspaceId: "workspace-1", prompt: "Design a welcome email" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json<AmieComposeResponse>();
+    expect(body.subject).toBe("Reviewed subject");
+    expect(body.designNotes).toBe(
+      "Moved the CTA up and clarified the hierarchy.",
+    );
+    expect(body.blocks[1]).toMatchObject({ type: "ctaButton" });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves user style edits through copy-only revisions and critique reordering", async () => {
+    const revisedBlocks = [
+      { type: "paragraph", params: { text: "Revised copy" } },
+      {
+        type: "ctaButton",
+        params: { label: "Keep going", url: "https://tryamie.com" },
+      },
+      {
+        type: "footer",
+        params: { addressLine: "Server", unsubscribe: "Unsubscribe" },
+      },
+    ];
+    const send = bedrockSendMock()
+      .mockResolvedValueOnce({
+        body: bedrockBody({
+          subject: "Revised",
+          previewText: "Updated copy.",
+          blocks: revisedBlocks,
+        }),
+      })
+      .mockResolvedValueOnce({
+        body: bedrockBody({
+          subject: "Revised",
+          previewText: "Updated copy.",
+          blocks: [{ type: "header", params: {} }, ...revisedBlocks],
+          designNotes: "Copy reviewed.",
+        }),
+      });
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      bedrockClient: { send },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose",
+      payload: {
+        workspaceId: "workspace-1",
+        prompt: "Original brief",
+        currentBlocks: [
+          {
+            type: "paragraph",
+            params: { text: "Original copy" },
+            style: { background: "blush", padding: "loose", align: "center" },
+          },
+          ...revisedBlocks.slice(1),
+        ],
+        conversation: [{ role: "user", content: "Change only the wording" }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const paragraph = response
+      .json<AmieComposeResponse>()
+      .blocks.find((block) => block.type === "paragraph");
+    expect(paragraph?.style).toEqual({
+      background: "blush",
+      padding: "loose",
+      align: "center",
+    });
+  });
+
+  it("cleans unknown style tokens without failing the compose", async () => {
+    const output = {
+      subject: "Clean style",
+      previewText: "Invalid tokens are ignored.",
+      blocks: [
+        {
+          type: "paragraph",
+          params: { text: "Keep this design." },
+          style: { background: "chartreuse", align: "center" },
+        },
+        {
+          type: "footer",
+          params: { addressLine: "Server", unsubscribe: "Unsubscribe" },
+        },
+      ],
+    };
+    const send = bedrockSendMock().mockResolvedValue({
+      body: bedrockBody(output),
+    });
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      bedrockClient: { send },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose",
+      payload: { workspaceId: "workspace-1", prompt: "Compose an email" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const paragraph = response
+      .json<AmieComposeResponse>()
+      .blocks.find((block) => block.type === "paragraph");
+    expect(paragraph?.style).toEqual({ align: "center" });
+  });
+
+  it("fulfills a generated-image slot before assembling", async () => {
+    const send = bedrockSendMock()
+      .mockResolvedValueOnce({
+        body: bedrockBody({
+          subject: "Generated hero",
+          previewText: "A new visual.",
+          blocks: [
+            {
+              type: "heroImage",
+              params: {
+                src: "https://generated.amie.invalid/pending",
+                alt: "Pending image",
+              },
+            },
+            {
+              type: "ctaButton",
+              params: { label: "Learn more", url: "https://tryamie.com" },
+            },
+            {
+              type: "footer",
+              params: { addressLine: "Server", unsubscribe: "Unsubscribe" },
+            },
+          ],
+          generateImages: [
+            {
+              generateImage: {
+                prompt: "A warm bedside routine",
+                aspect: "16:9",
+                slot: 0,
+              },
+            },
+          ],
+        }),
+      })
+      .mockRejectedValueOnce(new Error("critique unavailable"));
+    const storageSend = jest.fn(() => Promise.resolve({}));
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      imageGenerationEnabled: true,
+      bedrockClient: { send },
+      storageClient: { send: storageSend },
+      imageGenerator: jest.fn(() =>
+        Promise.resolve({
+          bytes: Buffer.from("generated-image"),
+          contentType: "image/png" as const,
+        }),
+      ),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose",
+      payload: { workspaceId: "workspace-1", prompt: "Use a generated hero" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const hero = response
+      .json<AmieComposeResponse>()
+      .blocks.find((block) => block.type === "heroImage");
+    expect(hero?.type === "heroImage" ? hero.params.src : "").toMatch(
+      /public\/workspace-1\/generated\/.+\.png$/,
+    );
+    expect(storageSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to one sanitized raw HTML block when import conversion fails", async () => {
+    const send = bedrockSendMock().mockRejectedValue(new Error("model down"));
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      bedrockClient: { send },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose/import-html",
+      payload: {
+        workspaceId: "workspace-1",
+        html: '<p onclick="bad()">Keep me</p><script>bad()</script>',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json<AmieComposeResponse>();
+    expect(body.blocks).toEqual([
+      { type: "rawHtml", params: { html: "<p>Keep me</p>" } },
+    ]);
+    expect(body.html).not.toContain("<script>");
+    expect(body.designNotes).toContain("fallback block");
   });
 
   it("honors the disabled kill switch", async () => {

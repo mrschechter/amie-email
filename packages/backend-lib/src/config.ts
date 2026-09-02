@@ -125,6 +125,13 @@ const BaseRawConfigProps = {
   amieAssetsBucket: Type.Optional(Type.String()),
   amieAssetsPublicBaseUrl: Type.Optional(Type.String()),
   amieAssetsMaxBytes: Type.Optional(Type.String({ format: "naturalNumber" })),
+  amieImageGenEnabled: Type.Optional(BoolStr),
+  amieImageGenProvider: Type.Optional(
+    Type.Union([Type.Literal("openai"), Type.Literal("google")]),
+  ),
+  amieImageGenModel: Type.Optional(Type.String()),
+  openaiApiKey: Type.Optional(Type.String()),
+  geminiApiKey: Type.Optional(Type.String()),
   // Enable cold storage behavior (store on pause/tombstone, restore on resume/activate)
   enableColdStorage: Type.Optional(BoolStr),
   exportLogsHyperDx: Type.Optional(BoolStr),
@@ -278,6 +285,9 @@ export type Config = Overwrite<
     amieAssetsBucket: string;
     amieAssetsMaxBytes: number;
     amieAssetsPublicBaseUrl: string;
+    amieImageGenEnabled: boolean;
+    amieImageGenModel: string;
+    amieImageGenProvider: "openai" | "google";
     blobStorageAccessKeyId?: string;
     blobStorageBucket: string;
     blobStorageEndpoint: string;
@@ -372,6 +382,8 @@ export const SECRETS = new Set<keyof Config>([
   "openIdClientSecret",
   "blobStorageAccessKeyId",
   "blobStorageSecretAccessKey",
+  "openaiApiKey",
+  "geminiApiKey",
   "hyperDxApiKey",
   "databaseUrl", // Contains password
   "dashboardWriteKey", // Potentially sensitive
@@ -734,6 +746,9 @@ function parseRawConfig(rawConfig: RawConfig): Config {
     amieAssetsMaxBytes: rawConfig.amieAssetsMaxBytes
       ? parseInt(rawConfig.amieAssetsMaxBytes)
       : 5 * 1024 * 1024,
+    amieImageGenEnabled: rawConfig.amieImageGenEnabled === "true",
+    amieImageGenProvider: rawConfig.amieImageGenProvider ?? "openai",
+    amieImageGenModel: rawConfig.amieImageGenModel ?? "gpt-image-2",
     exportLogsHyperDx: rawConfig.exportLogsHyperDx === "true",
     dittofeedTelemetryDisabled:
       rawConfig.dittofeedTelemetryDisabled === "true" ||
