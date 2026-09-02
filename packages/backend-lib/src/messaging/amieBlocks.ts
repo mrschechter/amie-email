@@ -38,11 +38,18 @@ export const AMIE_BACKGROUND_COLORS: Record<AmieBrandBackground, string> = {
 
 function escapeHtml(value: string): string {
   return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    .split(/({{[\s\S]*?}}|{%[\s\S]*?%})/g)
+    .map((part, index) =>
+      index % 2 === 1
+        ? part
+        : part
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;"),
+    )
+    .join("");
 }
 
 /** Escape first, then apply the deliberately small Markdown-lite grammar. */
@@ -62,6 +69,7 @@ function textWithLineBreaks(value: string): string {
 }
 
 function httpUrl(value: string): string | null {
+  if (/^\s*{{[\s\S]*}}\s*$/.test(value)) return escapeHtml(value.trim());
   try {
     const parsed = new URL(value);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {

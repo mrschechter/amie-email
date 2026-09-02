@@ -47,7 +47,12 @@ import { useAmieComposerConfigQuery } from "../../lib/useAmieComposerConfigQuery
 import { useMessageTemplateUpdateMutation } from "../../lib/useMessageTemplateUpdateMutation";
 import { PublisherStatusType } from "../publisher";
 import { TemplateEditorLayoutParams } from "../templateEditor";
-import { previewTextFromHtml, withPreviewText } from "./amieComposerHtml";
+import {
+  AmieComposeStatus,
+  previewTextFromHtml,
+  streamAmieComposition,
+  withPreviewText,
+} from "./amieComposerHtml";
 import ImageAssetsPanel from "./imageAssetsPanel";
 
 const COLORS = {
@@ -409,6 +414,9 @@ export default function EmailTemplateEditorV3({
   const [input, setInput] = useState("");
   const [conversation, setConversation] = useState<DisplayMessage[]>([]);
   const [isComposing, setIsComposing] = useState(false);
+  const [composeStatus, setComposeStatus] =
+    useState<AmieComposeStatus>("Thinking…");
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [assets, setAssets] = useState<AmieAsset[]>([]);
   const [savedLabel, setSavedLabel] = useState(() =>
@@ -492,10 +500,15 @@ export default function EmailTemplateEditorV3({
         blocks: emailDraft.amieBlocks,
         lastAssembledBody: lastAssembledBodyRef.current,
       });
-      const request: AmieComposeRequest = {
+      const request: AmieComposeRequest & {
+        currentSubject?: string;
+        currentPreviewText?: string;
+      } = {
         workspaceId,
         prompt: originalPromptRef.current,
         currentBlocks,
+        currentSubject: emailDraft.subject,
+        currentPreviewText: previewText,
         conversation: nextConversation,
         images: assets.map((asset) => ({
           url: asset.url,
@@ -505,61 +518,86 @@ export default function EmailTemplateEditorV3({
       };
       setIsComposing(true);
       setError(null);
+      setWarnings([]);
+      setComposeStatus("Thinking…");
+      const requestId = Date.now();
+      const assistantId = `assistant-${requestId}`;
       setConversation((current) => [
         ...current,
-        { id: `user-${Date.now()}`, role: "user", content: cleanMessage },
+        { id: `user-${requestId}`, role: "user", content: cleanMessage },
+        { id: assistantId, role: "assistant", content: "" },
       ]);
       try {
-        const response = await axios.post<AmieComposeResponse>(
-          `${baseApiUrl}/content/templates/compose`,
+        const response = await streamAmieComposition({
+          url: `${baseApiUrl}/content/templates/compose/stream`,
           request,
-          { headers: authHeaders },
-        );
+          headers: authHeaders,
+          onStatus: setComposeStatus,
+          onChunk: (text) =>
+            setConversation((current) =>
+              current.map((entry) =>
+                entry.id === assistantId
+                  ? { ...entry, content: `${entry.content}${text}` }
+                  : entry,
+              ),
+            ),
+        });
         const responseBody = withPreviewText(
-          response.data.html,
-          response.data.previewText,
+          response.html,
+          response.previewText,
         );
+        setWarnings(response.warnings ?? []);
         if (mode === "variant") {
           const created = await createTemplate.mutateAsync({
             name: `${title} — Variant B`,
             definition: {
               ...emailDraft,
               emailContentsType: EmailContentsType.Code,
-              subject: response.data.subject,
+              subject: response.subject,
               body: responseBody,
-              amieBlocks: response.data.blocks,
+              amieBlocks: response.blocks,
             },
             resourceType: ResourceTypeEnum.Declarative,
           });
-          setConversation((current) => [
-            ...current,
-            {
-              id: `assistant-${Date.now()}`,
-              role: "assistant",
-              content:
-                "Variant B is ready with an alternative subject and body.",
-              href: `/templates/email/${created.id}`,
-              hrefLabel: "Open Variant B",
-              showAuditChips: containsBrandAndFooter(responseBody),
-            },
-          ]);
+          setConversation((current) =>
+            current.map((entry) =>
+              entry.id === assistantId
+                ? {
+                    ...entry,
+                    content:
+                      entry.content ||
+                      "Variant B is ready with an alternative subject and body.",
+                    href: `/templates/email/${created.id}`,
+                    hrefLabel: "Open Variant B",
+                    showAuditChips: containsBrandAndFooter(responseBody),
+                  }
+                : entry,
+            ),
+          );
         } else {
-          applyComposerResponse(response.data);
-          setConversation((current) => [
-            ...current,
-            {
-              id: `assistant-${Date.now()}`,
-              role: "assistant",
-              content: conversation.length
-                ? `Updated. ${response.data.designNotes} Preview refreshed →`
-                : `Drafted it — subject, preview text, and body are on the right. ${response.data.designNotes}`,
-              showAuditChips: containsBrandAndFooter(responseBody),
-            },
-          ]);
+          applyComposerResponse(response);
+          setConversation((current) =>
+            current.map((entry) =>
+              entry.id === assistantId
+                ? {
+                    ...entry,
+                    content:
+                      entry.content ||
+                      (conversation.length
+                        ? `Updated. ${response.designNotes} Preview refreshed →`
+                        : `Drafted it — subject, preview text, and body are on the right. ${response.designNotes}`),
+                    showAuditChips: containsBrandAndFooter(responseBody),
+                  }
+                : entry,
+            ),
+          );
         }
         if (conversation.length === 0) originalPromptRef.current = cleanMessage;
         setInput("");
       } catch {
+        setConversation((current) =>
+          current.filter((entry) => entry.id !== assistantId),
+        );
         setError("That change didn’t go through. Your draft is untouched.");
       } finally {
         setIsComposing(false);
@@ -575,6 +613,7 @@ export default function EmailTemplateEditorV3({
       createTemplate,
       emailDraft,
       isComposing,
+      previewText,
       title,
       workspaceId,
     ],
@@ -967,10 +1006,19 @@ export default function EmailTemplateEditorV3({
                       sx={{ color: COLORS.muted }}
                     >
                       <CircularProgress size={16} />
-                      <Typography variant="body2">
-                        Writing and reviewing…
+                      <Typography variant="body2" data-testid="compose-status">
+                        {composeStatus}
                       </Typography>
                     </Stack>
+                  ) : null}
+                  {warnings.length ? (
+                    <Alert
+                      severity="warning"
+                      icon={false}
+                      sx={{ fontSize: 12 }}
+                    >
+                      {warnings.join(" ")}
+                    </Alert>
                   ) : null}
                   {error ? <Alert severity="error">{error}</Alert> : null}
                   {composerUnavailable ? (

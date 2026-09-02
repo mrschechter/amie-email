@@ -11,6 +11,8 @@ import {
 
 import amieComposerController, {
   BedrockInvoker,
+  composeAmieEmail,
+  selectComposerModelId,
 } from "./amieComposerController";
 
 function bedrockSendMock() {
@@ -33,6 +35,138 @@ function bedrockBody(value: unknown): Uint8Array {
 }
 
 describe("amieComposerController", () => {
+  describe("model routing", () => {
+    it("uses the primary model for a full first draft", () => {
+      expect(
+        selectComposerModelId(
+          { workspaceId: "workspace-1", prompt: "Draft a win-back email" },
+          "primary-model",
+          "fast-model",
+        ),
+      ).toBe("primary-model");
+    });
+
+    it.each([
+      {
+        label: "revision",
+        request: {
+          workspaceId: "workspace-1",
+          prompt: "Original",
+          currentBlocks: [
+            { type: "paragraph" as const, params: { text: "Current draft" } },
+          ],
+          conversation: [{ role: "user" as const, content: "Make it warmer" }],
+        },
+      },
+      {
+        label: "quick action",
+        request: {
+          workspaceId: "workspace-1",
+          prompt: "Shorten it",
+        },
+      },
+      {
+        label: "small seeded draft",
+        request: {
+          workspaceId: "workspace-1",
+          prompt: "Fill this design",
+          seedBlocks: [
+            { type: "paragraph" as const, params: { text: "Short seed" } },
+          ],
+        },
+      },
+    ])("uses the fast model for a $label", ({ request }) => {
+      expect(
+        selectComposerModelId(request, "primary-model", "fast-model"),
+      ).toBe("fast-model");
+    });
+  });
+
+  it("normalizes invalid subject and body Liquid before returning a draft", async () => {
+    const invalidLiquid = {
+      subject: "Come back, {{ firstName }}",
+      previewText: "A note for {{ user.firstName }}",
+      blocks: [
+        {
+          type: "paragraph",
+          params: {
+            text: "Hi {{ user.firstName | default: &#39;Queen&#39; }}",
+          },
+        },
+        {
+          type: "footer",
+          params: { addressLine: "Configured", unsubscribe: "Unsubscribe" },
+        },
+      ],
+    };
+    const send = bedrockSendMock()
+      .mockResolvedValueOnce({ body: bedrockBody(invalidLiquid) })
+      .mockResolvedValueOnce({
+        body: bedrockBody({
+          ...invalidLiquid,
+          designNotes: "Liquid checked.",
+        }),
+      });
+
+    const response = await composeAmieEmail({
+      request: { workspaceId: "workspace-1", prompt: "Draft a win-back" },
+      bedrockClient: { send },
+      modelId: "fast-model",
+      knownUserProperties: ["firstName"],
+    });
+
+    expect(response.subject).toBe(
+      "Come back, {{ user.firstName | default: '' }}",
+    );
+    expect(response.previewText).toBe(
+      "A note for {{ user.firstName | default: '' }}",
+    );
+    expect(response.html).toContain("{{ user.firstName | default: 'Queen' }}");
+    expect(response.html).not.toContain("default: &#39;Queen&#39;");
+    expect(
+      "warnings" in response ? response.warnings : undefined,
+    ).toBeUndefined();
+  });
+
+  it("warns and keeps the last valid revision when Liquid still fails", async () => {
+    const broken = {
+      subject: "Hello {{ unknownName }}",
+      previewText: "Broken {{ unknownPreview }}",
+      blocks: [
+        {
+          type: "paragraph",
+          params: { text: "Broken {{ unknownBody }}" },
+        },
+      ],
+    };
+    const send = bedrockSendMock()
+      .mockResolvedValueOnce({ body: bedrockBody(broken) })
+      .mockResolvedValueOnce({
+        body: bedrockBody({ ...broken, designNotes: "Attempted revision." }),
+      });
+
+    const response = await composeAmieEmail({
+      request: {
+        workspaceId: "workspace-1",
+        prompt: "Original brief",
+        currentSubject: "Last valid subject",
+        currentPreviewText: "Last valid preview",
+        currentBlocks: [
+          { type: "paragraph", params: { text: "Last valid body" } },
+        ],
+        conversation: [{ role: "user", content: "Personalize it" }],
+      },
+      bedrockClient: { send },
+      modelId: "fast-model",
+      knownUserProperties: ["firstName"],
+    });
+
+    expect(response.subject).toBe("Last valid subject");
+    expect(response.previewText).toBe("Last valid preview");
+    expect(response.html).toContain("Last valid body");
+    expect("warnings" in response ? response.warnings : []).toHaveLength(3);
+  });
+
   it("exposes the enabled flag without invoking Bedrock", async () => {
     const send = bedrockSendMock();
     const app = fastify();
@@ -185,6 +319,8 @@ describe("amieComposerController", () => {
       enabled: true,
       modelId: "test-model",
       bedrockClient: { send },
+      userPropertyNames: () =>
+        Promise.resolve(["firstName", "checkoutUrl", "paymentUpdateUrl"]),
     });
 
     const response = await app.inject({
@@ -211,6 +347,12 @@ describe("amieComposerController", () => {
     expect(String(command?.input.body)).toContain('"max_tokens":4096');
     expect(String(command?.input.body)).toContain(
       "replaces addressLine with the configured mailing address",
+    );
+    expect(String(command?.input.body)).toContain(
+      '[\\"firstName\\",\\"checkoutUrl\\",\\"paymentUpdateUrl\\"]',
+    );
+    expect(String(command?.input.body)).toContain(
+      "{{ user.firstName | default: 'there' }}",
     );
   });
 

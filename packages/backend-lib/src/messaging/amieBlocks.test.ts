@@ -35,6 +35,40 @@ function expectEmailSafeBlock(html: string) {
 }
 
 describe("Amie email blocks", () => {
+  it("preserves quotes inside Liquid while escaping surrounding HTML", () => {
+    const html = assembleEmail(
+      [
+        {
+          type: "paragraph",
+          params: {
+            text: "Hi <friend>, {{ user.firstName | default: 'Queen' }}",
+          },
+        },
+      ],
+      `A note for {{ user.firstName | default: "Queen" }} & friends`,
+    );
+
+    expect(html).toContain(
+      "Hi &lt;friend&gt;, {{ user.firstName | default: 'Queen' }}",
+    );
+    expect(html).toContain(
+      `{{ user.firstName | default: "Queen" }} &amp; friends`,
+    );
+    expect(html).not.toContain("default: &#39;Queen&#39;");
+    expect(html).not.toContain("default: &quot;Queen&quot;");
+  });
+
+  it("keeps a normalized Liquid user-property URL in CTA hrefs", () => {
+    expect(
+      ctaButton({
+        label: "Finish checkout",
+        url: "{{ user.checkoutUrl | default: 'https://tryamie.com' }}",
+      }),
+    ).toContain(
+      `href="{{ user.checkoutUrl | default: 'https://tryamie.com' }}"`,
+    );
+  });
+
   const renderedBlocks: { name: string; html: string }[] = [
     { name: "header", html: header() },
     {
