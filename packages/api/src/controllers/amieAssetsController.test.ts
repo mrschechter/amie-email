@@ -55,6 +55,48 @@ function commandInput(command: object | undefined): Record<string, unknown> {
 }
 
 describe("amieAssetsController", () => {
+  it("generates an image and stores it under the workspace generated prefix", async () => {
+    const client = s3Mock();
+    const imageGenerator = jest.fn(() =>
+      Promise.resolve({
+        bytes: Buffer.from("generated-image"),
+        contentType: "image/png" as const,
+      }),
+    );
+    const app = fastify();
+    await app.register(fastifyMultipart);
+    await app.register(amieAssetsController, {
+      s3Client: client,
+      imageGenerationEnabled: true,
+      imageGenerator,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/assets/generate",
+      payload: {
+        workspaceId: "workspace-1",
+        prompt: "A warm evening routine",
+        aspect: "4:5",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const asset = response.json<AmieAsset>();
+    expect(asset.id).toMatch(
+      /^public\/workspace-1\/generated\/[0-9a-f-]{36}\.png$/,
+    );
+    expect(asset.alt).toBe("A warm evening routine");
+    expect(imageGenerator).toHaveBeenCalledWith({
+      prompt: "A warm evening routine",
+      aspect: "4:5",
+    });
+    expect(commandInput(client.send.mock.calls[0]?.[0])).toMatchObject({
+      Key: asset.id,
+      ContentType: "image/png",
+    });
+  });
+
   it("validates image bytes and uploads with public immutable metadata", async () => {
     const client = s3Mock();
     const app = fastify();

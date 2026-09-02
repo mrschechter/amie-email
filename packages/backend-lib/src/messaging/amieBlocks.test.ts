@@ -3,6 +3,7 @@ import { schemaValidate } from "isomorphic-lib/src/resultHandling/schemaValidati
 
 import {
   assembleEmail,
+  bulletList,
   ctaButton,
   divider,
   footer,
@@ -12,7 +13,12 @@ import {
   image,
   paragraph,
   productCard,
+  quoteCallout,
+  sectionBreak,
+  spacer,
+  statsRow,
   testimonial,
+  twoColumn,
 } from "./amieBlocks";
 
 const UNSAFE_SCRIPT_URL = ["java", "script:alert(1)"].join("");
@@ -84,6 +90,38 @@ describe("Amie email blocks", () => {
         unsubscribe: "Unsubscribe",
       }),
     },
+    {
+      name: "two column",
+      html: twoColumn({
+        image: { src: "https://example.com/image.jpg", alt: "Routine" },
+        imageSide: "left",
+        heading: "A useful detail",
+        body: "Paired copy",
+        cta: { label: "Learn more", url: "https://example.com" },
+      }),
+    },
+    {
+      name: "bullet list",
+      html: bulletList({ heading: "Benefits", items: ["One", "Two"] }),
+    },
+    {
+      name: "stats row",
+      html: statsRow({
+        items: [
+          { value: "2x", label: "First" },
+          { value: "80%", label: "Second" },
+        ],
+      }),
+    },
+    {
+      name: "quote callout",
+      html: quoteCallout({
+        quote: "An editorial thought",
+        attribution: "Amie",
+      }),
+    },
+    { name: "spacer", html: spacer({ height: 24 }) },
+    { name: "section break", html: sectionBreak({ background: "blush" }) },
   ];
 
   it.each(renderedBlocks)(
@@ -102,6 +140,80 @@ describe("Amie email blocks", () => {
     expect(html).not.toContain("<script>");
     expect(html).not.toContain(UNSAFE_SCRIPT_URL);
     expect(html).toContain('href="#"');
+  });
+
+  it("renders Markdown-lite only after escaping XSS strings", () => {
+    const html = paragraph({
+      text: '**Strong** *gentle* [safe](https://example.com)\n<script src="x">bad</script> [bad](javascript:alert(1))',
+    });
+
+    expect(html).toContain("<strong>Strong</strong>");
+    expect(html).toContain("<em>gentle</em>");
+    expect(html).toContain('href="https://example.com"');
+    expect(html).toContain(
+      "&lt;script src=&quot;x&quot;&gt;bad&lt;/script&gt;",
+    );
+    expect(html).not.toContain("<script");
+    expect(html).not.toContain('href="javascript:');
+  });
+
+  it("validates a complete styled design tree and rejects non-brand tokens", () => {
+    const valid: AmieBlockSpec[] = [
+      { type: "sectionBreak", params: { background: "blush" } },
+      {
+        type: "heroHeading",
+        params: { title: "**A better routine**" },
+        style: {
+          background: "blush",
+          align: "center",
+          padding: "loose",
+          textSize: "l",
+        },
+      },
+      {
+        type: "statsRow",
+        params: {
+          items: [
+            { value: "2x", label: "Benefit" },
+            { value: "80%", label: "Result" },
+          ],
+        },
+        style: { background: "ivory", textSize: "m" },
+      },
+      {
+        type: "ctaButton",
+        params: { label: "Start", url: "https://tryamie.com" },
+        style: { buttonVariant: "roseGold", align: "center" },
+      },
+      {
+        type: "footer",
+        params: { addressLine: "Server", unsubscribe: "Unsubscribe" },
+      },
+    ];
+    expect(
+      valid.every((block) => schemaValidate(block, AmieBlockSpec).isOk()),
+    ).toBe(true);
+    expect(
+      schemaValidate(
+        {
+          type: "paragraph",
+          params: { text: "No" },
+          style: { background: "purple" },
+        },
+        AmieBlockSpec,
+      ).isErr(),
+    ).toBe(true);
+  });
+
+  it("keeps a section background active until the next section break", () => {
+    const html = assembleEmail([
+      { type: "sectionBreak", params: { background: "blush" } },
+      { type: "paragraph", params: { text: "Blush section" } },
+      { type: "sectionBreak", params: { background: "sage" } },
+      { type: "paragraph", params: { text: "Sage section" } },
+    ]);
+    expect(html).toContain('data-amie-block="1" bgcolor="#F5E6E0"');
+    expect(html).toContain('data-amie-block="3" bgcolor="#9CAF88"');
   });
 
   it("renders image attributes with email-safe defaults", () => {

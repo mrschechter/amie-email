@@ -1,4 +1,4 @@
-import { extractFirstJsonObject } from "./amieComposer";
+import { cleanAmieModelStyles, extractFirstJsonObject } from "./amieComposer";
 
 describe("extractFirstJsonObject", () => {
   it("strips JSON code fences and extracts the first balanced object", () => {
@@ -31,5 +31,36 @@ describe("extractFirstJsonObject", () => {
     expect(
       extractFirstJsonObject('```json\n{"subject":"Hello"\n```'),
     ).toBeNull();
+  });
+});
+
+describe("cleanAmieModelStyles", () => {
+  it("drops malformed style values and repairs an invalid section token", () => {
+    expect(
+      cleanAmieModelStyles({
+        blocks: [
+          {
+            type: "paragraph",
+            params: { text: "Keep me" },
+            style: { background: "purple", align: "center", custom: "bad" },
+          },
+          { type: "divider", params: {}, style: "not-an-object" },
+          {
+            type: "sectionBreak",
+            params: { background: "chartreuse" },
+          },
+        ],
+      }),
+    ).toEqual({
+      blocks: [
+        {
+          type: "paragraph",
+          params: { text: "Keep me" },
+          style: { align: "center" },
+        },
+        { type: "divider", params: {} },
+        { type: "sectionBreak", params: { background: "ivory" } },
+      ],
+    });
   });
 });

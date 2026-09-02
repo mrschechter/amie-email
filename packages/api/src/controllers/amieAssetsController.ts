@@ -8,11 +8,17 @@ import {
   storage,
 } from "backend-lib/src/blobStorage";
 import backendConfig from "backend-lib/src/config";
+import {
+  AmieImageAspect,
+  generateAndStoreImage,
+  GeneratedImage,
+} from "backend-lib/src/messaging/amieImageGeneration";
 import { randomUUID } from "crypto";
 import { FastifyInstance } from "fastify";
 import {
   AmieAsset,
   AmieAssetErrorResponse,
+  AmieAssetGenerateRequest,
   AmieAssetListResponse,
 } from "isomorphic-lib/src/amieAssets";
 import path from "path";
@@ -28,6 +34,11 @@ type ImageContentType = keyof typeof IMAGE_TYPES;
 
 export interface AmieAssetsControllerOptions {
   s3Client?: AssetStorageClient;
+  imageGenerationEnabled?: boolean;
+  imageGenerator?: (options: {
+    prompt: string;
+    aspect: AmieImageAspect;
+  }) => Promise<GeneratedImage>;
 }
 
 function detectedContentType(bytes: Buffer): ImageContentType | null {
@@ -114,6 +125,39 @@ export default async function amieAssetsController(
     // S3Client's generic send overload implements this narrower injected seam.
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
     (storage() as unknown as AssetStorageClient);
+  const imageGenerationEnabled =
+    options.imageGenerationEnabled ?? backendConfig().amieImageGenEnabled;
+
+  fastify.withTypeProvider<TypeBoxTypeProvider>().post(
+    "/assets/generate",
+    {
+      schema: {
+        description:
+          "Generate and store an on-brand image for an Amie workspace.",
+        tags: ["Content"],
+        body: AmieAssetGenerateRequest,
+        response: {
+          200: AmieAsset,
+          503: AmieAssetErrorResponse,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!imageGenerationEnabled) {
+        return reply.status(503).send({
+          message: "Amie image generation is disabled.",
+        });
+      }
+      const asset = await generateAndStoreImage({
+        workspaceId: request.body.workspaceId,
+        prompt: request.body.prompt,
+        aspect: request.body.aspect,
+        storageClient: s3Client,
+        ...(options.imageGenerator ? { generate: options.imageGenerator } : {}),
+      });
+      return reply.status(200).send(asset);
+    },
+  );
 
   fastify.withTypeProvider<TypeBoxTypeProvider>().post(
     "/assets",
@@ -189,6 +233,7 @@ export default async function amieAssetsController(
         id: key,
         url: assetUrl(key),
         name: upload.filename,
+        alt: safeName(upload.filename).replace(/[-_]+/g, " "),
         size: buffer.byteLength,
         contentType,
       });
@@ -216,13 +261,17 @@ export default async function amieAssetsController(
             (left.lastModified?.getTime() ?? 0),
         )
         .slice(0, 200)
-        .map((object) => ({
-          id: object.key,
-          url: assetUrl(object.key),
-          name: displayNameFromKey(object.key),
-          size: object.size,
-          contentType: contentTypeFromKey(object.key),
-        }));
+        .map((object) => {
+          const name = displayNameFromKey(object.key);
+          return {
+            id: object.key,
+            url: assetUrl(object.key),
+            name,
+            alt: path.basename(name, path.extname(name)).replace(/[-_]+/g, " "),
+            size: object.size,
+            contentType: contentTypeFromKey(object.key),
+          };
+        });
       return reply.status(200).send({ assets });
     },
   );
