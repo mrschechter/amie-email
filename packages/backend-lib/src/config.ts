@@ -130,6 +130,14 @@ const BaseRawConfigProps = {
     Type.Union([Type.Literal("openai"), Type.Literal("google")]),
   ),
   amieImageGenModel: Type.Optional(Type.String()),
+  amieImageGenQuality: Type.Optional(
+    Type.Union([
+      Type.Literal("low"),
+      Type.Literal("medium"),
+      Type.Literal("high"),
+      Type.Literal("auto"),
+    ]),
+  ),
   openaiApiKey: Type.Optional(Type.String()),
   geminiApiKey: Type.Optional(Type.String()),
   // Enable cold storage behavior (store on pause/tombstone, restore on resume/activate)
@@ -288,6 +296,7 @@ export type Config = Overwrite<
     amieImageGenEnabled: boolean;
     amieImageGenModel: string;
     amieImageGenProvider: "openai" | "google";
+    amieImageGenQuality: "low" | "medium" | "high" | "auto";
     blobStorageAccessKeyId?: string;
     blobStorageBucket: string;
     blobStorageEndpoint: string;
@@ -749,6 +758,7 @@ function parseRawConfig(rawConfig: RawConfig): Config {
     amieImageGenEnabled: rawConfig.amieImageGenEnabled === "true",
     amieImageGenProvider: rawConfig.amieImageGenProvider ?? "openai",
     amieImageGenModel: rawConfig.amieImageGenModel ?? "gpt-image-2",
+    amieImageGenQuality: rawConfig.amieImageGenQuality ?? "medium",
     exportLogsHyperDx: rawConfig.exportLogsHyperDx === "true",
     dittofeedTelemetryDisabled:
       rawConfig.dittofeedTelemetryDisabled === "true" ||

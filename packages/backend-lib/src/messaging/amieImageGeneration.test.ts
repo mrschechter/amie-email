@@ -3,10 +3,10 @@ import {
   generateImage,
 } from "./amieImageGeneration";
 
-function jsonResponse(value: unknown): Promise<Response> {
+function jsonResponse(value: unknown, status = 200): Promise<Response> {
   return Promise.resolve(
     new Response(JSON.stringify(value), {
-      status: 200,
+      status,
       headers: { "Content-Type": "application/json" },
     }),
   );
@@ -25,6 +25,7 @@ describe("Amie image generation", () => {
       aspect: "16:9",
       provider: "openai",
       model: "gpt-image-2",
+      quality: "high",
       openaiApiKey: "test-openai-key",
       geminiApiKey: "unused",
       fetchImpl,
@@ -38,6 +39,8 @@ describe("Amie image generation", () => {
     const body = String(fetchImpl.mock.calls[0]?.[1]?.body);
     expect(body).toContain('"model":"gpt-image-2"');
     expect(body).toContain('"size":"1536x1024"');
+    expect(body).toContain('"quality":"high"');
+    expect(body).not.toContain("response_format");
     expect(body).toContain(
       `${AMIE_BRAND_PHOTOGRAPHY_PREFIX}A woman preparing her evening routine`,
     );
@@ -68,6 +71,7 @@ describe("Amie image generation", () => {
       aspect: "4:5",
       provider: "google",
       model: "unused",
+      quality: "medium",
       openaiApiKey: "unused",
       geminiApiKey: "test-gemini-key",
       fetchImpl,
@@ -81,6 +85,56 @@ describe("Amie image generation", () => {
     expect(body).toContain('"aspectRatio":"4:5"');
     expect(body).toContain(
       `${AMIE_BRAND_PHOTOGRAPHY_PREFIX}A warm product still life`,
+    );
+  });
+
+  it("propagates OpenAI's error.message in non-2xx failures", async () => {
+    const fetchImpl = jest.fn<Promise<Response>, Parameters<typeof fetch>>(() =>
+      jsonResponse(
+        {
+          error: {
+            message: "Unknown parameter: 'response_format'.",
+          },
+        },
+        400,
+      ),
+    );
+
+    await expect(
+      generateImage({
+        prompt: "A product hero",
+        aspect: "16:9",
+        provider: "openai",
+        model: "gpt-image-2",
+        quality: "medium",
+        openaiApiKey: "test-openai-key",
+        geminiApiKey: "unused",
+        fetchImpl,
+      }),
+    ).rejects.toThrow(
+      "OpenAI image generation failed (400): Unknown parameter: 'response_format'.",
+    );
+  });
+
+  it("propagates and truncates a Gemini non-JSON error body", async () => {
+    const providerMessage = "Gemini unavailable ".repeat(30);
+    const fetchImpl = jest.fn<Promise<Response>, Parameters<typeof fetch>>(() =>
+      Promise.resolve(new Response(providerMessage, { status: 503 })),
+    );
+
+    await expect(
+      generateImage({
+        prompt: "A product hero",
+        aspect: "1:1",
+        provider: "google",
+        model: "unused",
+        quality: "medium",
+        openaiApiKey: "unused",
+        geminiApiKey: "test-gemini-key",
+        fetchImpl,
+      }),
+    ).rejects.toThrow(
+      `Gemini image generation failed (503): ${providerMessage.slice(0, 300)}`,
     );
   });
 });

@@ -6,6 +6,7 @@ import config from "../config";
 
 export type AmieImageAspect = "16:9" | "1:1" | "4:5";
 export type AmieImageProvider = "openai" | "google";
+export type AmieImageQuality = "low" | "medium" | "high" | "auto";
 
 export const AMIE_BRAND_PHOTOGRAPHY_PREFIX =
   "Amie brand photography: clean, warm, ivory and blush palette, natural light, real skin texture, no text in image. ";
@@ -20,6 +21,7 @@ interface GenerateImageOptions {
   aspect: AmieImageAspect;
   provider?: AmieImageProvider;
   model?: string;
+  quality?: AmieImageQuality;
   openaiApiKey?: string;
   geminiApiKey?: string;
   fetchImpl?: typeof fetch;
@@ -41,6 +43,32 @@ async function responseJson(response: Response): Promise<unknown> {
   return response.json().then((value: unknown) => value);
 }
 
+async function providerErrorDetail(response: Response): Promise<string> {
+  const body = (await response.text()).trim();
+  if (!body) return "";
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (isRecord(parsed) && isRecord(parsed.error)) {
+      const { message } = parsed.error;
+      if (typeof message === "string") return message.slice(0, 300);
+    }
+  } catch {
+    // A non-JSON provider response is still useful diagnostic context.
+  }
+  return body.slice(0, 300);
+}
+
+async function providerError(
+  provider: string,
+  response: Response,
+): Promise<Error> {
+  const detail = await providerErrorDetail(response);
+  const suffix = detail ? `: ${detail}` : "";
+  return new Error(
+    `${provider} image generation failed (${response.status})${suffix}`,
+  );
+}
+
 function openAiSize(aspect: AmieImageAspect): string {
   if (aspect === "16:9") return "1536x1024";
   if (aspect === "4:5") return "1024x1536";
@@ -51,12 +79,14 @@ async function generateOpenAiImage({
   prompt,
   aspect,
   model,
+  quality,
   apiKey,
   fetchImpl,
 }: {
   prompt: string;
   aspect: AmieImageAspect;
   model: string;
+  quality: AmieImageQuality;
   apiKey: string;
   fetchImpl: typeof fetch;
 }): Promise<GeneratedImage> {
@@ -72,12 +102,11 @@ async function generateOpenAiImage({
         model,
         prompt,
         size: openAiSize(aspect),
-        response_format: "b64_json",
+        quality,
       }),
     },
   );
-  if (!response.ok)
-    throw new Error(`OpenAI image generation failed (${response.status})`);
+  if (!response.ok) throw await providerError("OpenAI", response);
   const payload = await responseJson(response);
   const first =
     isRecord(payload) && isUnknownArray(payload.data)
@@ -112,8 +141,7 @@ async function generateGoogleImage({
       },
     }),
   });
-  if (!response.ok)
-    throw new Error(`Gemini image generation failed (${response.status})`);
+  if (!response.ok) throw await providerError("Gemini", response);
   const payload = await responseJson(response);
   const candidates =
     isRecord(payload) && isUnknownArray(payload.candidates)
@@ -148,6 +176,7 @@ export async function generateImage({
   aspect,
   provider = config().amieImageGenProvider,
   model = config().amieImageGenModel,
+  quality = config().amieImageGenQuality,
   openaiApiKey = config().openaiApiKey,
   geminiApiKey = config().geminiApiKey,
   fetchImpl = fetch,
@@ -159,6 +188,7 @@ export async function generateImage({
       prompt: brandedPrompt,
       aspect,
       model,
+      quality,
       apiKey: openaiApiKey,
       fetchImpl,
     });
