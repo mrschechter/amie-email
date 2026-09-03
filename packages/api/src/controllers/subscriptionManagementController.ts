@@ -18,9 +18,45 @@ import {
 import { and, eq } from "drizzle-orm";
 import { FastifyInstance } from "fastify";
 import {
+  ChannelType,
   SubscriptionManagementPageSubmissionRequest,
   SubscriptionParams,
 } from "isomorphic-lib/src/types";
+
+const OneClickUnsubscribeRequest = Type.Object(
+  {
+    "List-Unsubscribe": Type.String({
+      pattern: "^\\s*[Oo][Nn][Ee]-[Cc][Ll][Ii][Cc][Kk]\\s*$",
+    }),
+  },
+  { additionalProperties: false, maxProperties: 1 },
+);
+
+const SubscriptionManagementPagePostRequest = Type.Union([
+  SubscriptionManagementPageSubmissionRequest,
+  OneClickUnsubscribeRequest,
+]);
+
+function isOneClickUnsubscribeRequest(
+  body: unknown,
+): body is { "List-Unsubscribe": string } {
+  if (typeof body !== "object" || body === null) {
+    return false;
+  }
+
+  const keys = Object.keys(body);
+  if (keys.length !== 1 || keys[0] !== "List-Unsubscribe") {
+    return false;
+  }
+
+  const value: unknown = Object.getOwnPropertyDescriptor(
+    body,
+    "List-Unsubscribe",
+  )?.value;
+  return (
+    typeof value === "string" && value.trim().toLowerCase() === "one-click"
+  );
+}
 
 export default async function subscriptionManagementController(
   fastify: FastifyInstance,
@@ -251,17 +287,121 @@ export default async function subscriptionManagementController(
     {
       schema: {
         description:
-          "Handles form submission for subscription preferences and redirects back to the page.",
-        body: SubscriptionManagementPageSubmissionRequest,
+          "Handles browser subscription preferences and RFC 8058 one-click unsubscribe requests.",
+        querystring: Type.Partial(SubscriptionParams),
+        body: SubscriptionManagementPagePostRequest,
         response: {
+          200: EmptyResponse,
           302: Type.Null(),
+          400: Type.Object({
+            message: Type.String(),
+          }),
           401: Type.Object({
+            message: Type.String(),
+          }),
+          403: Type.Object({
             message: Type.String(),
           }),
         },
       },
     },
     async (request, reply) => {
+      if (isOneClickUnsubscribeRequest(request.body)) {
+        const {
+          w: workspaceId,
+          i: identifier,
+          ik: identifierKey,
+          h: hash,
+          s: subscriptionGroupId,
+          isPreview: isPreviewParam,
+        } = request.query;
+        const logContext = {
+          event: "one_click_unsubscribe",
+          workspaceId: workspaceId ?? "unknown",
+          subscriptionGroupId: subscriptionGroupId ?? "all",
+        };
+
+        if (!workspaceId || !identifier || !identifierKey || !hash) {
+          logger().info(
+            { ...logContext, result: "invalid_request" },
+            "Rejected one-click unsubscribe with missing query parameters",
+          );
+          return reply.status(400).send({ message: "Invalid request" });
+        }
+
+        if (isPreviewParam === "true") {
+          logger().info(
+            { ...logContext, result: "preview_ignored" },
+            "Ignored one-click unsubscribe for preview URL",
+          );
+          return reply.status(200).send();
+        }
+
+        const userLookupResult = await lookupUserForSubscriptions({
+          workspaceId,
+          identifier,
+          identifierKey,
+          hash,
+        });
+
+        if (userLookupResult.isErr()) {
+          logger().info(
+            { ...logContext, result: "invalid_hash" },
+            "Rejected one-click unsubscribe with invalid credentials",
+          );
+          return reply.status(403).send({ message: "Forbidden" });
+        }
+
+        const subscriptionGroups = await db().query.subscriptionGroup.findMany({
+          where: subscriptionGroupId
+            ? and(
+                eq(schema.subscriptionGroup.workspaceId, workspaceId),
+                eq(schema.subscriptionGroup.id, subscriptionGroupId),
+              )
+            : and(
+                eq(schema.subscriptionGroup.workspaceId, workspaceId),
+                eq(schema.subscriptionGroup.channel, ChannelType.Email),
+              ),
+        });
+
+        if (subscriptionGroupId && subscriptionGroups.length === 0) {
+          logger().info(
+            { ...logContext, result: "subscription_group_not_found" },
+            "Rejected one-click unsubscribe for unknown subscription group",
+          );
+          return reply.status(400).send({ message: "Invalid request" });
+        }
+
+        const changes: Record<string, boolean> = {};
+        subscriptionGroups.forEach((subscriptionGroup) => {
+          changes[subscriptionGroup.id] = false;
+        });
+
+        try {
+          await updateUserSubscriptions({
+            workspaceId,
+            userUpdates: [
+              {
+                userId: userLookupResult.value.userId,
+                changes,
+              },
+            ],
+          });
+        } catch (error) {
+          logger().error(
+            { ...logContext, result: "error", err: error },
+            "Failed one-click unsubscribe",
+          );
+          throw error;
+        }
+
+        logger().info(
+          { ...logContext, result: "unsubscribed" },
+          "Processed one-click unsubscribe",
+        );
+        return reply.status(200).send();
+      }
+
       // Type from schema defines w, h, i, ik as required strings
       const typedBody = request.body;
       const {
