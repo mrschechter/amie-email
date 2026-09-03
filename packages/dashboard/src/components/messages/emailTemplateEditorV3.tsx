@@ -1420,9 +1420,8 @@ export default function EmailTemplateEditorV3({
                         }
                         event.preventDefault();
                         if (!input.trim() || assistantDisabled) return;
-                        event.currentTarget
-                          .closest<HTMLFormElement>("form")
-                          ?.requestSubmit();
+                        // Same guarded path as the send button / form submit.
+                        void requestComposition(input);
                       }}
                       placeholder="Describe a change, or ask for a new draft…"
                       InputProps={{
