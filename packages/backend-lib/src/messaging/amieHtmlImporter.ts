@@ -109,8 +109,29 @@ function decodeEntities(value: string): string {
 
 function textContent(node: HtmlNode): string {
   if (node.kind === "text") return decodeEntities(node.value);
-  const separator = node.tag === "br" ? "\n" : "";
-  return `${separator}${node.children.map(textContent).join("")}`;
+  if (node.tag === "br") return "\n";
+  const content = node.children.map(textContent).join("");
+  const blockSeparator = [
+    "address",
+    "blockquote",
+    "div",
+    "footer",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "li",
+    "p",
+    "section",
+    "td",
+    "th",
+    "tr",
+  ].includes(node.tag)
+    ? "\n"
+    : "";
+  return `${content}${blockSeparator}`;
 }
 
 function cleanText(node: HtmlNode): string {
@@ -134,6 +155,10 @@ function firstDescendant(
   return descendants(node, tag)[0];
 }
 
+function isAllowedLink(value: string): boolean {
+  return /^https?:\/\//i.test(value) || /^\s*\{\{[\s\S]*\}\}\s*$/.test(value);
+}
+
 function inlineMarkdown(node: HtmlNode): string {
   if (node.kind === "text") return decodeEntities(node.value);
   const content = node.children.map(inlineMarkdown).join("");
@@ -141,7 +166,7 @@ function inlineMarkdown(node: HtmlNode): string {
   if (node.tag === "strong" || node.tag === "b") return `**${content}**`;
   if (node.tag === "em" || node.tag === "i") return `*${content}*`;
   const { href } = node.attributes;
-  if (node.tag === "a" && href && /^https?:\/\//i.test(href))
+  if (node.tag === "a" && href && isAllowedLink(href))
     return `[${content}](${href})`;
   return content;
 }
@@ -155,7 +180,9 @@ function imageWidth(node: HtmlElement): number {
   return styled?.[1] ? Number.parseInt(styled[1], 10) : 0;
 }
 
-function safeImage(node: HtmlElement): { src: string; alt: string } | null {
+function safeImage(
+  node: HtmlElement,
+): { src: string; alt: string; href?: string } | null {
   const { src } = node.attributes;
   if (!src || !/^https?:\/\//i.test(src)) return null;
   return {
@@ -168,15 +195,16 @@ function safeImage(node: HtmlElement): { src: string; alt: string } | null {
 
 function isButton(node: HtmlElement, parent?: HtmlElement): boolean {
   if (node.tag !== "a") return false;
-  const evidence = [
-    node.attributes.role,
-    node.attributes.class,
-    node.attributes.style,
-    parent?.attributes.bgcolor,
-    parent?.attributes.style,
-  ].join(" ");
-  return /role\s*=\s*button|\b(?:btn|button)\b|background(?:-color)?\s*:|padding\s*:/i.test(
-    evidence,
+  return (
+    node.attributes.role?.toLocaleLowerCase() === "button" ||
+    /btn|button/i.test(node.attributes.class ?? "") ||
+    /(?:^|;)\s*(?:background(?:-color)?|padding)\s*:/i.test(
+      node.attributes.style ?? "",
+    ) ||
+    Boolean(parent?.attributes.bgcolor) ||
+    /(?:^|;)\s*(?:background(?:-color)?|padding)\s*:/i.test(
+      parent?.attributes.style ?? "",
+    )
   );
 }
 
@@ -193,11 +221,9 @@ function columnContent(cell: HtmlElement) {
     .find(Boolean);
   const image = firstDescendant(cell, "img");
   const imageValue = image ? safeImage(image) : null;
-  const paragraphs = descendants(cell, "p").map(cleanText).filter(Boolean);
   const fullText = cleanText(cell);
   const headingText = heading ? cleanText(heading) : "";
-  const text =
-    paragraphs.join("\n") || fullText.replace(headingText, "").trim();
+  const text = fullText.replace(headingText, "").trim();
   return {
     heading: headingText,
     text,
@@ -207,6 +233,209 @@ function columnContent(cell: HtmlElement) {
 
 interface ImportState {
   blocks: AmieBlockSpec[];
+}
+
+interface HtmlSegment {
+  node: HtmlNode;
+  parent?: HtmlElement;
+}
+
+const IGNORED_ELEMENTS = new Set(["head", "style", "title", "meta", "link"]);
+const STRUCTURAL_ELEMENTS = new Set([
+  "body",
+  "center",
+  "html",
+  "root",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+]);
+
+function meaningfulChildren(node: HtmlElement): HtmlNode[] {
+  return node.children.filter(
+    (child) =>
+      (child.kind === "text" && cleanText(child).length > 0) ||
+      (child.kind === "element" && !IGNORED_ELEMENTS.has(child.tag)),
+  );
+}
+
+function rowCells(node: HtmlElement): HtmlElement[] {
+  return node.children.filter(
+    (child): child is HtmlElement =>
+      child.kind === "element" && (child.tag === "td" || child.tag === "th"),
+  );
+}
+
+function collectSegments(
+  node: HtmlNode,
+  segments: HtmlSegment[],
+  parent?: HtmlElement,
+) {
+  if (node.kind === "text") {
+    if (cleanText(node)) segments.push({ node, parent });
+    return;
+  }
+  if (IGNORED_ELEMENTS.has(node.tag)) return;
+
+  if (node.tag === "tr") {
+    const cells = rowCells(node);
+    if (cells.length >= 2 && cells.length <= 3) {
+      segments.push({ node, parent });
+      return;
+    }
+    if (cells.length === 1) {
+      const cell = cells[0];
+      if (!cell) return;
+      meaningfulChildren(cell).forEach((child) =>
+        collectSegments(child, segments, cell),
+      );
+      return;
+    }
+  }
+
+  if (STRUCTURAL_ELEMENTS.has(node.tag)) {
+    meaningfulChildren(node).forEach((child) =>
+      collectSegments(child, segments, node),
+    );
+    return;
+  }
+
+  if (node.tag === "div" || node.tag === "section" || node.tag === "main") {
+    const children = meaningfulChildren(node);
+    const onlyChild = children[0];
+    if (children.length === 1 && onlyChild?.kind === "text") {
+      segments.push({ node, parent });
+      return;
+    }
+    // Retain the wrapper around a single unknown element so custom HTML keeps
+    // the complete unsupported section, including classes and inline styles.
+    if (
+      children.length === 1 &&
+      onlyChild?.kind === "element" &&
+      !STRUCTURAL_ELEMENTS.has(onlyChild.tag) &&
+      ![
+        "a",
+        "blockquote",
+        "div",
+        "footer",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "hr",
+        "img",
+        "main",
+        "ol",
+        "p",
+        "section",
+        "ul",
+      ].includes(onlyChild.tag)
+    ) {
+      segments.push({ node });
+      return;
+    }
+    children.forEach((child) => collectSegments(child, segments, node));
+    return;
+  }
+
+  segments.push({ node, parent });
+}
+
+function hasSmallTextStyling(node: HtmlElement): boolean {
+  if (node.tag === "small") return true;
+  const fontSize = /(?:^|;)\s*font-size\s*:\s*(\d+(?:\.\d+)?)\s*(px|pt)/i.exec(
+    node.attributes.style ?? "",
+  );
+  if (fontSize?.[1]) {
+    const size = Number.parseFloat(fontSize[1]);
+    if (fontSize[2]?.toLocaleLowerCase() === "pt" ? size <= 10 : size <= 13)
+      return true;
+  }
+  return node.children.some(
+    (child) => child.kind === "element" && hasSmallTextStyling(child),
+  );
+}
+
+function hasFooterTextEvidence(node: HtmlElement): boolean {
+  const text = cleanText(node);
+  return (
+    /unsubscribe|manage (?:email )?preferences/i.test(text) ||
+    hasSmallTextStyling(node) ||
+    node.tag === "address" ||
+    /(?:\bP\.?O\.? Box\b|\b\d{1,6}\s+[\w.'-]+(?:\s+[\w.'-]+){0,5}\s+(?:Street|St\.?|Road|Rd\.?|Avenue|Ave\.?|Boulevard|Blvd\.?|Lane|Ln\.?|Drive|Dr\.?)\b)/i.test(
+      text,
+    )
+  );
+}
+
+function hasFooterSignal(segment: HtmlSegment): boolean {
+  if (segment.node.kind === "text") return false;
+  if (segment.node.tag === "footer") return true;
+  if (segment.node.tag === "tr") {
+    const cells = rowCells(segment.node);
+    return (
+      cells.length > 0 &&
+      cells.every((cell) => hasFooterTextEvidence(cell)) &&
+      cells.some((cell) => hasFooterTextEvidence(cell))
+    );
+  }
+  if (
+    !["a", "address", "div", "p", "section", "small", "span"].includes(
+      segment.node.tag,
+    )
+  )
+    return false;
+  return hasFooterTextEvidence(segment.node);
+}
+
+function isFooterSupport(segment: HtmlSegment): boolean {
+  if (segment.node.kind === "text") return false;
+  const text = cleanText(segment.node);
+  return (
+    hasFooterSignal(segment) ||
+    (["a", "address", "br", "p", "small", "span"].includes(segment.node.tag) &&
+      /^(?:©|copyright\b)|privacy policy|terms(?: of (?:use|service))?/i.test(
+        text,
+      ))
+  );
+}
+
+function trailingFooterStart(segments: HtmlSegment[]): number {
+  const finalSegment = segments.at(-1);
+  if (!finalSegment || !hasFooterSignal(finalSegment)) return segments.length;
+  let start = segments.length - 1;
+  while (start > 0) {
+    const previousSegment = segments[start - 1];
+    if (!previousSegment || !isFooterSupport(previousSegment)) break;
+    start -= 1;
+  }
+  return start;
+}
+
+function pushFooter(segments: HtmlSegment[], state: ImportState) {
+  const text = segments
+    .map(({ node }) => cleanText(node))
+    .filter(Boolean)
+    .join("\n");
+  const unsubscribe = /manage (?:email )?preferences/i.test(text)
+    ? "Manage preferences"
+    : /unsubscribe/i.exec(text)?.[0] ?? "Unsubscribe";
+  const addressLine = text
+    .replace(/unsubscribe|manage (?:email )?preferences/gi, "")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+  state.blocks.push({
+    type: "footer",
+    params: {
+      addressLine: addressLine || "Configured by server",
+      unsubscribe,
+    },
+  });
 }
 
 function pushCustom(node: HtmlElement, state: ImportState) {
@@ -219,47 +448,42 @@ function pushCustom(node: HtmlElement, state: ImportState) {
   });
 }
 
+function pushImage(
+  node: HtmlElement,
+  state: ImportState,
+  parent?: HtmlElement,
+  href?: string,
+) {
+  const image = safeImage(node);
+  if (!image) {
+    pushCustom(node, state);
+    return;
+  }
+  if (href && isAllowedLink(href)) image.href = href;
+  const large =
+    imageWidth(node) >= 200 || parent?.tag === "td" || parent?.tag === "a";
+  let type: "heroImage" | "bigImage" | "image" = "image";
+  if (large) {
+    type = state.blocks.some((block) => block.type === "heroImage")
+      ? "bigImage"
+      : "heroImage";
+  }
+  state.blocks.push({
+    type,
+    params: image,
+    style: { width: "full", padding: "none" },
+  });
+}
+
 function mapElement(
   node: HtmlElement,
   state: ImportState,
   parent?: HtmlElement,
 ) {
-  if (
-    ["html", "body", "root", "table", "tbody", "thead", "tfoot"].includes(
-      node.tag,
-    )
-  ) {
-    node.children.forEach(
-      (child) => child.kind === "element" && mapElement(child, state, node),
-    );
-    return;
-  }
-  if (["head", "style", "title", "meta"].includes(node.tag)) return;
-
   const text = cleanText(node);
-  if (
-    (node.tag === "footer" || /unsubscribe|manage preferences/i.test(text)) &&
-    text.length < 1600
-  ) {
-    state.blocks.push({
-      type: "footer",
-      params: {
-        addressLine:
-          text.replace(/unsubscribe|manage preferences/gi, "").trim() ||
-          "Configured by server",
-        unsubscribe: /manage preferences/i.test(text)
-          ? "Manage preferences"
-          : "Unsubscribe",
-      },
-    });
-    return;
-  }
 
   if (node.tag === "tr") {
-    const cells = node.children.filter(
-      (child): child is HtmlElement =>
-        child.kind === "element" && (child.tag === "td" || child.tag === "th"),
-    );
+    const cells = rowCells(node);
     if (cells.length >= 2 && cells.length <= 3) {
       const contents = cells.map(columnContent);
       const imageIndex = contents.findIndex((content) => content.image);
@@ -289,32 +513,7 @@ function mapElement(
         return;
       }
     }
-    cells.forEach((cell) => mapElement(cell, state, node));
-    return;
-  }
-
-  if (
-    node.tag === "td" ||
-    node.tag === "th" ||
-    node.tag === "div" ||
-    node.tag === "section" ||
-    node.tag === "main"
-  ) {
-    const elementChildren = node.children.filter(
-      (child): child is HtmlElement => child.kind === "element",
-    );
-    if (elementChildren.length) {
-      const directText = node.children
-        .filter((child): child is HtmlText => child.kind === "text")
-        .map((child) => decodeEntities(child.value).trim())
-        .filter(Boolean)
-        .join(" ");
-      if (directText)
-        state.blocks.push({ type: "paragraph", params: { text: directText } });
-      elementChildren.forEach((child) => mapElement(child, state, node));
-    } else if (text) {
-      pushCustom(node, state);
-    }
+    pushCustom(node, state);
     return;
   }
 
@@ -347,30 +546,13 @@ function mapElement(
     return;
   }
   if (node.tag === "img") {
-    const image = safeImage(node);
-    if (!image) {
-      pushCustom(node, state);
-      return;
-    }
-    const large =
-      imageWidth(node) >= 200 || parent?.tag === "td" || parent?.tag === "a";
-    let type: "heroImage" | "bigImage" | "image" = "image";
-    if (large) {
-      type = state.blocks.some((block) => block.type === "heroImage")
-        ? "bigImage"
-        : "heroImage";
-    }
-    state.blocks.push({
-      type,
-      params: image,
-      style: { width: "full", padding: "none" },
-    });
+    pushImage(node, state, parent);
     return;
   }
   if (
     node.tag === "a" &&
     isButton(node, parent) &&
-    /^https?:\/\//i.test(node.attributes.href ?? "")
+    isAllowedLink(node.attributes.href ?? "")
   ) {
     state.blocks.push({
       type: "ctaButton",
@@ -381,8 +563,24 @@ function mapElement(
     });
     return;
   }
+  if (node.tag === "a") {
+    const image = firstDescendant(node, "img");
+    if (image) {
+      pushImage(image, state, node, node.attributes.href);
+      return;
+    }
+  }
   if (node.tag === "br") return;
   pushCustom(node, state);
+}
+
+function mapSegment(segment: HtmlSegment, state: ImportState) {
+  if (segment.node.kind === "text") {
+    const text = cleanText(segment.node);
+    if (text) state.blocks.push({ type: "paragraph", params: { text } });
+    return;
+  }
+  mapElement(segment.node, state, segment.parent);
 }
 
 /** Deterministic, dependency-free import of common marketing-email HTML. */
@@ -390,7 +588,14 @@ export function importAmieHtml(html: string): AmieImportHtmlResponse {
   const sanitized = sanitizeAmieHtml(html);
   const root = parseHtml(sanitized);
   const state: ImportState = { blocks: [] };
-  mapElement(root, state);
+  const segments: HtmlSegment[] = [];
+  collectSegments(root, segments);
+  const footerStart = trailingFooterStart(segments);
+  segments
+    .slice(0, footerStart)
+    .forEach((segment) => mapSegment(segment, state));
+  if (footerStart < segments.length)
+    pushFooter(segments.slice(footerStart), state);
   const warnings: string[] = [];
   let { blocks } = state;
   if (blocks.length > AMIE_MAX_BLOCKS) {
