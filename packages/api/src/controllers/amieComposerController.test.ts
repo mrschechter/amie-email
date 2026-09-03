@@ -1,10 +1,12 @@
 import { InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
 import fastify from "fastify";
 import {
+  AMIE_MAX_BLOCKS,
   AmieAssembleResponse,
   AmieComposerConfigResponse,
   AmieComposerErrorResponse,
   AmieComposeResponse,
+  AmieComposerModelOutput,
   AmieComposerReasonCode,
   AmieEditResponse,
   AmieSanitizeHtmlResponse,
@@ -14,6 +16,7 @@ import amieComposerController, {
   BedrockInvoker,
   composeAmieEmail,
   decodeModelText,
+  normalizeLengthLimitedModelStrings,
   selectComposerModelId,
 } from "./amieComposerController";
 
@@ -223,6 +226,84 @@ describe("amieComposerController", () => {
     });
 
     expect(response).toMatchObject(output);
+  });
+
+  it("clamps a revision with 21 blocks and preserves its trailing footer", async () => {
+    const footer = {
+      type: "footer" as const,
+      params: { addressLine: "Server", unsubscribe: "Unsubscribe" },
+    };
+    const blocks = [
+      {
+        type: "ctaButton" as const,
+        params: { label: "Learn more", url: "https://tryamie.com" },
+      },
+      ...Array.from({ length: AMIE_MAX_BLOCKS - 1 }, (_, index) => ({
+        type: "paragraph" as const,
+        params: { text: `Section ${index + 1}` },
+      })),
+      footer,
+    ];
+    const output = {
+      subject: "A detailed update",
+      previewText: "Everything you need to know.",
+      blocks,
+    };
+    const send = bedrockSendMock()
+      .mockResolvedValueOnce({ body: bedrockBody(output) })
+      .mockResolvedValueOnce({
+        body: bedrockBody({ ...output, designNotes: "Checked the draft." }),
+      });
+
+    const response = await composeAmieEmail({
+      request: {
+        workspaceId: "workspace-1",
+        prompt: "Original brief",
+        currentBlocks: [
+          { type: "paragraph", params: { text: "Current draft" } },
+        ],
+        conversation: [{ role: "user", content: "Add more detail" }],
+      },
+      bedrockClient: { send },
+      modelId: "fast-model",
+    });
+
+    expect(response.blocks).toHaveLength(AMIE_MAX_BLOCKS);
+    expect(response.blocks.at(-1)).toEqual(footer);
+    expect(response.blocks).not.toContainEqual({
+      type: "paragraph",
+      params: { text: `Section ${AMIE_MAX_BLOCKS - 1}` },
+    });
+  });
+
+  it("keeps the first 20 blocks when 25 model blocks have no footer", () => {
+    const blocks = Array.from({ length: AMIE_MAX_BLOCKS + 5 }, (_, index) => ({
+      type: "paragraph",
+      params: { text: `Section ${index + 1}` },
+    }));
+
+    const normalized = normalizeLengthLimitedModelStrings({
+      value: blocks,
+      schema: AmieComposerModelOutput.properties.blocks,
+      path: "/blocks",
+    });
+
+    expect(normalized).toEqual(blocks.slice(0, AMIE_MAX_BLOCKS));
+  });
+
+  it("leaves eight model blocks untouched", () => {
+    const blocks = Array.from({ length: 8 }, (_, index) => ({
+      type: "paragraph",
+      params: { text: `Section ${index + 1}` },
+    }));
+
+    const normalized = normalizeLengthLimitedModelStrings({
+      value: blocks,
+      schema: AmieComposerModelOutput.properties.blocks,
+      path: "/blocks",
+    });
+
+    expect(normalized).toEqual(blocks);
   });
 
   it("uses safe fallbacks for required bounded strings that trim empty", async () => {
@@ -608,6 +689,71 @@ describe("amieComposerController", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json<AmieEditResponse>().document).toEqual(document);
+  });
+
+  it("returns a no_op when an edit inserts a block past the cap", async () => {
+    const send = bedrockSendMock().mockResolvedValue({
+      body: bedrockBody({
+        reply: "I could not add another section.",
+        ops: [
+          {
+            type: "insert_block",
+            afterBlockId: "footer",
+            block: {
+              id: "extra",
+              type: "paragraph",
+              params: { text: "One more section" },
+            },
+          },
+        ],
+      }),
+    });
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      fastModelId: "fast-model",
+      bedrockClient: { send },
+    });
+    const document = {
+      subject: "Subject",
+      previewText: "Preview",
+      blocks: [
+        ...Array.from({ length: AMIE_MAX_BLOCKS - 1 }, (_, index) => ({
+          id: `section-${index + 1}`,
+          type: "paragraph" as const,
+          params: { text: `Section ${index + 1}` },
+        })),
+        {
+          id: "footer",
+          type: "footer" as const,
+          params: { addressLine: "Server", unsubscribe: "Unsubscribe" },
+        },
+      ],
+    };
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose/edit",
+      payload: {
+        workspaceId: "workspace-1",
+        templateId: "template-1",
+        message: "Add one more section",
+        conversation: [],
+        document,
+        renderedText: "Current email",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json<AmieEditResponse>();
+    expect(body.ops).toEqual([
+      {
+        type: "no_op",
+        reason:
+          "The email already has the maximum of 20 blocks, so another block was not inserted.",
+      },
+    ]);
+    expect(body.document).toEqual(document);
   });
 
   it("sanitizes pasted HTML without invoking Bedrock", async () => {

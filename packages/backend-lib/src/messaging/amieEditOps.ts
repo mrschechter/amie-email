@@ -1,4 +1,5 @@
 import {
+  AMIE_MAX_BLOCKS,
   AmieBlockSpec,
   AmieBlockStyle,
   AmieEditDocument,
@@ -81,6 +82,31 @@ function insertionIndex(blocks: AmieBlockSpec[], afterBlockId: string | null) {
   return afterBlockId === null ? 0 : blockIndex(blocks, afterBlockId) + 1;
 }
 
+export function normalizeBlockLimitedAmieEditOps(
+  document: AmieEditDocument,
+  ops: AmieEditOp[],
+): AmieEditOp[] {
+  const blockIds = new Set(document.blocks.map((block) => block.id));
+  let blockCount = document.blocks.length;
+  return ops.map((op): AmieEditOp => {
+    if (op.type === "remove_block" && blockIds.delete(op.blockId)) {
+      blockCount -= 1;
+      return op;
+    }
+    if (op.type !== "insert_block") return op;
+    if (blockIds.has(op.block.id)) return op;
+    if (blockCount >= AMIE_MAX_BLOCKS) {
+      return {
+        type: "no_op",
+        reason: `The email already has the maximum of ${AMIE_MAX_BLOCKS} blocks, so another block was not inserted.`,
+      };
+    }
+    blockIds.add(op.block.id);
+    blockCount += 1;
+    return op;
+  });
+}
+
 export function validateEditDocumentIds(
   document: AmieEditDocument,
 ): string | null {
@@ -106,8 +132,10 @@ function applyOne(blocks: AmieBlockSpec[], op: AmieEditOp): AmieBlockSpec[] {
       throw new Error(`Duplicate block id: ${op.block.id}`);
     const next = [...blocks];
     next.splice(insertionIndex(next, op.afterBlockId), 0, op.block);
-    if (next.length > 12)
-      throw new Error("An edit cannot create more than 12 blocks.");
+    if (next.length > AMIE_MAX_BLOCKS)
+      throw new Error(
+        `An edit cannot create more than ${AMIE_MAX_BLOCKS} blocks.`,
+      );
     return next;
   }
   if (op.type === "remove_block") {
@@ -183,9 +211,7 @@ export function applyAmieEditOps({
 }): { document: AmieEditDocument; html: string; warnings: string[] } {
   const idError = validateEditDocumentIds(document);
   if (idError) throw new Error(idError);
-  if (ops.some((op) => op.type === "no_op") && ops.length !== 1)
-    throw new Error("no_op must be the only operation in an edit set.");
-  if (ops[0]?.type === "no_op") {
+  if (ops.every((op) => op.type === "no_op")) {
     return {
       document,
       html:
@@ -194,7 +220,6 @@ export function applyAmieEditOps({
       warnings: [],
     };
   }
-
   let { previewText, subject } = document;
   let blocks = [...document.blocks];
   let { rawHtml } = document;

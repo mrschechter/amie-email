@@ -106,6 +106,21 @@ describe("Amie edit operations", () => {
     expect(result.document).toEqual(document);
   });
 
+  it("skips a no_op while applying other valid operations", () => {
+    const result = applyAmieEditOps({
+      document,
+      ops: [
+        { type: "set_subject", value: "Updated subject" },
+        { type: "no_op", reason: "No block was inserted." },
+      ],
+    });
+
+    expect(result.document).toEqual({
+      ...document,
+      subject: "Updated subject",
+    });
+  });
+
   it("rolls back the complete op set when Liquid is unsafe", () => {
     const result = applyAmieEditOps({
       document,

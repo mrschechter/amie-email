@@ -18,6 +18,8 @@ const AmieBlockHeadingText = Type.String({ maxLength: 80 });
 const AmieCtaText = Type.String({ maxLength: 40 });
 const AmieAltText = Type.String({ maxLength: 125 });
 
+export const AMIE_MAX_BLOCKS = 20;
+
 export const AmieBrandBackground = Type.Union([
   Type.Literal("ivory"),
   Type.Literal("blush"),
@@ -259,7 +261,7 @@ export const AmieComposerConversationMessage = strictObject({
 export const AmieEditDocument = strictObject({
   subject: Type.String(),
   previewText: Type.String(),
-  blocks: Type.Array(AmieBlockSpec, { maxItems: 12 }),
+  blocks: Type.Array(AmieBlockSpec, { maxItems: AMIE_MAX_BLOCKS }),
   rawHtml: Type.Optional(Type.String()),
 });
 export type AmieEditDocument = Static<typeof AmieEditDocument>;
@@ -385,10 +387,14 @@ export const AmieComposeRequest = strictObject({
       }),
     ),
   ),
-  currentBlocks: Type.Optional(Type.Array(AmieBlockSpec, { maxItems: 12 })),
+  currentBlocks: Type.Optional(
+    Type.Array(AmieBlockSpec, { maxItems: AMIE_MAX_BLOCKS }),
+  ),
   currentSubject: Type.Optional(Type.String()),
   currentPreviewText: Type.Optional(Type.String()),
-  seedBlocks: Type.Optional(Type.Array(AmieBlockSpec, { maxItems: 12 })),
+  seedBlocks: Type.Optional(
+    Type.Array(AmieBlockSpec, { maxItems: AMIE_MAX_BLOCKS }),
+  ),
   designBrief: Type.Optional(AmieDesignBrief),
   conversation: Type.Optional(Type.Array(AmieComposerConversationMessage)),
   referenceSkeleton: Type.Optional(AmieBlockSkeleton),
@@ -403,7 +409,7 @@ export const AmieGenerateImageInstruction = strictObject({
       Type.Literal("1:1"),
       Type.Literal("4:5"),
     ]),
-    slot: Type.Integer({ minimum: 0, maximum: 11 }),
+    slot: Type.Integer({ minimum: 0, maximum: AMIE_MAX_BLOCKS - 1 }),
   }),
 });
 export type AmieGenerateImageInstruction = Static<
@@ -413,7 +419,7 @@ export type AmieGenerateImageInstruction = Static<
 export const AmieComposerModelOutput = strictObject({
   subject: AmieSubjectText,
   previewText: AmiePreviewText,
-  blocks: Type.Array(AmieBlockSpec, { maxItems: 12 }),
+  blocks: Type.Array(AmieBlockSpec, { maxItems: AMIE_MAX_BLOCKS }),
   generateImages: Type.Optional(
     Type.Array(AmieGenerateImageInstruction, { maxItems: 3 }),
   ),
@@ -423,7 +429,7 @@ export type AmieComposerModelOutput = Static<typeof AmieComposerModelOutput>;
 export const AmieCritiqueModelOutput = strictObject({
   subject: AmieSubjectText,
   previewText: AmiePreviewText,
-  blocks: Type.Array(AmieBlockSpec, { maxItems: 12 }),
+  blocks: Type.Array(AmieBlockSpec, { maxItems: AMIE_MAX_BLOCKS }),
   designNotes: Type.String(),
 });
 export type AmieCritiqueModelOutput = Static<typeof AmieCritiqueModelOutput>;
@@ -446,7 +452,7 @@ export type AmieImportHtmlRequest = Static<typeof AmieImportHtmlRequest>;
 
 export const AmieAssembleRequest = strictObject({
   workspaceId: Type.String(),
-  blocks: Type.Array(AmieBlockSpec, { maxItems: 12 }),
+  blocks: Type.Array(AmieBlockSpec, { maxItems: AMIE_MAX_BLOCKS }),
 });
 export type AmieAssembleRequest = Static<typeof AmieAssembleRequest>;
 

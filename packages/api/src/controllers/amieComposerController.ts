@@ -16,6 +16,7 @@ import {
 } from "backend-lib/src/messaging/amieComposer";
 import {
   applyAmieEditOps,
+  normalizeBlockLimitedAmieEditOps,
   renderAmieDocumentText,
   validateEditDocumentIds,
 } from "backend-lib/src/messaging/amieEditOps";
@@ -31,6 +32,7 @@ import {
 import { findAllUserPropertyResources } from "backend-lib/src/userProperties";
 import { FastifyInstance } from "fastify";
 import {
+  AMIE_MAX_BLOCKS,
   AmieAssembleRequest,
   AmieAssembleResponse,
   AmieBlockSpec,
@@ -132,7 +134,7 @@ function systemPrompt(
   return `You are Amie's email art director and copywriter. Produce the ENTIRE designed block tree: block choice and order, imagery, section backgrounds, alignment, padding, type scale, and button variants.
 
 Return STRICT JSON only with exactly this shape: {"subject":string,"previewText":string,"blocks":BlockSpec[],"generateImages"?:GenerateImageInstruction[]}.
-Subject must be at most 60 characters and previewText must be non-empty. Use at most 12 blocks. A footer with addressLine and unsubscribe is mandatory. Put a clear CTA above the fold.
+Subject must be at most 60 characters and previewText must be non-empty. Use at most ${AMIE_MAX_BLOCKS} blocks. A footer with addressLine and unsubscribe is mandatory. Put a clear CTA above the fold.
 
 Block schema (every block also accepts optional style):
 ${JSON.stringify(AmieComposerModelOutput.properties.blocks)}
@@ -166,7 +168,7 @@ For revisions, preserve existing structure, images, and ALL style values unless 
 }
 
 function critiquePrompt(): string {
-  return `You are a strict, inexpensive email design QA pass. Return STRICT JSON only: {"subject":string,"previewText":string,"blocks":BlockSpec[],"designNotes":string}. Keep good work unchanged and automatically fix only these issues: CTA present and above the fold, footer/address block present, no more than 12 blocks, non-empty alt text on every image, brand style tokens only, subject at most 60 characters, and non-empty preview text. designNotes is one short user-facing line. Schema: ${JSON.stringify(AmieCritiqueModelOutput)}.`;
+  return `You are a strict, inexpensive email design QA pass. Return STRICT JSON only: {"subject":string,"previewText":string,"blocks":BlockSpec[],"designNotes":string}. Keep good work unchanged and automatically fix only these issues: CTA present and above the fold, footer/address block present, no more than ${AMIE_MAX_BLOCKS} blocks, non-empty alt text on every image, brand style tokens only, subject at most 60 characters, and non-empty preview text. designNotes is one short user-facing line. Schema: ${JSON.stringify(AmieCritiqueModelOutput)}.`;
 }
 
 function modelMessages(
@@ -365,7 +367,7 @@ function boundedFallback(value: string, maxLength: number): string {
   return fitWholeWords(normalized, maxLength) ?? "Amie";
 }
 
-function normalizeLengthLimitedModelStrings({
+export function normalizeLengthLimitedModelStrings({
   value,
   schema,
   path = "",
@@ -401,7 +403,24 @@ function normalizeLengthLimitedModelStrings({
     return required ? boundedFallback(fallback, schema.maxLength) : "";
   }
   if (TypeGuard.IsArray(schema) && isUnknownArray(value)) {
-    return value.map((item, index) =>
+    let items = value;
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+      const last = value.at(-1);
+      items =
+        isStringRecord(last) && last.type === "footer"
+          ? [...value.slice(0, schema.maxItems - 1), last]
+          : value.slice(0, schema.maxItems);
+      if (path.endsWith("/blocks")) {
+        logger().info(
+          {
+            event: "composer_blocks_clamped",
+            originalCount: value.length,
+          },
+          "Amie composer clamped model output blocks",
+        );
+      }
+    }
+    return items.map((item, index) =>
       normalizeLengthLimitedModelStrings({
         value: item,
         schema: schema.items,
@@ -593,12 +612,13 @@ export async function editAmieEmail({
     maxTokens: MAX_EDIT_OUTPUT_TOKENS,
   });
   const output = parseEditOutput(modelText, request.document);
+  const ops = normalizeBlockLimitedAmieEditOps(request.document, output.ops);
   const applied = applyAmieEditOps({
     document: request.document,
-    ops: output.ops,
+    ops,
     knownUserProperties,
   });
-  return { ...output, ...applied };
+  return { ...output, ops, ...applied };
 }
 
 /**
@@ -837,7 +857,7 @@ function semanticAudit(
   },
   request: AmieComposeRequest,
 ): AmieCritiqueModelOutput {
-  let blocks = output.blocks.slice(0, 12).map((block) => {
+  let blocks = output.blocks.slice(0, AMIE_MAX_BLOCKS).map((block) => {
     if (
       (block.type === "image" || block.type === "heroImage") &&
       !block.params.alt.trim()
@@ -867,8 +887,8 @@ function semanticAudit(
       },
     };
     blocks =
-      blocks.length === 12
-        ? [...blocks.slice(0, 11), footer]
+      blocks.length === AMIE_MAX_BLOCKS
+        ? [...blocks.slice(0, AMIE_MAX_BLOCKS - 1), footer]
         : [...blocks, footer];
   }
   const hasEarlyCta = blocks
@@ -895,7 +915,7 @@ function semanticAudit(
       ),
     );
     blocks.splice(insertion, 0, cta);
-    blocks = blocks.slice(0, 12);
+    blocks = blocks.slice(0, AMIE_MAX_BLOCKS);
     if (!blocks.some((block) => block.type === "footer")) {
       blocks[blocks.length - 1] = {
         type: "footer",
