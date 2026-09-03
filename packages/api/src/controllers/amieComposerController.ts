@@ -302,6 +302,16 @@ function parseCritiqueOutput(modelText: string): AmieCritiqueModelOutput {
   return validated.value;
 }
 
+/**
+ * Claude 5 family models on Bedrock reject `temperature` ("deprecated for this
+ * model"); older models still accept it. Only send it where it is supported.
+ */
+function samplingParams(modelId: string, temperature: number | undefined): { temperature?: number } {
+  if (temperature === undefined) return {};
+  if (/claude-(sonnet|opus|haiku)-5|claude-5/i.test(modelId)) return {};
+  return { temperature };
+}
+
 async function invokeModel({
   bedrockClient,
   modelId,
@@ -326,7 +336,7 @@ async function invokeModel({
         body: JSON.stringify({
           anthropic_version: "bedrock-2023-05-31",
           max_tokens: MAX_MODEL_OUTPUT_TOKENS,
-          temperature,
+          ...samplingParams(modelId, temperature),
           system,
           messages,
         }),
