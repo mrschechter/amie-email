@@ -186,8 +186,8 @@ export function emailHtmlToSms(html: string): string {
     .slice(0, 1500);
 }
 
-function wrapRenderedText(value: string, width = 68): string {
-  const words = value.replace(/\s+/g, " ").trim().split(" ");
+function wrapRenderedText(value: string | null | undefined, width = 68): string {
+  const words = String(value ?? "").replace(/\s+/g, " ").trim().split(" ");
   const lines: string[] = [];
   let line = "";
   words.filter(Boolean).forEach((word) => {
@@ -212,7 +212,9 @@ export function emailHtmlToRenderedText(html: string): string {
       .forEach((node) => node.remove());
     const blockText = Array.from(
       document.querySelectorAll<HTMLElement>("[data-amie-block]"),
-    ).map((block) => wrapRenderedText(block.innerText));
+    ).map((block) =>
+      wrapRenderedText(block.innerText ?? block.textContent ?? ""),
+    );
     if (blockText.length) return blockText.filter(Boolean).join("\n\n");
     return wrapRenderedText(document.body.textContent ?? "");
   }
