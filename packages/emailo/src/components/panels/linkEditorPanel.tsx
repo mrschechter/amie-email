@@ -5,27 +5,30 @@ import { Icon } from "../icon";
 import { Surface } from "../surface";
 import { Toggle } from "../toggle";
 
-export type LinkEditorPanelProps = {
+export interface LinkEditorPanelProps {
   initialUrl?: string;
   initialOpenInNewTab?: boolean;
   onSetLink: (url: string, openInNewTab?: boolean) => void;
-};
+}
+
+export const isValidLinkUrl = (url: string) =>
+  /^(\S+):(\/\/)?\S+$/.test(url) || /{{\s*[^}\s][^}]*\s*}}/.test(url);
 
 export const useLinkEditorState = ({
   initialUrl,
   initialOpenInNewTab,
   onSetLink,
 }: LinkEditorPanelProps) => {
-  const [url, setUrl] = useState(initialUrl || "");
+  const [url, setUrl] = useState(initialUrl ?? "");
   const [openInNewTab, setOpenInNewTab] = useState(
-    initialOpenInNewTab || false,
+    initialOpenInNewTab ?? false,
   );
 
   const onChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     setUrl(event.target.value);
   }, []);
 
-  const isValidUrl = useMemo(() => /^(\S+):(\/\/)?\S+$/.test(url), [url]);
+  const isValidUrl = useMemo(() => isValidLinkUrl(url), [url]);
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -95,3 +98,8 @@ export function LinkEditorPanel({
     </Surface>
   );
 }
+
+LinkEditorPanel.defaultProps = {
+  initialUrl: undefined,
+  initialOpenInNewTab: undefined,
+};
