@@ -26,6 +26,7 @@ import {
   FormControl,
   IconButton,
   InputLabel,
+  ListSubheader,
   Menu,
   MenuItem,
   Paper,
@@ -50,6 +51,7 @@ import {
   AmieComposeRequest,
   AmieComposeResponse,
   AmieDesignBrief,
+  AmieImportHtmlResponse,
 } from "isomorphic-lib/src/amieComposer";
 import { defaultEmailDefinition } from "isomorphic-lib/src/email";
 import {
@@ -147,6 +149,7 @@ function editableFields(block: AmieBlockSpec): EditableField[] {
         { key: "ctaUrl", label: "Link URL", optional: true },
       ];
     case "image":
+    case "bigImage":
       return [
         { key: "src", label: "Image URL" },
         { key: "alt", label: "Alt text" },
@@ -178,6 +181,23 @@ function editableFields(block: AmieBlockSpec): EditableField[] {
         { key: "cta.label", label: "CTA label", optional: true },
         { key: "cta.url", label: "CTA URL", optional: true },
       ];
+    case "imageText":
+      return [
+        { key: "image.src", label: "Image URL" },
+        { key: "image.alt", label: "Image alt text" },
+        { key: "heading", label: "Heading", optional: true },
+        { key: "text", label: "Text", multiline: true },
+      ];
+    case "columns":
+      return [
+        {
+          key: "columns",
+          label: "Columns",
+          multiline: true,
+          helperText:
+            "One per line: heading | text | optional image URL (2–3 rows).",
+        },
+      ];
     case "bulletList":
       return [
         { key: "heading", label: "Heading", optional: true },
@@ -202,6 +222,8 @@ function editableFields(block: AmieBlockSpec): EditableField[] {
         { key: "quote", label: "Quote", multiline: true },
         { key: "attribution", label: "Attribution", optional: true },
       ];
+    case "customHtml":
+      return [];
     case "rawHtml":
       return [{ key: "html", label: "Imported HTML", multiline: true }];
   }
@@ -213,6 +235,15 @@ function fieldValue(block: AmieBlockSpec, key: string): string {
   if (block.type === "statsRow" && key === "items") {
     return block.params.items
       .map((item) => `${item.value} | ${item.label}`)
+      .join("\n");
+  }
+  if (block.type === "columns" && key === "columns") {
+    return block.params.columns
+      .map((column) =>
+        [column.heading, column.text, column.image?.src]
+          .filter(Boolean)
+          .join(" | "),
+      )
       .join("\n");
   }
   const path = key.split(".");
@@ -249,6 +280,26 @@ function updateBlockField(
       });
     while (items.length < 2) items.push({ value: "", label: "" });
     return { ...block, params: { ...block.params, items } };
+  }
+  if (block.type === "columns" && field.key === "columns") {
+    const columns = value
+      .split(/\r?\n/)
+      .filter((line) => line.trim())
+      .slice(0, 3)
+      .map((line) => {
+        const [heading = "", text = "", imageUrl] = line
+          .split("|")
+          .map((part) => part.trim());
+        return {
+          heading,
+          text,
+          ...(imageUrl
+            ? { image: { src: imageUrl, alt: heading || "Column image" } }
+            : {}),
+        };
+      });
+    while (columns.length < 2) columns.push({ heading: "", text: "" });
+    return { ...block, params: { columns } };
   }
   const params: Record<string, unknown> = { ...block.params };
   const [first, second] = field.key.split(".");
@@ -289,9 +340,15 @@ function designerPreviewHtml(html: string): string {
 }
 
 function blockIcon(type: AmieBlockSpec["type"]) {
-  if (type === "image" || type === "heroImage" || type === "productCard")
+  if (
+    type === "image" ||
+    type === "bigImage" ||
+    type === "heroImage" ||
+    type === "productCard"
+  )
     return <ImageOutlined fontSize="small" />;
-  if (type === "twoColumn") return <ViewColumn fontSize="small" />;
+  if (type === "twoColumn" || type === "imageText" || type === "columns")
+    return <ViewColumn fontSize="small" />;
   if (type === "testimonial" || type === "quoteCallout")
     return <FormatQuote fontSize="small" />;
   if (type === "paragraph" || type === "heroHeading" || type === "bulletList")
@@ -369,35 +426,40 @@ function AddBlockPicker({
         onClose={() => setAnchor(null)}
         PaperProps={{ sx: { maxHeight: 480, width: 340 } }}
       >
-        {BLOCK_LIBRARY.map((item) => (
-          <MenuItem
-            key={item.type}
-            onClick={() => {
-              onAdd(item.type);
-              setAnchor(null);
-            }}
-            sx={{ gap: 1.5, py: 1 }}
-          >
-            <Box
-              sx={{
-                width: 42,
-                height: 32,
-                borderRadius: 1,
-                bgcolor: item.color,
-                border: "1px solid",
-                borderColor: "divider",
-                flex: "0 0 auto",
+        {BLOCK_LIBRARY.map((item, index) => (
+          <React.Fragment key={item.type}>
+            {item.category === "Advanced" &&
+              BLOCK_LIBRARY[index - 1]?.category !== "Advanced" && (
+                <ListSubheader>Advanced</ListSubheader>
+              )}
+            <MenuItem
+              onClick={() => {
+                onAdd(item.type);
+                setAnchor(null);
               }}
-            />
-            <Box sx={{ minWidth: 0 }}>
-              <Typography variant="body2" fontWeight={600}>
-                {item.label}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {item.description}
-              </Typography>
-            </Box>
-          </MenuItem>
+              sx={{ gap: 1.5, py: 1 }}
+            >
+              <Box
+                sx={{
+                  width: 42,
+                  height: 32,
+                  borderRadius: 1,
+                  bgcolor: item.color,
+                  border: "1px solid",
+                  borderColor: "divider",
+                  flex: "0 0 auto",
+                }}
+              />
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="body2" fontWeight={600}>
+                  {item.label}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {item.description}
+                </Typography>
+              </Box>
+            </MenuItem>
+          </React.Fragment>
         ))}
       </Menu>
     </>
@@ -413,6 +475,9 @@ function Inspector({
   onChange: (block: AmieBlockSpec) => void;
   onChooseImage: (asset: AmieAsset) => void;
 }) {
+  const [customHtmlView, setCustomHtmlView] = useState<"code" | "preview">(
+    "code",
+  );
   const style = block.style ?? {};
   const setStyle = (key: keyof AmieBlockStyle, value: string | null) => {
     const next = { ...style };
@@ -422,9 +487,11 @@ function Inspector({
   };
   const imageBearing = [
     "image",
+    "bigImage",
     "heroImage",
     "productCard",
     "twoColumn",
+    "imageText",
   ].includes(block.type);
   return (
     <Stack spacing={2}>
@@ -447,26 +514,63 @@ function Inspector({
           onUploaded={onChooseImage}
         />
       )}
-      {block.type === "twoColumn" && (
-        <FormControl size="small" fullWidth>
-          <InputLabel>Image side</InputLabel>
-          <Select
-            label="Image side"
-            value={block.params.imageSide}
-            onChange={(event) =>
-              onChange({
-                ...block,
-                params: {
-                  ...block.params,
-                  imageSide: event.target.value === "right" ? "right" : "left",
-                },
-              })
-            }
-          >
-            <MenuItem value="left">Left</MenuItem>
-            <MenuItem value="right">Right</MenuItem>
-          </Select>
-        </FormControl>
+      {(block.type === "image" ||
+        block.type === "bigImage" ||
+        block.type === "heroImage") &&
+        block.params.placeholder && (
+          <Alert severity="warning">
+            Choose an image for “
+            {block.params.sourceDescription ?? block.params.alt}”.
+          </Alert>
+        )}
+      {(block.type === "twoColumn" || block.type === "imageText") && (
+        <Stack spacing={1.5}>
+          <FormControl size="small" fullWidth>
+            <InputLabel>Image side</InputLabel>
+            <Select
+              label="Image side"
+              value={block.params.imageSide ?? "left"}
+              onChange={(event) => {
+                const imageSide =
+                  event.target.value === "right" ? "right" : "left";
+                if (block.type === "twoColumn")
+                  onChange({
+                    ...block,
+                    params: { ...block.params, imageSide },
+                  });
+                else
+                  onChange({
+                    ...block,
+                    params: { ...block.params, imageSide },
+                  });
+              }}
+            >
+              <MenuItem value="left">Left</MenuItem>
+              <MenuItem value="right">Right</MenuItem>
+            </Select>
+          </FormControl>
+          <FormControl size="small" fullWidth>
+            <InputLabel>Column ratio</InputLabel>
+            <Select
+              label="Column ratio"
+              value={block.params.ratio ?? "50/50"}
+              onChange={(event) => {
+                const ratio =
+                  event.target.value === "40/60" ||
+                  event.target.value === "60/40"
+                    ? event.target.value
+                    : "50/50";
+                if (block.type === "twoColumn")
+                  onChange({ ...block, params: { ...block.params, ratio } });
+                else onChange({ ...block, params: { ...block.params, ratio } });
+              }}
+            >
+              <MenuItem value="50/50">50 / 50</MenuItem>
+              <MenuItem value="40/60">40 / 60</MenuItem>
+              <MenuItem value="60/40">60 / 40</MenuItem>
+            </Select>
+          </FormControl>
+        </Stack>
       )}
       {block.type === "spacer" && (
         <FormControl size="small" fullWidth>
@@ -527,6 +631,61 @@ function Inspector({
           }
         />
       ))}
+      {block.type === "customHtml" && (
+        <Stack spacing={1}>
+          <TextField
+            label="Label"
+            value={block.params.label ?? ""}
+            size="small"
+            onChange={(event) =>
+              onChange({
+                ...block,
+                params: {
+                  ...block.params,
+                  label: event.target.value || undefined,
+                },
+              })
+            }
+          />
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={customHtmlView}
+            onChange={(_event, value) => value && setCustomHtmlView(value)}
+          >
+            <ToggleButton value="code">Code</ToggleButton>
+            <ToggleButton value="preview">Preview</ToggleButton>
+          </ToggleButtonGroup>
+          {customHtmlView === "code" ? (
+            <TextField
+              label="HTML"
+              value={block.params.html}
+              multiline
+              minRows={10}
+              onChange={(event) =>
+                onChange({
+                  ...block,
+                  params: { ...block.params, html: event.target.value },
+                })
+              }
+              inputProps={{ style: { fontFamily: "monospace", fontSize: 12 } }}
+            />
+          ) : (
+            <Box
+              component="iframe"
+              title="Custom HTML preview"
+              sandbox=""
+              srcDoc={block.params.html}
+              sx={{
+                width: "100%",
+                minHeight: 220,
+                border: "1px solid",
+                borderColor: "divider",
+              }}
+            />
+          )}
+        </Stack>
+      )}
       {block.type !== "rawHtml" && (
         <Stack spacing={1.25}>
           <Typography variant="caption" fontWeight={700}>
@@ -558,7 +717,54 @@ function Inspector({
                 />
               </Tooltip>
             ))}
+            <Tooltip title="Custom color">
+              <IconButton
+                aria-label="custom background"
+                size="small"
+                onClick={() =>
+                  onChange({
+                    ...block,
+                    style: {
+                      ...style,
+                      background: "custom",
+                      backgroundHex: style.backgroundHex ?? "#FFFFFF",
+                    },
+                  })
+                }
+                sx={{
+                  width: 28,
+                  height: 28,
+                  bgcolor: style.backgroundHex ?? "#FFFFFF",
+                  border: "2px dashed",
+                  borderColor:
+                    style.background === "custom"
+                      ? tokens.colors.deepTeal
+                      : tokens.colors.borderCard,
+                }}
+              >
+                <Add fontSize="inherit" />
+              </IconButton>
+            </Tooltip>
           </Stack>
+          {style.background === "custom" && (
+            <TextField
+              label="Custom background"
+              type="color"
+              size="small"
+              value={style.backgroundHex ?? "#FFFFFF"}
+              onChange={(event) =>
+                onChange({
+                  ...block,
+                  style: {
+                    ...style,
+                    background: "custom",
+                    backgroundHex: event.target.value,
+                  },
+                })
+              }
+              fullWidth
+            />
+          )}
           <Typography variant="caption" fontWeight={700}>
             Alignment
           </Typography>
@@ -582,10 +788,28 @@ function Inspector({
             onChange={(_event, value) => setStyle("padding", value)}
             fullWidth
           >
+            <ToggleButton value="none">None</ToggleButton>
             <ToggleButton value="tight">Tight</ToggleButton>
             <ToggleButton value="normal">Normal</ToggleButton>
             <ToggleButton value="loose">Loose</ToggleButton>
           </ToggleButtonGroup>
+          {["image", "bigImage", "customHtml"].includes(block.type) && (
+            <>
+              <Typography variant="caption" fontWeight={700}>
+                Width
+              </Typography>
+              <ToggleButtonGroup
+                exclusive
+                size="small"
+                value={style.width ?? null}
+                onChange={(_event, value) => setStyle("width", value)}
+                fullWidth
+              >
+                <ToggleButton value="full">Full</ToggleButton>
+                <ToggleButton value="inset">Inset</ToggleButton>
+              </ToggleButtonGroup>
+            </>
+          )}
           <Typography variant="caption" fontWeight={700}>
             Text size
           </Typography>
@@ -642,6 +866,15 @@ function hasUnsubscribeField(value: string): boolean {
   );
 }
 
+function sourceCopyLineCount(value: string): number {
+  return value.split(/\r?\n/).filter((line) => {
+    const trimmed = line.trim();
+    return (
+      Boolean(trimmed) && trimmed !== "---" && !/^\[Image:|^!\[/i.test(trimmed)
+    );
+  }).length;
+}
+
 export default function AmieComposer({
   templateId,
   templateName,
@@ -665,6 +898,14 @@ export default function AmieComposer({
   const restoredTemplateId = useRef<string | null>(null);
 
   const [input, setInput] = useState("");
+  const [copyMode, setCopyMode] = useState<"generate" | "from_copy">(
+    "generate",
+  );
+  const [sourceCopy, setSourceCopy] = useState("");
+  const [sourceSubject, setSourceSubject] = useState("");
+  const [sourcePreviewText, setSourcePreviewText] = useState("");
+  const [layoutPlan, setLayoutPlan] = useState("");
+  const [fidelity, setFidelity] = useState<AmieComposeResponse["fidelity"]>();
   const [originalPrompt, setOriginalPrompt] = useState("");
   const [conversation, setConversation] = useState<ConversationMessage[]>([]);
   const [subject, setSubject] = useState("");
@@ -761,7 +1002,14 @@ export default function AmieComposer({
   const compose = useCallback(
     async (message: string, recipe?: AmieRecipe) => {
       const cleanMessage = message.trim();
-      if (!cleanMessage || !workspaceId || isComposing || isRawHtml) return;
+      if (
+        !cleanMessage ||
+        !workspaceId ||
+        isComposing ||
+        isRawHtml ||
+        (copyMode === "from_copy" && !sourceCopy.trim())
+      )
+        return;
       const revision = blocks !== null && !recipe;
       const nextConversation: ConversationMessage[] = revision
         ? [...conversation, { role: "user", content: cleanMessage }]
@@ -769,6 +1017,21 @@ export default function AmieComposer({
       const request: AmieComposeRequest = {
         workspaceId,
         prompt: revision ? originalPrompt : cleanMessage,
+        copyMode,
+        ...(copyMode === "from_copy"
+          ? {
+              sourceCopy: {
+                text: sourceCopy.trim(),
+                ...(sourceSubject.trim()
+                  ? { subject: sourceSubject.trim() }
+                  : {}),
+                ...(sourcePreviewText.trim()
+                  ? { previewText: sourcePreviewText.trim() }
+                  : {}),
+                ...(layoutPlan.trim() ? { layoutPlan: layoutPlan.trim() } : {}),
+              },
+            }
+          : {}),
         images: assets.map((asset) => ({
           url: asset.url,
           name: asset.name,
@@ -822,6 +1085,7 @@ export default function AmieComposer({
         setHtml(response.html);
         setDesignNotes(response.designNotes);
         setComposeWarnings(response.warnings ?? []);
+        setFidelity(response.fidelity);
         setSelectedBlock(response.blocks.length ? 0 : null);
         setBlockEditVersion(0);
         setConversation((current) =>
@@ -851,12 +1115,17 @@ export default function AmieComposer({
       baseApiUrl,
       blocks,
       conversation,
+      copyMode,
       designBrief,
       isComposing,
       isRawHtml,
+      layoutPlan,
       originalPrompt,
       previewText,
       subject,
+      sourceCopy,
+      sourcePreviewText,
+      sourceSubject,
       workspaceId,
     ],
   );
@@ -913,18 +1182,35 @@ export default function AmieComposer({
     editBlocks((current) =>
       current.map((block, blockIndex) => {
         if (blockIndex !== index) return block;
-        if (block.type === "image" || block.type === "heroImage")
+        if (
+          block.type === "image" ||
+          block.type === "bigImage" ||
+          block.type === "heroImage"
+        )
           return {
             ...block,
             params: {
               ...block.params,
               src: asset.url,
               alt: asset.alt,
+              placeholder: false,
             },
           };
         if (block.type === "productCard")
           return { ...block, params: { ...block.params, imageUrl: asset.url } };
         if (block.type === "twoColumn")
+          return {
+            ...block,
+            params: {
+              ...block.params,
+              image: {
+                ...block.params.image,
+                src: asset.url,
+                alt: asset.alt,
+              },
+            },
+          };
+        if (block.type === "imageText")
           return {
             ...block,
             params: {
@@ -946,20 +1232,28 @@ export default function AmieComposer({
     setIsImportingHtml(true);
     setPasteHtmlError(null);
     try {
-      const response = await axios.post<AmieComposeResponse>(
-        `${baseApiUrl}/content/templates/compose/import-html`,
+      const response = await axios.post<AmieImportHtmlResponse>(
+        `${baseApiUrl}/content/templates/import-html`,
         { workspaceId, html: pastedHtml },
         { headers: authHeaders },
       );
-      const rawFallback =
-        response.data.blocks.length === 1 &&
-        response.data.blocks[0]?.type === "rawHtml";
-      setSubject(response.data.subject);
-      setPreviewText(response.data.previewText);
+      const importedPreview = "Imported email content.";
+      const assembled = await axios.post<AmieAssembleResponse>(
+        `${baseApiUrl}/content/templates/compose/assemble`,
+        { workspaceId, blocks: response.data.blocks },
+        { headers: authHeaders },
+      );
+      setSubject("Imported email");
+      setPreviewText(importedPreview);
       setBlocks(response.data.blocks);
-      setHtml(response.data.html);
-      setDesignNotes(response.data.designNotes);
-      setIsRawHtml(rawFallback);
+      setHtml(withPreviewText(assembled.data.html, importedPreview));
+      setDesignNotes(
+        response.data.unmapped
+          ? `${response.data.unmapped} section${response.data.unmapped === 1 ? "" : "s"} kept as custom HTML.`
+          : "Imported into editable blocks.",
+      );
+      setComposeWarnings(response.data.warnings);
+      setIsRawHtml(false);
       setSelectedBlock(0);
       setPastedHtml("");
       setPasteHtmlDialogOpen(false);
@@ -1106,6 +1400,16 @@ export default function AmieComposer({
           <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", p: 2.5 }}>
             {!hasDraft ? (
               <Stack spacing={2.25}>
+                <ToggleButtonGroup
+                  exclusive
+                  fullWidth
+                  size="small"
+                  value={copyMode}
+                  onChange={(_event, value) => value && setCopyMode(value)}
+                >
+                  <ToggleButton value="generate">Generate</ToggleButton>
+                  <ToggleButton value="from_copy">Use my copy</ToggleButton>
+                </ToggleButtonGroup>
                 <Box>
                   <AutoAwesome sx={{ color: tokens.colors.deepTeal }} />
                   <Typography
@@ -1115,53 +1419,110 @@ export default function AmieComposer({
                       fontWeight: 600,
                     }}
                   >
-                    Start from
+                    {copyMode === "from_copy"
+                      ? "Build from finished copy"
+                      : "Start from"}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Choose a proven shape or describe your own.
+                    {copyMode === "from_copy"
+                      ? "Your words stay verbatim while AI builds the layout."
+                      : "Choose a proven shape or describe your own."}
                   </Typography>
                 </Box>
-                <Box sx={{ display: "grid", gap: 1 }}>
-                  {AMIE_RECIPES.map((recipe) => (
-                    <Button
-                      key={recipe.id}
-                      variant="outlined"
+                {copyMode === "generate" ? (
+                  <>
+                    <Box sx={{ display: "grid", gap: 1 }}>
+                      {AMIE_RECIPES.map((recipe) => (
+                        <Button
+                          key={recipe.id}
+                          variant="outlined"
+                          disabled={isComposing}
+                          onClick={() => {
+                            setDesignBrief((current) => ({
+                              ...current,
+                              goal: recipe.id,
+                            }));
+                            void compose(recipe.prompt, recipe);
+                          }}
+                          sx={{ display: "block", textAlign: "left", p: 1.5 }}
+                        >
+                          <Typography variant="body2" fontWeight={700}>
+                            {recipe.name}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {recipe.description}
+                          </Typography>
+                        </Button>
+                      ))}
+                    </Box>
+                    <TextField
+                      multiline
+                      minRows={5}
+                      value={input}
+                      onChange={(event) => setInput(event.target.value)}
+                      placeholder="Or describe the email…"
                       disabled={isComposing}
-                      onClick={() => {
-                        setDesignBrief((current) => ({
-                          ...current,
-                          goal: recipe.id,
-                        }));
-                        void compose(recipe.prompt, recipe);
-                      }}
-                      sx={{ display: "block", textAlign: "left", p: 1.5 }}
+                      fullWidth
+                    />
+                    <Button
+                      variant="contained"
+                      onClick={() => void compose(input)}
+                      disabled={!input.trim() || isComposing || !workspaceId}
+                      endIcon={<Send fontSize="small" />}
                     >
-                      <Typography variant="body2" fontWeight={700}>
-                        {recipe.name}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {recipe.description}
-                      </Typography>
+                      Design email
                     </Button>
-                  ))}
-                </Box>
-                <TextField
-                  multiline
-                  minRows={5}
-                  value={input}
-                  onChange={(event) => setInput(event.target.value)}
-                  placeholder="Or describe the email…"
-                  disabled={isComposing}
-                  fullWidth
-                />
-                <Button
-                  variant="contained"
-                  onClick={() => void compose(input)}
-                  disabled={!input.trim() || isComposing || !workspaceId}
-                  endIcon={<Send fontSize="small" />}
-                >
-                  Design email
-                </Button>
+                  </>
+                ) : (
+                  <>
+                    <TextField
+                      label="Paste your finished email"
+                      multiline
+                      minRows={10}
+                      value={sourceCopy}
+                      onChange={(event) => setSourceCopy(event.target.value)}
+                      inputProps={{ maxLength: 12000 }}
+                      helperText={`${sourceCopy.length}/12000`}
+                      placeholder={
+                        "# Your heading\n- First benefit\n[Button: Complete my order](https://example.com)"
+                      }
+                      disabled={isComposing}
+                      fullWidth
+                    />
+                    <TextField
+                      label="Subject"
+                      value={sourceSubject}
+                      onChange={(event) => setSourceSubject(event.target.value)}
+                      inputProps={{ maxLength: 60 }}
+                      size="small"
+                    />
+                    <TextField
+                      label="Preview text"
+                      value={sourcePreviewText}
+                      onChange={(event) =>
+                        setSourcePreviewText(event.target.value)
+                      }
+                      size="small"
+                    />
+                    <TextField
+                      label="Layout notes"
+                      value={layoutPlan}
+                      onChange={(event) => setLayoutPlan(event.target.value)}
+                      placeholder="Hero image first, then benefits, testimonial, CTA, footer"
+                      size="small"
+                    />
+                    <Button
+                      variant="contained"
+                      onClick={() => void compose("Build this finished copy")}
+                      disabled={
+                        !sourceCopy.trim() || isComposing || !workspaceId
+                      }
+                      endIcon={<Send fontSize="small" />}
+                    >
+                      Design email
+                    </Button>
+                  </>
+                )}
               </Stack>
             ) : (
               <Stack spacing={1.5}>
@@ -1196,6 +1557,24 @@ export default function AmieComposer({
                     icon={<AutoAwesome fontSize="small" />}
                   >
                     {designNotes}
+                  </Alert>
+                )}
+                {fidelity && (
+                  <Alert
+                    severity={fidelity.missing.length ? "warning" : "success"}
+                  >
+                    {fidelity.missing.length
+                      ? `${fidelity.missing.length} lines weren’t placed — see highlighted.`
+                      : `All ${sourceCopyLineCount(sourceCopy)} lines placed.`}
+                    {fidelity.missing.length > 0 && (
+                      <Typography
+                        component="div"
+                        variant="caption"
+                        sx={{ mt: 0.5 }}
+                      >
+                        {fidelity.missing.join(" · ")}
+                      </Typography>
+                    )}
                   </Alert>
                 )}
               </Stack>
@@ -1758,8 +2137,8 @@ export default function AmieComposer({
         <DialogContent>
           <Stack spacing={1.5} sx={{ pt: 0.5 }}>
             <Typography variant="body2" color="text.secondary">
-              AI will convert the design into editable blocks. If conversion
-              fails, the sanitized HTML stays intact as one block.
+              The importer converts recognizable content into native blocks and
+              keeps every other sanitized section as editable custom HTML.
             </Typography>
             <TextField
               autoFocus

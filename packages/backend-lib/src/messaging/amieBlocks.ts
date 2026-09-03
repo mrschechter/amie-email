@@ -1,15 +1,19 @@
 import {
+  AmieBigImageParams,
   AmieBlockSpec,
   AmieBlockStyle,
   AmieBrandBackground,
   AmieBulletListParams,
+  AmieColumnsParams,
   AmieCtaButtonParams,
+  AmieCustomHtmlParams,
   AmieDividerParams,
   AmieFooterParams,
   AmieHeaderParams,
   AmieHeroHeadingParams,
   AmieHeroImageParams,
   AmieImageParams,
+  AmieImageTextParams,
   AmieParagraphParams,
   AmieProductCardParams,
   AmieQuoteCalloutParams,
@@ -86,6 +90,7 @@ function align(style?: AmieBlockStyle): "left" | "center" {
 }
 
 function pad(style: AmieBlockStyle | undefined, normal: number): number {
+  if (style?.padding === "none") return 0;
   if (style?.padding === "tight") return 14;
   if (style?.padding === "loose") return 38;
   return normal;
@@ -103,9 +108,19 @@ function fontSize(
 }
 
 function background(style?: AmieBlockStyle): string | undefined {
+  if (style?.background === "custom") return style.backgroundHex;
   return style?.background
     ? AMIE_BACKGROUND_COLORS[style.background]
     : undefined;
+}
+
+function horizontalPadding(
+  style: AmieBlockStyle | undefined,
+  fallback: number,
+): number {
+  if (style?.width === "full") return 0;
+  if (style?.width === "inset") return 24;
+  return fallback;
 }
 
 function table(content: string, style?: AmieBlockStyle): string {
@@ -205,7 +220,22 @@ export function image(params: AmieImageParams, style?: AmieBlockStyle): string {
     ? `<a href="${httpUrl(params.href) ?? "#"}" target="_blank" style="text-decoration:none;">${imageHtml}</a>`
     : imageHtml;
   return table(
-    `<tr><td align="${style?.align ?? "center"}" style="padding:${pad(style, 26)}px 0 0;">${content}</td></tr>`,
+    `<tr><td align="${style?.align ?? "center"}" style="padding:${pad(style, 26)}px ${horizontalPadding(style, 0)}px 0;">${content}</td></tr>`,
+    style,
+  );
+}
+
+export function bigImage(
+  params: AmieBigImageParams,
+  style?: AmieBlockStyle,
+): string {
+  const src = httpUrl(params.src) ?? "";
+  const imageHtml = `<img src="${src}" width="600" alt="${escapeHtml(params.alt)}" style="display:block;width:100%;max-width:600px;height:auto;border:0;outline:none;text-decoration:none;">`;
+  const content = params.href
+    ? `<a href="${httpUrl(params.href) ?? "#"}" target="_blank" style="text-decoration:none;">${imageHtml}</a>`
+    : imageHtml;
+  return table(
+    `<tr><td align="center" style="padding:${pad(style, 26)}px ${horizontalPadding(style, 0)}px 0;">${content}</td></tr>`,
     style,
   );
 }
@@ -255,6 +285,14 @@ export function footer(
   );
 }
 
+function ratioWidths(
+  ratio: "50/50" | "40/60" | "60/40" | undefined,
+): [number, number] {
+  if (ratio === "40/60") return [40, 60];
+  if (ratio === "60/40") return [60, 40];
+  return [50, 50];
+}
+
 export function twoColumn(
   params: AmieTwoColumnParams,
   style?: AmieBlockStyle,
@@ -270,10 +308,66 @@ export function twoColumn(
   const cta = params.cta
     ? `<tr><td align="${align(style)}" style="padding:16px 0 0;">${buttonMarkup(params.cta.label, params.cta.url, style)}</td></tr>`
     : "";
-  const imageCell = `<td width="50%" valign="middle" style="width:50%;padding:0 12px;">${imageContent}</td>`;
-  const copyCell = `<td width="50%" valign="middle" style="width:50%;padding:0 12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;${TABLE_RESET}">${heading}<tr><td align="${align(style)}" style="font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#4A4A4A;">${textWithLineBreaks(params.body)}</td></tr>${cta}</table></td>`;
+  const [imageWidth, copyWidth] = ratioWidths(params.ratio);
+  const imageCell = `<td class="amie-stack-column" width="${imageWidth}%" valign="middle" style="width:${imageWidth}%;padding:0 12px;">${imageContent}</td>`;
+  const copyCell = `<td class="amie-stack-column" width="${copyWidth}%" valign="middle" style="width:${copyWidth}%;padding:0 12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;${TABLE_RESET}">${heading}<tr><td align="${align(style)}" style="font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#4A4A4A;">${textWithLineBreaks(params.body)}</td></tr>${cta}</table></td>`;
   return table(
-    `<tr><td style="padding:${pad(style, 28)}px 36px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;${TABLE_RESET}"><tr>${params.imageSide === "left" ? imageCell + copyCell : copyCell + imageCell}</tr></table></td></tr>`,
+    `<tr><td style="padding:${pad(style, 28)}px 36px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;${TABLE_RESET}"><tr>${(params.imageSide ?? "left") === "left" ? imageCell + copyCell : copyCell + imageCell}</tr></table></td></tr>`,
+    style,
+  );
+}
+
+function linkedImage(
+  imageValue: { src: string; alt: string; href?: string },
+  width: number,
+): string {
+  const tag = `<img src="${httpUrl(imageValue.src) ?? ""}" width="${width}" alt="${escapeHtml(imageValue.alt)}" style="display:block;width:100%;max-width:${width}px;height:auto;border:0;">`;
+  return imageValue.href
+    ? `<a href="${httpUrl(imageValue.href) ?? "#"}" target="_blank">${tag}</a>`
+    : tag;
+}
+
+export function columns(
+  params: AmieColumnsParams,
+  style?: AmieBlockStyle,
+): string {
+  const width = Math.floor(100 / params.columns.length);
+  const cells = params.columns
+    .map((column) => {
+      const imageContent = column.image
+        ? `<tr><td style="padding:0 0 12px;">${linkedImage(column.image, 240)}</td></tr>`
+        : "";
+      return `<td class="amie-stack-column" width="${width}%" valign="top" style="width:${width}%;padding:12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;${TABLE_RESET}">${imageContent}<tr><td align="${align(style)}" style="font-family:Georgia,'Times New Roman',serif;font-size:20px;line-height:27px;font-weight:bold;color:#3E3733;">${markdownLite(column.heading)}</td></tr><tr><td align="${align(style)}" style="padding-top:8px;font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#4A4A4A;">${markdownLite(column.text)}</td></tr></table></td>`;
+    })
+    .join("");
+  return table(
+    `<tr><td style="padding:${pad(style, 24)}px 36px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;${TABLE_RESET}"><tr>${cells}</tr></table></td></tr>`,
+    style,
+  );
+}
+
+export function imageText(
+  params: AmieImageTextParams,
+  style?: AmieBlockStyle,
+): string {
+  const [imageWidth, copyWidth] = ratioWidths(params.ratio);
+  const imageCell = `<td class="amie-stack-column" width="${imageWidth}%" valign="middle" style="width:${imageWidth}%;padding:0 12px;">${linkedImage(params.image, 300)}</td>`;
+  const heading = params.heading
+    ? `<tr><td align="${align(style)}" style="padding:0 0 10px;font-family:Georgia,'Times New Roman',serif;font-size:22px;line-height:29px;font-weight:bold;color:#3E3733;">${markdownLite(params.heading)}</td></tr>`
+    : "";
+  const copyCell = `<td class="amie-stack-column" width="${copyWidth}%" valign="middle" style="width:${copyWidth}%;padding:0 12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;${TABLE_RESET}">${heading}<tr><td align="${align(style)}" style="font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#4A4A4A;">${markdownLite(params.text)}</td></tr></table></td>`;
+  return table(
+    `<tr><td style="padding:${pad(style, 28)}px 36px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;${TABLE_RESET}"><tr>${(params.imageSide ?? "left") === "left" ? imageCell + copyCell : copyCell + imageCell}</tr></table></td></tr>`,
+    style,
+  );
+}
+
+export function customHtml(
+  params: AmieCustomHtmlParams,
+  style?: AmieBlockStyle,
+): string {
+  return table(
+    `<tr><td style="padding:${pad(style, 22)}px ${horizontalPadding(style, 24)}px 0;">${sanitizeAmieHtml(params.html)}</td></tr>`,
     style,
   );
 }
@@ -368,6 +462,8 @@ export function renderBlock(block: AmieBlockSpec): string {
       return productCard(block.params, block.style);
     case "image":
       return image(block.params, block.style);
+    case "bigImage":
+      return bigImage(block.params, block.style);
     case "heroImage":
       return heroImage(block.params, block.style);
     case "testimonial":
@@ -388,6 +484,12 @@ export function renderBlock(block: AmieBlockSpec): string {
       return spacer(block.params, block.style);
     case "sectionBreak":
       return sectionBreak(block.params, block.style);
+    case "columns":
+      return columns(block.params, block.style);
+    case "imageText":
+      return imageText(block.params, block.style);
+    case "customHtml":
+      return customHtml(block.params, block.style);
     case "rawHtml":
       return rawHtml(block.params);
     default:
@@ -413,14 +515,18 @@ export function assembleEmail(
               params: { ...block.params, addressLine: mailingAddress },
             }
           : block;
-      const rowBackground = block.style?.background ?? sectionBackground;
-      return `<tr><td data-amie-block="${block.id ?? index}" bgcolor="${AMIE_BACKGROUND_COLORS[rowBackground]}" style="padding:0;background-color:${AMIE_BACKGROUND_COLORS[rowBackground]};">${renderBlock(renderedBlock)}</td></tr>`;
+      let rowBackground = AMIE_BACKGROUND_COLORS[sectionBackground];
+      if (block.style?.background === "custom")
+        rowBackground = block.style.backgroundHex ?? rowBackground;
+      else if (block.style?.background)
+        rowBackground = AMIE_BACKGROUND_COLORS[block.style.background];
+      return `<tr><td data-amie-block="${block.id ?? index}" bgcolor="${rowBackground}" style="padding:0;background-color:${rowBackground};">${renderBlock(renderedBlock)}</td></tr>`;
     })
     .join("\n");
 
   return `<!doctype html>
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word">
-  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="x-apple-disable-message-reformatting"><meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no"><title>Amie</title><!--[if mso]><xml><o:OfficeDocumentSettings xmlns:o="urn:schemas-microsoft-com:office:office"><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml><![endif]--></head>
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="x-apple-disable-message-reformatting"><meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no"><title>Amie</title><style>@media screen and (max-width:600px){.amie-stack-column{display:block!important;width:100%!important;max-width:100%!important;box-sizing:border-box!important;padding-top:12px!important;padding-bottom:12px!important;}}</style><!--[if mso]><xml><o:OfficeDocumentSettings xmlns:o="urn:schemas-microsoft-com:office:office"><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml><![endif]--></head>
   <body style="width:100%;margin:0;padding:0;background-color:#F1EBE3;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;${TABLE_RESET}background-color:#F1EBE3;"><tr><td align="center" style="padding:32px 16px;"><!--[if mso]><table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;${TABLE_RESET}"><tr><td><![endif]--><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;${TABLE_RESET}background-color:#FFFFFF;"><tr><td style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;font-size:1px;line-height:1px;mso-hide:all;">${escapeHtml(previewText)}</td></tr>${rows}</table><!--[if mso]></td></tr></table><![endif]--></td></tr></table>
   </body>

@@ -38,7 +38,10 @@ export const AmieBrandBackground = Type.Union([
 export type AmieBrandBackground = Static<typeof AmieBrandBackground>;
 
 export const AmieBlockStyle = strictObject({
-  background: Type.Optional(AmieBrandBackground),
+  background: Type.Optional(
+    Type.Union([AmieBrandBackground, Type.Literal("custom")]),
+  ),
+  backgroundHex: Type.Optional(Type.String({ pattern: "^#[0-9A-Fa-f]{6}$" })),
   align: Type.Optional(
     Type.Union([Type.Literal("left"), Type.Literal("center")]),
   ),
@@ -47,6 +50,7 @@ export const AmieBlockStyle = strictObject({
       Type.Literal("tight"),
       Type.Literal("normal"),
       Type.Literal("loose"),
+      Type.Literal("none"),
     ]),
   ),
   textSize: Type.Optional(
@@ -58,6 +62,9 @@ export const AmieBlockStyle = strictObject({
       Type.Literal("secondary"),
       Type.Literal("roseGold"),
     ]),
+  ),
+  width: Type.Optional(
+    Type.Union([Type.Literal("full"), Type.Literal("inset")]),
   ),
 });
 export type AmieBlockStyle = Static<typeof AmieBlockStyle>;
@@ -113,6 +120,19 @@ export const AmieImageBlock = styledBlock({
     alt: AmieAltText,
     width: Type.Optional(Type.Integer({ minimum: 1, maximum: 1200 })),
     href: Type.Optional(HttpOrLiquidUrl),
+    placeholder: Type.Optional(Type.Boolean()),
+    sourceDescription: Type.Optional(Type.String()),
+  }),
+});
+
+export const AmieBigImageBlock = styledBlock({
+  type: Type.Literal("bigImage"),
+  params: strictObject({
+    src: HttpUrl,
+    alt: AmieAltText,
+    href: Type.Optional(HttpOrLiquidUrl),
+    placeholder: Type.Optional(Type.Boolean()),
+    sourceDescription: Type.Optional(Type.String()),
   }),
 });
 
@@ -123,6 +143,8 @@ export const AmieHeroImageBlock = styledBlock({
     alt: AmieAltText,
     headline: Type.Optional(AmieBlockHeadingText),
     href: Type.Optional(HttpOrLiquidUrl),
+    placeholder: Type.Optional(Type.Boolean()),
+    sourceDescription: Type.Optional(Type.String()),
   }),
 });
 
@@ -152,7 +174,16 @@ export const AmieTwoColumnBlock = styledBlock({
       alt: AmieAltText,
       href: Type.Optional(HttpOrLiquidUrl),
     }),
-    imageSide: Type.Union([Type.Literal("left"), Type.Literal("right")]),
+    imageSide: Type.Optional(
+      Type.Union([Type.Literal("left"), Type.Literal("right")]),
+    ),
+    ratio: Type.Optional(
+      Type.Union([
+        Type.Literal("50/50"),
+        Type.Literal("40/60"),
+        Type.Literal("60/40"),
+      ]),
+    ),
     heading: Type.Optional(AmieBlockHeadingText),
     body: Type.String(),
     cta: Type.Optional(
@@ -204,6 +235,57 @@ export const AmieSectionBreakBlock = styledBlock({
   params: strictObject({ background: AmieBrandBackground }),
 });
 
+const AmieColumnContent = strictObject({
+  heading: Type.String(),
+  text: Type.String(),
+  image: Type.Optional(
+    strictObject({
+      src: HttpUrl,
+      alt: AmieAltText,
+      href: Type.Optional(HttpOrLiquidUrl),
+    }),
+  ),
+});
+
+export const AmieColumnsBlock = styledBlock({
+  type: Type.Literal("columns"),
+  params: strictObject({
+    columns: Type.Array(AmieColumnContent, { minItems: 2, maxItems: 3 }),
+  }),
+});
+
+export const AmieImageTextBlock = styledBlock({
+  type: Type.Literal("imageText"),
+  params: strictObject({
+    image: strictObject({
+      src: HttpUrl,
+      alt: AmieAltText,
+      href: Type.Optional(HttpOrLiquidUrl),
+    }),
+    imageSide: Type.Optional(
+      Type.Union([Type.Literal("left"), Type.Literal("right")]),
+    ),
+    ratio: Type.Optional(
+      Type.Union([
+        Type.Literal("50/50"),
+        Type.Literal("40/60"),
+        Type.Literal("60/40"),
+      ]),
+    ),
+    heading: Type.Optional(AmieBlockHeadingText),
+    text: Type.String(),
+  }),
+});
+
+// Public escape hatch for sections an HTML import cannot map losslessly.
+export const AmieCustomHtmlBlock = styledBlock({
+  type: Type.Literal("customHtml"),
+  params: strictObject({
+    html: Type.String(),
+    label: Type.Optional(Type.String()),
+  }),
+});
+
 // Internal import fallback. The block picker intentionally does not expose it.
 export const AmieRawHtmlBlock = styledBlock({
   type: Type.Literal("rawHtml"),
@@ -217,6 +299,7 @@ export const AmieBlockSpec = Type.Union([
   AmieCtaButtonBlock,
   AmieProductCardBlock,
   AmieImageBlock,
+  AmieBigImageBlock,
   AmieHeroImageBlock,
   AmieTestimonialBlock,
   AmieDividerBlock,
@@ -227,6 +310,9 @@ export const AmieBlockSpec = Type.Union([
   AmieQuoteCalloutBlock,
   AmieSpacerBlock,
   AmieSectionBreakBlock,
+  AmieColumnsBlock,
+  AmieImageTextBlock,
+  AmieCustomHtmlBlock,
   AmieRawHtmlBlock,
 ]);
 
@@ -243,6 +329,7 @@ export type AmieProductCardParams = Static<
   typeof AmieProductCardBlock
 >["params"];
 export type AmieImageParams = Static<typeof AmieImageBlock>["params"];
+export type AmieBigImageParams = Static<typeof AmieBigImageBlock>["params"];
 export type AmieHeroImageParams = Static<typeof AmieHeroImageBlock>["params"];
 export type AmieTestimonialParams = Static<
   typeof AmieTestimonialBlock
@@ -259,6 +346,9 @@ export type AmieSpacerParams = Static<typeof AmieSpacerBlock>["params"];
 export type AmieSectionBreakParams = Static<
   typeof AmieSectionBreakBlock
 >["params"];
+export type AmieColumnsParams = Static<typeof AmieColumnsBlock>["params"];
+export type AmieImageTextParams = Static<typeof AmieImageTextBlock>["params"];
+export type AmieCustomHtmlParams = Static<typeof AmieCustomHtmlBlock>["params"];
 export type AmieRawHtmlParams = Static<typeof AmieRawHtmlBlock>["params"];
 
 export const AmieComposerConversationMessage = strictObject({
@@ -305,10 +395,12 @@ export const AmieEditOp = Type.Union([
     type: Type.Literal("set_style_token"),
     name: Type.Union([
       Type.Literal("background"),
+      Type.Literal("backgroundHex"),
       Type.Literal("align"),
       Type.Literal("padding"),
       Type.Literal("textSize"),
       Type.Literal("buttonVariant"),
+      Type.Literal("width"),
     ]),
     value: Type.String(),
   }),
@@ -329,6 +421,9 @@ export const AmieEditRequest = strictObject({
   conversation: Type.Array(AmieComposerConversationMessage),
   document: AmieEditDocument,
   renderedText: Type.String(),
+  copyMode: Type.Optional(
+    Type.Union([Type.Literal("generate"), Type.Literal("from_copy")]),
+  ),
 });
 export type AmieEditRequest = Static<typeof AmieEditRequest>;
 
@@ -406,6 +501,17 @@ export const AmieComposeRequest = strictObject({
   designBrief: Type.Optional(AmieDesignBrief),
   conversation: Type.Optional(Type.Array(AmieComposerConversationMessage)),
   referenceSkeleton: Type.Optional(AmieBlockSkeleton),
+  copyMode: Type.Optional(
+    Type.Union([Type.Literal("generate"), Type.Literal("from_copy")]),
+  ),
+  sourceCopy: Type.Optional(
+    strictObject({
+      text: Type.String({ minLength: 1, maxLength: 12000 }),
+      subject: Type.Optional(Type.String()),
+      previewText: Type.Optional(Type.String()),
+      layoutPlan: Type.Optional(Type.String()),
+    }),
+  ),
 });
 export type AmieComposeRequest = Static<typeof AmieComposeRequest>;
 
@@ -449,6 +555,12 @@ export const AmieComposeResponse = strictObject({
   html: Type.String(),
   designNotes: Type.String(),
   warnings: Type.Optional(Type.Array(Type.String())),
+  fidelity: Type.Optional(
+    strictObject({
+      coverage: Type.Number({ minimum: 0, maximum: 1 }),
+      missing: Type.Array(Type.String()),
+    }),
+  ),
 });
 export type AmieComposeResponse = Static<typeof AmieComposeResponse>;
 
@@ -457,6 +569,13 @@ export const AmieImportHtmlRequest = strictObject({
   html: Type.String({ minLength: 1 }),
 });
 export type AmieImportHtmlRequest = Static<typeof AmieImportHtmlRequest>;
+
+export const AmieImportHtmlResponse = strictObject({
+  blocks: Type.Array(AmieBlockSpec),
+  unmapped: Type.Integer({ minimum: 0 }),
+  warnings: Type.Array(Type.String()),
+});
+export type AmieImportHtmlResponse = Static<typeof AmieImportHtmlResponse>;
 
 export const AmieAssembleRequest = strictObject({
   workspaceId: Type.String(),
@@ -551,6 +670,12 @@ export function sanitizeAmieHtml(html: string): string {
     const isScriptEnd =
       lowerHtml.startsWith("</script", tagStart) &&
       isTagNameBoundary(html[tagStart + "</script".length]);
+    const isExternalStyleLink =
+      lowerHtml.startsWith("<link", tagStart) &&
+      isTagNameBoundary(html[tagStart + "<link".length]) &&
+      /\b(?:rel\s*=\s*["']?stylesheet|href\s*=\s*["'][^"']+\.css(?:[?"']))/i.test(
+        html.slice(tagStart, tagEnd(html, tagStart + 1) ?? html.length),
+      );
     if (isScriptStart) {
       const openingTagEnd = tagEnd(html, tagStart + 1);
       if (openingTagEnd === null) break;
@@ -571,7 +696,7 @@ export function sanitizeAmieHtml(html: string): string {
       sanitized += html.slice(tagStart);
       break;
     }
-    if (!isScriptEnd) {
+    if (!isScriptEnd && !isExternalStyleLink) {
       sanitized += stripEventHandlerAttributes(html.slice(tagStart, end + 1));
     }
     cursor = end + 1;

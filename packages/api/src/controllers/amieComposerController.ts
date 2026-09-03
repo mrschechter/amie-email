@@ -15,11 +15,16 @@ import {
   extractFirstJsonObject,
 } from "backend-lib/src/messaging/amieComposer";
 import {
+  copyFidelity,
+  parseSourceCopy,
+} from "backend-lib/src/messaging/amieCopyParser";
+import {
   applyAmieEditOps,
   normalizeBlockLimitedAmieEditOps,
   renderAmieDocumentText,
   validateEditDocumentIds,
 } from "backend-lib/src/messaging/amieEditOps";
+import { importAmieHtml } from "backend-lib/src/messaging/amieHtmlImporter";
 import {
   AmieImageAspect,
   generateAndStoreImage,
@@ -48,6 +53,7 @@ import {
   AmieEditRequest,
   AmieEditResponse,
   AmieImportHtmlRequest,
+  AmieImportHtmlResponse,
   AmieSanitizeHtmlRequest,
   AmieSanitizeHtmlResponse,
   sanitizeAmieHtml,
@@ -63,6 +69,7 @@ const RAW_MODEL_OUTPUT_LOG_LENGTH = 300;
 const CORRECTIVE_INSTRUCTION =
   "Return ONLY the JSON object, no fences, matching the schema";
 const PENDING_GENERATED_IMAGE_URL = "https://generated.amie.invalid/pending";
+const PLACEHOLDER_IMAGE_URL = "https://tryamie.com/placeholder.png";
 
 type AmieComposeRequestWithFallback = AmieComposeRequest & {
   currentSubject?: string;
@@ -120,11 +127,48 @@ const RECIPE_SKELETONS = `Recipe priors (vary these; they are not fixed template
 - Promo/sale: header, heroImage, heroHeading, productCard, ctaButton, spacer, footer.
 - Welcome: header, heroHeading, paragraph, bulletList, ctaButton, testimonial, footer.`;
 
+function explicitlyRequestsCopyChange(message: string): boolean {
+  return /\b(?:shorten|rewrite|reword|paraphrase)\b|\b(?:replace|edit|change|remove|delete)\s+(?:the\s+)?(?:copy|text|heading|headline|subject|preview|sentence|paragraph|words?)\b|\badd\s+(?:a\s+|some\s+)?(?:copy|text|sentence|paragraph|words?)\b/i.test(
+    message,
+  );
+}
+
 function systemPrompt(
   request: AmieComposeRequest,
   imageGenerationAvailable: boolean,
   knownUserProperties: readonly string[],
 ): string {
+  if (request.copyMode === "from_copy" && request.sourceCopy) {
+    const latestRequest =
+      request.conversation?.at(-1)?.content ?? request.prompt;
+    const copyRewriteAllowed =
+      request.currentBlocks !== undefined &&
+      explicitlyRequestsCopyChange(latestRequest);
+    const provisional = parseSourceCopy(
+      request.sourceCopy.text,
+      request.images ?? [],
+    );
+    return `You are Amie's email LAYOUT ENGINE, not a writer. Map finished source copy into a designed block tree while preserving every source sentence verbatim.
+
+Return STRICT JSON only with exactly this shape: {"subject":string,"previewText":string,"blocks":BlockSpec[]}. Use at most ${AMIE_MAX_BLOCKS} blocks. You may trim surrounding whitespace, split a clearly marked heading from a paragraph, choose block types and additive styles, and order sections according to layout notes. ${copyRewriteAllowed ? "The latest user instruction explicitly requests a copy edit; make only that requested edit and preserve all other source wording." : "You MUST NOT add, drop, summarize, or paraphrase any source sentence."} Do not add a footer or CTA unless its copy exists in the source.
+
+Block schema: ${JSON.stringify(AmieComposerModelOutput.properties.blocks)}
+Styles: background ivory|blush|white|teal|sage|custom; backgroundHex must be #RRGGBB when background is custom; align left|center; padding none|tight|normal|loose; textSize s|m|l; buttonVariant primary|secondary|roseGold; width full|inset. customHtml is public and must be kept intact; do not edit its HTML unless explicitly asked. rawHtml is legacy-only and must never be emitted.
+
+SOURCE COPY:
+${request.sourceCopy.text}
+
+LAYOUT NOTES:
+${request.sourceCopy.layoutPlan ?? "Use the source order and a balanced Amie layout."}
+
+DETERMINISTIC PROVISIONAL BLOCKS (restyle/reflow these without changing copy):
+${JSON.stringify(provisional)}
+
+AVAILABLE IMAGES (use only exact URLs):
+${JSON.stringify(request.images ?? [])}
+
+Use sourceCopy.subject and sourceCopy.previewText exactly when supplied; otherwise write only those two metadata fields. Never manufacture body copy.`;
+  }
   const imageInstruction = request.images?.length
     ? `The workspace asset library is ${JSON.stringify(request.images)}. Use ONLY those exact image URLs, or the fixed pending URL described below for a requested generated image.`
     : "The workspace asset library is empty. Do not invent image URLs.";
@@ -140,13 +184,13 @@ Subject must be at most 60 characters and previewText must be non-empty. Use at 
 Block schema (every block also accepts optional style):
 ${JSON.stringify(AmieComposerModelOutput.properties.blocks)}
 
-Style tokens ONLY: background ivory(#FAF8F5), blush(#F5E6E0), white(#FFFFFF), teal(#2D7A7A), or sage(#9CAF88); align left|center; padding tight|normal|loose; textSize s|m|l; buttonVariant primary|secondary|roseGold. sectionBreak changes the background for following blocks until another sectionBreak. Use buttonVariant only where a CTA exists.
+Style tokens ONLY: background ivory(#FAF8F5), blush(#F5E6E0), white(#FFFFFF), teal(#2D7A7A), sage(#9CAF88), or custom with backgroundHex #RRGGBB; align left|center; padding none|tight|normal|loose; width full|inset; textSize s|m|l; buttonVariant primary|secondary|roseGold. sectionBreak changes the background for following blocks until another sectionBreak. Use buttonVariant only where a CTA exists.
 
 Markdown-lite is allowed in paragraph, heroHeading, bulletList items, and quoteCallout: **bold**, *italic*, [text](https://url), and line breaks. Never emit HTML in those fields.
 
-rawHtml is reserved for the server's failed-import fallback. Never emit rawHtml during compose, revision, or successful import conversion.
+customHtml is a public advanced block. Keep it intact and do not edit its HTML unless the user explicitly asks. rawHtml is reserved for legacy imports. Never emit rawHtml during compose or revision.
 
-Block intent: header is brand chrome; heroHeading is the lead; paragraph is editorial copy; ctaButton is a primary action; productCard is a product feature; image is standalone; heroImage is full bleed; testimonial is a customer statement; divider separates; footer is mandatory compliance; twoColumn pairs image and copy with imageSide, optional heading and CTA; bulletList has heading and items; statsRow has 2-4 value/label items; quoteCallout is an editorial pull quote; spacer is 16|24|32|48px; sectionBreak starts a branded background section.
+Block intent: header is brand chrome; heroHeading is the lead; paragraph is editorial copy; ctaButton is a primary action; productCard is a product feature; image and bigImage are standalone; heroImage is full bleed; testimonial is a customer statement; divider separates; footer is mandatory compliance; twoColumn and imageText pair an image and copy with side and ratio controls; columns provides 2-3 responsive columns; bulletList has heading and items; statsRow has 2-4 value/label items; quoteCallout is an editorial pull quote; spacer is 16|24|32|48px; sectionBreak starts a branded background section.
 
 ${RECIPE_SKELETONS}
 Use recipe skeletons as priors and vary structure between composes. Convert the optional design brief into layout decisions: ${JSON.stringify(request.designBrief ?? {})}. If seedBlocks are supplied, preserve their broad skeleton while filling and styling the complete design: ${JSON.stringify(request.seedBlocks ?? [])}.
@@ -175,6 +219,18 @@ function critiquePrompt(): string {
 function modelMessages(
   request: AmieComposeRequest,
 ): { role: "user" | "assistant"; content: string }[] {
+  if (request.copyMode === "from_copy" && request.sourceCopy) {
+    const revisionContext = request.currentBlocks
+      ? `This is a revision. Current blocks: ${JSON.stringify(request.currentBlocks)}. Apply only the latest request while retaining the finished-copy contract.`
+      : "Create the first layout from the supplied finished copy.";
+    return [
+      ...(request.conversation ?? []),
+      {
+        role: "user",
+        content: `${revisionContext}\nOriginal brief: ${request.prompt}`,
+      },
+    ];
+  }
   const isRevision = request.currentBlocks !== undefined;
   const context = isRevision
     ? [
@@ -607,6 +663,8 @@ For a word on its own line, orphan, or widow, use replace_text to insert &nbsp; 
 
 Liquid rules: known user properties are ${JSON.stringify(knownUserProperties)}. Use only user.* properties from this catalog, always with a default. Do not edit text inside Liquid spans unless explicitly asked. Never HTML-entity-encode Liquid quotes.
 
+${request.copyMode === "from_copy" ? "VERBATIM COPY MODE: Preserve every existing word unless the user's latest instruction explicitly asks to rewrite, shorten, replace, add, or remove copy. Layout and style requests may only move blocks or change non-copy properties." : ""}
+
 DOCUMENT (ids and editable text):
 ${JSON.stringify(request.document)}
 
@@ -615,6 +673,70 @@ ${request.renderedText}
 
 SERVER 600PX WRAP APPROXIMATION AND HEADING WIDOW CANDIDATES:
 ${previewText}`;
+}
+
+function propsChangeCopy(props: Record<string, unknown>): boolean {
+  if (!("params" in props) || !isStringRecord(props.params)) return false;
+  const copyKeys = new Set([
+    "title",
+    "subtitle",
+    "text",
+    "label",
+    "description",
+    "price",
+    "ctaLabel",
+    "quote",
+    "attribution",
+    "body",
+    "heading",
+    "items",
+    "columns",
+    "addressLine",
+    "unsubscribe",
+    "html",
+  ]);
+  return Object.keys(props.params).some((key) => copyKeys.has(key));
+}
+
+function preserveVerbatimCopyOps(
+  request: AmieEditRequest,
+  ops: AmieEditModelOutput["ops"],
+): AmieEditModelOutput["ops"] {
+  if (
+    request.copyMode !== "from_copy" ||
+    explicitlyRequestsCopyChange(request.message)
+  ) {
+    return ops;
+  }
+  const safe = ops.filter((op) => {
+    if (
+      op.type === "replace_text" ||
+      op.type === "set_subject" ||
+      op.type === "set_preview_text"
+    )
+      return false;
+    if (op.type === "set_block_props") return !propsChangeCopy(op.props);
+    if (op.type === "insert_block")
+      return ["divider", "spacer", "image", "bigImage"].includes(op.block.type);
+    if (op.type === "remove_block") {
+      const target = request.document.blocks.find(
+        (block) => block.id === op.blockId,
+      );
+      return Boolean(
+        target &&
+          ["divider", "spacer", "image", "bigImage"].includes(target.type),
+      );
+    }
+    return true;
+  });
+  return safe.length
+    ? safe
+    : [
+        {
+          type: "no_op",
+          reason: "Verbatim copy mode kept the finished copy unchanged.",
+        },
+      ];
 }
 
 export async function editAmieEmail({
@@ -645,7 +767,10 @@ export async function editAmieEmail({
     maxTokens: MAX_EDIT_OUTPUT_TOKENS,
   });
   const output = parseEditOutput(modelText, request.document);
-  const ops = normalizeBlockLimitedAmieEditOps(request.document, output.ops);
+  const ops = normalizeBlockLimitedAmieEditOps(
+    request.document,
+    preserveVerbatimCopyOps(request, output.ops),
+  );
   const applied = applyAmieEditOps({
     document: request.document,
     ops,
@@ -751,9 +876,16 @@ async function draftOutput({
 }
 
 function imageUrl(block: AmieBlockSpec): string | undefined {
-  if (block.type === "image" || block.type === "heroImage")
+  if (
+    block.type === "image" ||
+    block.type === "bigImage" ||
+    block.type === "heroImage"
+  )
     return block.params.src;
-  if (block.type === "twoColumn") return block.params.image.src;
+  if (block.type === "twoColumn" || block.type === "imageText")
+    return block.params.image.src;
+  if (block.type === "columns")
+    return block.params.columns.find((column) => column.image)?.image?.src;
   if (block.type === "productCard") return block.params.imageUrl;
   return undefined;
 }
@@ -763,10 +895,23 @@ function withGeneratedImage(
   url: string,
   alt: string,
 ): AmieBlockSpec {
-  if (block.type === "image" || block.type === "heroImage") {
+  if (
+    block.type === "image" ||
+    block.type === "bigImage" ||
+    block.type === "heroImage"
+  ) {
     return { ...block, params: { ...block.params, src: url, alt } };
   }
   if (block.type === "twoColumn") {
+    return {
+      ...block,
+      params: {
+        ...block.params,
+        image: { ...block.params.image, src: url, alt },
+      },
+    };
+  }
+  if (block.type === "imageText") {
     return {
       ...block,
       params: {
@@ -841,7 +986,21 @@ function allowedImageBlocks(
   blocks: AmieBlockSpec[],
   allowedUrls: Set<string>,
 ): AmieBlockSpec[] {
-  return blocks.flatMap((block) => {
+  return blocks.flatMap((block): AmieBlockSpec[] => {
+    if (block.type === "columns") {
+      return [
+        {
+          ...block,
+          params: {
+            columns: block.params.columns.map((column) =>
+              column.image && !allowedUrls.has(column.image.src)
+                ? { heading: column.heading, text: column.text }
+                : column,
+            ),
+          },
+        },
+      ];
+    }
     const url = imageUrl(block);
     if (!url || allowedUrls.has(url)) return [block];
     if (block.type === "productCard") {
@@ -892,7 +1051,9 @@ function semanticAudit(
 ): AmieCritiqueModelOutput {
   let blocks = output.blocks.slice(0, AMIE_MAX_BLOCKS).map((block) => {
     if (
-      (block.type === "image" || block.type === "heroImage") &&
+      (block.type === "image" ||
+        block.type === "bigImage" ||
+        block.type === "heroImage") &&
       !block.params.alt.trim()
     ) {
       return {
@@ -906,6 +1067,33 @@ function semanticAudit(
         params: {
           ...block.params,
           image: { ...block.params.image, alt: "Amie product and lifestyle" },
+        },
+      };
+    }
+    if (block.type === "imageText" && !block.params.image.alt.trim()) {
+      return {
+        ...block,
+        params: {
+          ...block.params,
+          image: { ...block.params.image, alt: "Amie product and lifestyle" },
+        },
+      };
+    }
+    if (block.type === "columns") {
+      return {
+        ...block,
+        params: {
+          columns: block.params.columns.map((column) =>
+            column.image && !column.image.alt.trim()
+              ? {
+                  ...column,
+                  image: {
+                    ...column.image,
+                    alt: "Amie product and lifestyle",
+                  },
+                }
+              : column,
+          ),
         },
       };
     }
@@ -1126,6 +1314,101 @@ function finalizeLiquid(
 
 export type AmieComposeStage = "Writing…" | "Assembling" | "Checking Liquid";
 
+async function composeFromFinishedCopy({
+  request,
+  bedrockClient,
+  modelId,
+  knownUserProperties,
+  onStage,
+}: {
+  request: AmieComposeRequestWithFallback;
+  bedrockClient: BedrockInvoker;
+  modelId: string;
+  knownUserProperties: readonly string[];
+  onStage?: (stage: AmieComposeStage) => void;
+}): Promise<AmieComposeResponse> {
+  const { sourceCopy } = request;
+  if (!sourceCopy) throw new Error("sourceCopy is required in from_copy mode");
+  const provisional = parseSourceCopy(sourceCopy.text, request.images ?? []);
+  const latestRequest = request.conversation?.at(-1)?.content ?? request.prompt;
+  const copyRewriteAllowed =
+    request.currentBlocks !== undefined &&
+    explicitlyRequestsCopyChange(latestRequest);
+  const fallbackOutput = (): AmieComposerModelOutput => ({
+    subject: sourceCopy.subject ?? "Your Amie update",
+    previewText: sourceCopy.previewText ?? "A thoughtful update from Amie.",
+    blocks: provisional,
+  });
+
+  let drafted: AmieComposerModelOutput;
+  try {
+    drafted = await draftOutput({
+      request,
+      bedrockClient,
+      modelId,
+      imageGenerationAvailable: false,
+      knownUserProperties,
+    });
+  } catch {
+    drafted = fallbackOutput();
+  }
+
+  const allowedUrls = new Set([
+    ...(request.images?.map((item) => item.url) ?? []),
+    PLACEHOLDER_IMAGE_URL,
+  ]);
+  let blocks = allowedImageBlocks(drafted.blocks, allowedUrls);
+  let fidelity = copyFidelity(sourceCopy.text, blocks, request.images ?? []);
+  if (copyRewriteAllowed) fidelity = { coverage: 1, missing: [] };
+  let useDeterministicFallback = false;
+
+  if (!copyRewriteAllowed && fidelity.coverage < 0.97) {
+    try {
+      const correction = await invokeModel({
+        bedrockClient,
+        modelId,
+        system: `${systemPrompt(request, false, knownUserProperties)}\n\nCORRECTIVE PASS: The prior layout omitted exact source sentences. Restore every missing sentence verbatim and return the complete JSON. Missing: ${JSON.stringify(fidelity.missing)}. Prior blocks: ${JSON.stringify(blocks)}`,
+        messages: modelMessages(request),
+        temperature: 0,
+      });
+      const corrected = parseComposeOutput(correction);
+      const correctedBlocks = allowedImageBlocks(corrected.blocks, allowedUrls);
+      const correctedFidelity = copyFidelity(
+        sourceCopy.text,
+        correctedBlocks,
+        request.images ?? [],
+      );
+      if (correctedFidelity.coverage >= 0.97) {
+        drafted = corrected;
+        blocks = correctedBlocks;
+        fidelity = correctedFidelity;
+      } else {
+        fidelity = correctedFidelity;
+        useDeterministicFallback = true;
+      }
+    } catch {
+      useDeterministicFallback = true;
+    }
+  }
+  if (useDeterministicFallback) blocks = provisional;
+
+  onStage?.("Assembling");
+  const finalized = finalizeLiquid(
+    {
+      subject: sourceCopy.subject ?? drafted.subject,
+      previewText: sourceCopy.previewText ?? drafted.previewText,
+      blocks,
+      designNotes: useDeterministicFallback
+        ? "Used the safe verbatim layout because the designed pass missed copy."
+        : "Placed the finished copy into an editable Amie layout.",
+    },
+    request,
+    knownUserProperties,
+    () => onStage?.("Checking Liquid"),
+  );
+  return { ...finalized, fidelity };
+}
+
 export async function composeAmieEmail({
   request,
   bedrockClient,
@@ -1146,6 +1429,15 @@ export async function composeAmieEmail({
   onStage?: (stage: AmieComposeStage) => void;
 }): Promise<AmieComposeResponse> {
   onStage?.("Writing…");
+  if (request.copyMode === "from_copy") {
+    return composeFromFinishedCopy({
+      request,
+      bedrockClient,
+      modelId,
+      knownUserProperties,
+      onStage,
+    });
+  }
   const drafted = await draftOutput({
     request,
     bedrockClient,
@@ -1165,6 +1457,7 @@ export async function composeAmieEmail({
   const allowedUrls = new Set([
     ...(request.images?.map((item) => item.url) ?? []),
     ...generated.urls,
+    PLACEHOLDER_IMAGE_URL,
   ]);
   const safeDraft = {
     ...drafted,
@@ -1185,43 +1478,6 @@ export async function composeAmieEmail({
   return finalizeLiquid(audited, request, knownUserProperties, () =>
     onStage?.("Checking Liquid"),
   );
-}
-
-async function importHtml({
-  request,
-  bedrockClient,
-  modelId,
-  knownUserProperties,
-}: {
-  request: AmieImportHtmlRequest;
-  bedrockClient: BedrockInvoker;
-  modelId: string;
-  knownUserProperties: readonly string[];
-}): Promise<AmieComposeResponse> {
-  const sanitized = sanitizeAmieHtml(request.html);
-  const composeRequest: AmieComposeRequest = {
-    workspaceId: request.workspaceId,
-    prompt: `Convert this pasted email HTML into the closest editable Amie block design. Preserve meaning and links, use no invented image URLs, and include the mandatory footer. HTML:\n${sanitized}`,
-  };
-  try {
-    return await composeAmieEmail({
-      request: composeRequest,
-      bedrockClient,
-      modelId,
-      knownUserProperties,
-    });
-  } catch {
-    const blocks: AmieBlockSpec[] = [
-      { type: "rawHtml", params: { html: sanitized } },
-    ];
-    return {
-      subject: "Imported email",
-      previewText: "Imported email content.",
-      blocks,
-      html: assembleEmail(blocks, "Imported email content."),
-      designNotes: "Kept the original HTML as one safe fallback block.",
-    };
-  }
 }
 
 async function streamAssistantReply({
@@ -1646,34 +1902,31 @@ export default async function amieComposerController(
           }),
   );
 
-  fastify.withTypeProvider<TypeBoxTypeProvider>().post(
-    "/compose/import-html",
-    {
-      schema: {
-        description:
-          "Best-effort conversion of pasted email HTML into Amie blocks.",
-        tags: ["Content"],
-        body: AmieImportHtmlRequest,
-        response: { 200: AmieComposeResponse, 503: AmieComposerErrorResponse },
+  const registerHtmlImporter = (path: string) =>
+    fastify.withTypeProvider<TypeBoxTypeProvider>().post(
+      path,
+      {
+        schema: {
+          description:
+            "Deterministically import email HTML into editable blocks.",
+          tags: ["Content"],
+          body: AmieImportHtmlRequest,
+          response: {
+            200: AmieImportHtmlResponse,
+            503: AmieComposerErrorResponse,
+          },
+        },
       },
-    },
-    async (request, reply) =>
-      enabled
-        ? reply.status(200).send(
-            await importHtml({
-              request: request.body,
-              bedrockClient,
-              modelId: fastModelId,
-              knownUserProperties: await loadUserPropertyNames(
-                request.body.workspaceId,
-              ),
+      async (request, reply) =>
+        enabled
+          ? reply.status(200).send(importAmieHtml(request.body.html))
+          : reply.status(503).send({
+              message: "Amie composer is disabled.",
+              reasonCode: AmieComposerReasonCode.Disabled,
             }),
-          )
-        : reply.status(503).send({
-            message: "Amie composer is disabled.",
-            reasonCode: AmieComposerReasonCode.Disabled,
-          }),
-  );
+    );
+  registerHtmlImporter("/import-html");
+  registerHtmlImporter("/compose/import-html");
 
   fastify.withTypeProvider<TypeBoxTypeProvider>().post(
     "/compose",

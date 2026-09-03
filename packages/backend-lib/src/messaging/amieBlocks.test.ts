@@ -4,13 +4,16 @@ import { schemaValidate } from "isomorphic-lib/src/resultHandling/schemaValidati
 import {
   assembleEmail,
   bulletList,
+  columns,
   ctaButton,
+  customHtml,
   divider,
   footer,
   header,
   heroHeading,
   heroImage,
   image,
+  imageText,
   paragraph,
   productCard,
   quoteCallout,
@@ -156,6 +159,27 @@ describe("Amie email blocks", () => {
     },
     { name: "spacer", html: spacer({ height: 24 }) },
     { name: "section break", html: sectionBreak({ background: "blush" }) },
+    {
+      name: "columns",
+      html: columns({
+        columns: [
+          { heading: "One", text: "First" },
+          { heading: "Two", text: "Second" },
+        ],
+      }),
+    },
+    {
+      name: "image and text",
+      html: imageText({
+        image: { src: "https://example.com/image.jpg", alt: "Routine" },
+        heading: "A useful detail",
+        text: "Paired copy",
+      }),
+    },
+    {
+      name: "custom HTML",
+      html: customHtml({ html: "<table><tr><td>Custom</td></tr></table>" }),
+    },
   ];
 
   it.each(renderedBlocks)(
@@ -292,6 +316,56 @@ describe("Amie email blocks", () => {
     expect(html).toContain("max-width:600px");
     expect(html).toContain("A personal preview");
     expect(html).toContain("Hello");
+  });
+
+  it("renders responsive columns and imageText using Outlook-safe tables", () => {
+    const html = assembleEmail([
+      {
+        type: "columns",
+        params: {
+          columns: [
+            { heading: "One", text: "First" },
+            { heading: "Two", text: "Second" },
+            { heading: "Three", text: "Third" },
+          ],
+        },
+      },
+      {
+        type: "imageText",
+        params: {
+          image: { src: "https://example.com/image.jpg", alt: "Routine" },
+          imageSide: "right",
+          ratio: "40/60",
+          heading: "Flexible layout",
+          text: "This stacks on mobile.",
+        },
+      },
+    ]);
+
+    expect(html).toContain("@media screen and (max-width:600px)");
+    expect(html).toContain(".amie-stack-column");
+    expect(html).toContain('role="presentation"');
+    expect(html).toContain('width="40%"');
+    expect(html).toContain('width="60%"');
+  });
+
+  it("supports custom backgrounds, no padding, and inset widths", () => {
+    const html = assembleEmail([
+      {
+        type: "customHtml",
+        params: { html: "<p>Safe custom section</p>" },
+        style: {
+          background: "custom",
+          backgroundHex: "#123456",
+          padding: "none",
+          width: "inset",
+        },
+      },
+    ]);
+
+    expect(html).toContain('bgcolor="#123456"');
+    expect(html).toContain("padding:0px 24px 0");
+    expect(html).toContain("Safe custom section");
   });
 
   describe("footer mailing address enforcement", () => {
