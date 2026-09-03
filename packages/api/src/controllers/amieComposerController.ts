@@ -14,6 +14,11 @@ import {
   extractFirstJsonObject,
 } from "backend-lib/src/messaging/amieComposer";
 import {
+  applyAmieEditOps,
+  renderAmieDocumentText,
+  validateEditDocumentIds,
+} from "backend-lib/src/messaging/amieEditOps";
+import {
   AmieImageAspect,
   generateAndStoreImage,
   GeneratedImage,
@@ -35,6 +40,9 @@ import {
   AmieComposerModelOutput,
   AmieComposerReasonCode,
   AmieCritiqueModelOutput,
+  AmieEditModelOutput,
+  AmieEditRequest,
+  AmieEditResponse,
   AmieImportHtmlRequest,
   AmieSanitizeHtmlRequest,
   AmieSanitizeHtmlResponse,
@@ -46,6 +54,7 @@ import config from "../config";
 
 const BEDROCK_REGION = "us-east-1";
 const MAX_MODEL_OUTPUT_TOKENS = 4096;
+const MAX_EDIT_OUTPUT_TOKENS = 1200;
 const RAW_MODEL_OUTPUT_LOG_LENGTH = 300;
 const CORRECTIVE_INSTRUCTION =
   "Return ONLY the JSON object, no fences, matching the schema";
@@ -302,11 +311,80 @@ function parseCritiqueOutput(modelText: string): AmieCritiqueModelOutput {
   return validated.value;
 }
 
+function parseEditOutput(modelText: string): AmieEditModelOutput {
+  const validated = schemaValidate(parsedJson(modelText), AmieEditModelOutput);
+  if (validated.isErr()) validationFailure(modelText, validated.error);
+  return validated.value;
+}
+
+function editSystemPrompt(
+  request: AmieEditRequest,
+  knownUserProperties: readonly string[],
+): string {
+  const previewText = renderAmieDocumentText(request.document);
+  return `You are an email EDITOR. Return STRICT JSON only as {"reply":string,"ops":EditOp[]}.
+EditOp schema: ${JSON.stringify(AmieEditModelOutput.properties.ops)}
+
+Prefer the smallest possible op set. Do not regenerate or return the whole email. Block ids must exactly match existing ids; every inserted block needs a new unique id. set_block_props props are a partial block with params and/or style. set_style_token accepts only the schema's named style values.
+
+For a word on its own line, orphan, or widow, use replace_text to insert &nbsp; between the last two heading words, or shorten the heading. Never answer with a checklist. If nothing should change, return exactly one no_op with a one-sentence reason and a useful suggestion.
+
+Liquid rules: known user properties are ${JSON.stringify(knownUserProperties)}. Use only user.* properties from this catalog, always with a default. Do not edit text inside Liquid spans unless explicitly asked. Never HTML-entity-encode Liquid quotes.
+
+DOCUMENT (ids and editable text):
+${JSON.stringify(request.document)}
+
+RENDERED TEXT PROVIDED BY THE 600PX PREVIEW:
+${request.renderedText}
+
+SERVER 600PX WRAP APPROXIMATION AND HEADING WIDOW CANDIDATES:
+${previewText}`;
+}
+
+export async function editAmieEmail({
+  request,
+  bedrockClient,
+  modelId,
+  knownUserProperties = [],
+}: {
+  request: AmieEditRequest;
+  bedrockClient: BedrockInvoker;
+  modelId: string;
+  knownUserProperties?: readonly string[];
+}): Promise<AmieEditResponse> {
+  const idError = validateEditDocumentIds(request.document);
+  if (idError) throw new Error(idError);
+  const messages = [
+    ...request.conversation,
+    { role: "user" as const, content: request.message },
+  ];
+  // Function declaration is below the small edit-contract helpers.
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define
+  const modelText = await invokeModel({
+    bedrockClient,
+    modelId,
+    system: editSystemPrompt(request, knownUserProperties),
+    messages,
+    temperature: 0.1,
+    maxTokens: MAX_EDIT_OUTPUT_TOKENS,
+  });
+  const output = parseEditOutput(modelText);
+  const applied = applyAmieEditOps({
+    document: request.document,
+    ops: output.ops,
+    knownUserProperties,
+  });
+  return { ...output, ...applied };
+}
+
 /**
  * Claude 5 family models on Bedrock reject `temperature` ("deprecated for this
  * model"); older models still accept it. Only send it where it is supported.
  */
-function samplingParams(modelId: string, temperature: number | undefined): { temperature?: number } {
+function samplingParams(
+  modelId: string,
+  temperature: number | undefined,
+): { temperature?: number } {
   if (temperature === undefined) return {};
   if (/claude-(sonnet|opus|haiku)-5|claude-5/i.test(modelId)) return {};
   return { temperature };
@@ -319,6 +397,7 @@ async function invokeModel({
   messages,
   temperature = 0.3,
   previousModelOutput = "",
+  maxTokens = MAX_MODEL_OUTPUT_TOKENS,
 }: {
   bedrockClient: BedrockInvoker;
   modelId: string;
@@ -326,6 +405,7 @@ async function invokeModel({
   messages: { role: "user" | "assistant"; content: string }[];
   temperature?: number;
   previousModelOutput?: string;
+  maxTokens?: number;
 }): Promise<string> {
   try {
     const response = await bedrockClient.send(
@@ -335,7 +415,7 @@ async function invokeModel({
         contentType: "application/json",
         body: JSON.stringify({
           anthropic_version: "bedrock-2023-05-31",
-          max_tokens: MAX_MODEL_OUTPUT_TOKENS,
+          max_tokens: maxTokens,
           ...samplingParams(modelId, temperature),
           system,
           messages,
@@ -1008,6 +1088,153 @@ export default async function amieComposerController(
             message: "Amie composer is disabled.",
             reasonCode: AmieComposerReasonCode.Disabled,
           }),
+  );
+
+  fastify.withTypeProvider<TypeBoxTypeProvider>().post(
+    "/compose/edit",
+    {
+      schema: {
+        description: "Apply a small, validated set of AI edit operations.",
+        tags: ["Content"],
+        body: AmieEditRequest,
+        response: {
+          200: AmieEditResponse,
+          502: AmieComposerErrorResponse,
+          503: AmieComposerErrorResponse,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!enabled) {
+        return reply.status(503).send({
+          message: "Amie composer is disabled.",
+          reasonCode: AmieComposerReasonCode.Disabled,
+        });
+      }
+      try {
+        const startedAt = Date.now();
+        const knownUserProperties = await loadUserPropertyNames(
+          request.body.workspaceId,
+        );
+        const response = await editAmieEmail({
+          request: request.body,
+          bedrockClient,
+          modelId: fastModelId,
+          knownUserProperties,
+        });
+        logger().info(
+          {
+            model: fastModelId,
+            inputTokens: Math.ceil(JSON.stringify(request.body).length / 4),
+            outputTokens: Math.ceil(JSON.stringify(response.ops).length / 4),
+            modelMs: Date.now() - startedAt,
+            totalMs: Date.now() - startedAt,
+          },
+          "Amie composer edit timing",
+        );
+        return reply.status(200).send(response);
+      } catch (error) {
+        logger().error(
+          {
+            workspaceId: request.body.workspaceId,
+            errorMessage: errorMessage(error),
+          },
+          "Amie composer edit failed",
+        );
+        return reply.status(502).send({
+          message: "That change didn’t go through. Your draft is untouched.",
+          reasonCode:
+            error instanceof ComposerModelError
+              ? error.reasonCode
+              : AmieComposerReasonCode.InvalidModelResponse,
+        });
+      }
+    },
+  );
+
+  fastify.withTypeProvider<TypeBoxTypeProvider>().post(
+    "/compose/edit/stream",
+    {
+      schema: {
+        description: "Stream an edit acknowledgement, then apply edit ops.",
+        tags: ["Content"],
+        body: AmieEditRequest,
+      },
+    },
+    async (request, reply) => {
+      if (!enabled) {
+        return reply.status(503).send({
+          message: "Amie composer is disabled.",
+          reasonCode: AmieComposerReasonCode.Disabled,
+        });
+      }
+      void reply.code(200);
+      void reply.hijack();
+      reply.raw.setHeader(
+        "Content-Type",
+        "application/x-ndjson; charset=utf-8",
+      );
+      reply.raw.setHeader("Cache-Control", "no-cache, no-transform");
+      reply.raw.setHeader("X-Accel-Buffering", "no");
+      const sendEvent = (event: unknown) =>
+        reply.raw.write(`${JSON.stringify(event)}\n`);
+      const startedAt = Date.now();
+      try {
+        const knownUserProperties = await loadUserPropertyNames(
+          request.body.workspaceId,
+        );
+        const editPromise = editAmieEmail({
+          request: request.body,
+          bedrockClient,
+          modelId: fastModelId,
+          knownUserProperties,
+        });
+        const chatRequest: AmieComposeRequest = {
+          workspaceId: request.body.workspaceId,
+          prompt: request.body.message,
+          conversation: request.body.conversation,
+        };
+        const chatPromise = streamAssistantReply({
+          request: chatRequest,
+          bedrockClient: bedrockStreamClient,
+          modelId: fastModelId,
+          onChunk: (text) => sendEvent({ type: "chunk", text }),
+        }).catch((error: unknown) => {
+          logger().warn(
+            { errorMessage: errorMessage(error), model: fastModelId },
+            "Amie composer edit reply stream failed",
+          );
+        });
+        const [response] = await Promise.all([editPromise, chatPromise]);
+        const changeCount = response.ops.filter(
+          (op) => op.type !== "no_op",
+        ).length;
+        sendEvent({
+          type: "status",
+          status: `Applying ${changeCount} ${changeCount === 1 ? "change" : "changes"}…`,
+        });
+        sendEvent({ type: "result", response });
+        sendEvent({ type: "status", status: "Done" });
+        logger().info(
+          {
+            model: fastModelId,
+            inputTokens: Math.ceil(JSON.stringify(request.body).length / 4),
+            outputTokens: Math.ceil(JSON.stringify(response.ops).length / 4),
+            modelMs: Date.now() - startedAt,
+            totalMs: Date.now() - startedAt,
+          },
+          "Amie composer edit timing",
+        );
+      } catch (error) {
+        sendEvent({
+          type: "error",
+          message: "That change didn’t go through. Your draft is untouched.",
+        });
+      } finally {
+        reply.raw.end();
+      }
+      return reply;
+    },
   );
 
   fastify.withTypeProvider<TypeBoxTypeProvider>().post(

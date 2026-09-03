@@ -1,7 +1,6 @@
 /**
  * @jest-environment jsdom
  */
-import { AmieComposeResponse } from "isomorphic-lib/src/amieComposer";
 import {
   ChannelType,
   EmailContentsType,
@@ -18,7 +17,6 @@ import EmailTemplateEditorV3, {
 } from "./emailTemplateEditorV3";
 
 const mockAxiosGet = jest.fn();
-const mockAxiosPost = jest.fn();
 const mockFetch = jest.fn();
 const mockCreateTemplate = jest.fn();
 
@@ -37,17 +35,43 @@ Object.defineProperty(globalThis, "TextDecoder", {
   value: TextDecoder,
 });
 
-function mockComposerStream(
-  response: AmieComposeResponse & { warnings?: string[] },
-  chunks: string[] = ["I’m updating that now."],
-) {
+function mockEditStream({
+  subject = "Revised subject",
+  previewText = "Revised preview",
+  text = "Revised body",
+  chunks = ["I’m updating that now."],
+  warnings = [],
+}: {
+  subject?: string;
+  previewText?: string;
+  text?: string;
+  chunks?: string[];
+  warnings?: string[];
+} = {}) {
+  const block = {
+    id: "block-1",
+    type: "paragraph" as const,
+    params: { text },
+  };
+  const response = {
+    reply: "Updated the requested copy.",
+    ops: [
+      {
+        type: "replace_text",
+        blockId: "block-1",
+        find: "Original body",
+        replace: text,
+      },
+    ],
+    warnings,
+    document: { subject, previewText, blocks: [block] },
+    html: `<html><head><title>Amie</title></head><body>${text}<div>unsubscribe</div></body></html>`,
+  };
   const events = [
-    JSON.stringify({ type: "status", status: "Thinking…" }),
-    JSON.stringify({ type: "status", status: "Writing…" }),
-    ...chunks.map((text) => JSON.stringify({ type: "chunk", text })),
-    JSON.stringify({ type: "status", status: "Assembling" }),
-    JSON.stringify({ type: "status", status: "Checking Liquid" }),
+    ...chunks.map((chunk) => JSON.stringify({ type: "chunk", text: chunk })),
+    JSON.stringify({ type: "status", status: "Applying 1 change…" }),
     JSON.stringify({ type: "result", response }),
+    JSON.stringify({ type: "status", status: "Done" }),
   ].map((line) => new TextEncoder().encode(`${line}\n`));
   let index = 0;
   mockFetch.mockResolvedValue({
@@ -72,7 +96,6 @@ jest.mock("axios", () => ({
   __esModule: true,
   default: {
     get: (...args: unknown[]) => mockAxiosGet(...args),
-    post: (...args: unknown[]) => mockAxiosPost(...args),
     isCancel: () => false,
   },
 }));
@@ -192,18 +215,6 @@ function pressEnter(
   input.dispatchEvent(event);
 }
 
-function composerResponse() {
-  return {
-    data: {
-      subject: "Revised subject",
-      previewText: "Revised preview",
-      blocks: [{ type: "paragraph", params: { text: "Revised body" } }],
-      html: "<html><body>Revised body unsubscribe</body></html>",
-      designNotes: "Kept it concise.",
-    },
-  };
-}
-
 function Harness() {
   const [draft, setDraftState] = useState<MessageTemplateResourceDraft>({
     type: ChannelType.Email,
@@ -284,7 +295,6 @@ describe("EmailTemplateEditorV3", () => {
 
   beforeEach(() => {
     mockAxiosGet.mockResolvedValue({ data: { assets: [] } });
-    mockAxiosPost.mockReset();
     mockFetch.mockReset();
     mockCreateTemplate.mockResolvedValue({ id: "created-template" });
     container = document.createElement("div");
@@ -320,12 +330,10 @@ describe("EmailTemplateEditorV3", () => {
   });
 
   it("applies a composer response to subject and body", async () => {
-    mockComposerStream({
+    mockEditStream({
       subject: "Time to refill, {{first_name}}",
       previewText: "It takes about a minute.",
-      blocks: [{ type: "paragraph", params: { text: "Updated body" } }],
-      html: '<html><head><title>Amie</title></head><body><div data-amie-block="0">Updated body</div><div>unsubscribe</div></body></html>',
-      designNotes: "Kept it warm and concise.",
+      text: "Updated body",
     });
     await act(async () => root.render(<Harness />));
     const prompt = container.querySelector<HTMLTextAreaElement>(
@@ -349,8 +357,41 @@ describe("EmailTemplateEditorV3", () => {
     ).toContain("Updated body");
   });
 
+  it("renders the compact change list and undoes the last op set", async () => {
+    mockEditStream({ subject: "Changed subject", text: "Shorter body" });
+    await act(async () => root.render(<Harness />));
+    const prompt = requiredElement(
+      container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="Assistant prompt"]',
+      ),
+      "Assistant prompt",
+    );
+    act(() => changeInput(prompt, "Shorten it"));
+    await act(async () => click(button(container, "Send prompt")));
+
+    expect(container.textContent).toContain(
+      "paragraph: replaced 'Original body' with 'Shorter body'",
+    );
+    expect(
+      container.querySelector<HTMLInputElement>('input[aria-label="Subject"]')
+        ?.value,
+    ).toBe("Changed subject");
+
+    act(() => click(button(container, "Undo")));
+
+    expect(
+      container.querySelector<HTMLInputElement>('input[aria-label="Subject"]')
+        ?.value,
+    ).toBe("Original subject");
+    expect(
+      container
+        .querySelector<HTMLIFrameElement>('iframe[title="email-body-preview"]')
+        ?.getAttribute("srcdoc"),
+    ).toContain("Original body");
+  });
+
   it("sends the assistant prompt with Enter", async () => {
-    mockAxiosPost.mockResolvedValue(composerResponse());
+    mockEditStream();
     await act(async () => root.render(<Harness />));
     const prompt = requiredElement(
       container.querySelector<HTMLTextAreaElement>(
@@ -362,10 +403,13 @@ describe("EmailTemplateEditorV3", () => {
 
     await act(async () => pressEnter(prompt));
 
-    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
-    expect(mockAxiosPost.mock.calls[0]?.[1].conversation).toEqual([
-      { role: "user", content: "Make it warmer" },
-    ]);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body)),
+    ).toMatchObject({
+      message: "Make it warmer",
+      conversation: [],
+    });
   });
 
   it("does not send the assistant prompt with Shift+Enter", async () => {
@@ -380,7 +424,7 @@ describe("EmailTemplateEditorV3", () => {
 
     act(() => pressEnter(prompt, { shiftKey: true }));
 
-    expect(mockAxiosPost).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it("does not send an empty assistant prompt with Enter", async () => {
@@ -395,7 +439,7 @@ describe("EmailTemplateEditorV3", () => {
 
     act(() => pressEnter(prompt));
 
-    expect(mockAxiosPost).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it("does not send the assistant prompt with Enter during IME composition", async () => {
@@ -410,17 +454,11 @@ describe("EmailTemplateEditorV3", () => {
 
     act(() => pressEnter(prompt, { isComposing: true }));
 
-    expect(mockAxiosPost).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it("sends hand-edited code through the rawHtml revision path", async () => {
-    mockComposerStream({
-      subject: "Revised",
-      previewText: "Preview",
-      blocks: [{ type: "paragraph", params: { text: "Revised" } }],
-      html: "<html><body>Revised unsubscribe</body></html>",
-      designNotes: "Revised the imported HTML.",
-    });
+    mockEditStream();
     await act(async () => root.render(<Harness />));
     act(() => click(button(container, "Code")));
     act(() =>
@@ -450,27 +488,24 @@ describe("EmailTemplateEditorV3", () => {
     expect(
       JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body)),
     ).toMatchObject({
-      currentBlocks: [
-        {
-          type: "rawHtml",
-          params: { html: "<html><body>Raw hand edit</body></html>" },
-        },
-      ],
+      document: {
+        rawHtml: "<html><body>Raw hand edit</body></html>",
+        blocks: [
+          {
+            id: "block-1",
+            type: "rawHtml",
+            params: { html: "<html><body>Raw hand edit</body></html>" },
+          },
+        ],
+      },
     });
   });
 
   it("appends streaming chunks to the last assistant message", async () => {
-    mockComposerStream(
-      {
-        subject: "Revised",
-        previewText: "Preview",
-        blocks: [{ type: "paragraph", params: { text: "Revised" } }],
-        html: "<html><body>Revised unsubscribe</body></html>",
-        designNotes: "Checked.",
-        warnings: ["Kept the last valid subject after a Liquid check."],
-      },
-      ["I’m tightening", " the copy now."],
-    );
+    mockEditStream({
+      chunks: ["I’m tightening", " the copy now."],
+      warnings: ["Kept the last valid subject after a Liquid check."],
+    });
     await act(async () => root.render(<Harness />));
     act(() =>
       changeInput(
