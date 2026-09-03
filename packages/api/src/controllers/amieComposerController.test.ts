@@ -1,6 +1,7 @@
 import { InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
 import fastify from "fastify";
 import {
+  AMIE_COMPOSER_COPY_LIMITS,
   AMIE_MAX_BLOCKS,
   AmieAssembleResponse,
   AmieComposerConfigResponse,
@@ -11,6 +12,11 @@ import {
   AmieEditResponse,
   AmieSanitizeHtmlResponse,
 } from "isomorphic-lib/src/amieComposer";
+import { schemaValidate } from "isomorphic-lib/src/resultHandling/schemaValidation";
+import {
+  ChannelType,
+  MessageTemplateResourceDefinition,
+} from "isomorphic-lib/src/types";
 
 import amieComposerController, {
   BedrockInvoker,
@@ -226,6 +232,83 @@ describe("amieComposerController", () => {
     });
 
     expect(response).toMatchObject(output);
+  });
+
+  it("accepts legacy copy lengths in stored message-template definitions", () => {
+    const heading = "h".repeat(120);
+    const ctaLabel = "c".repeat(60);
+    const alt = "a".repeat(200);
+    const previewText = "p".repeat(200);
+    const definition = {
+      type: ChannelType.Email,
+      from: "hello@tryamie.com",
+      subject: "s".repeat(120),
+      body: `<div data-amie-preview-text>${previewText}</div>`,
+      amieBlocks: [
+        { type: "heroHeading", params: { title: heading } },
+        {
+          type: "ctaButton",
+          params: { label: ctaLabel, url: "https://tryamie.com" },
+        },
+        {
+          type: "image",
+          params: { src: "https://assets.tryamie.com/product.jpg", alt },
+        },
+      ],
+    };
+
+    expect(
+      schemaValidate(definition, MessageTemplateResourceDefinition).isOk(),
+    ).toBe(true);
+  });
+
+  it("clamps model copy with the exported limits instead of schema maxLength", () => {
+    const output = {
+      subject: "subject ".repeat(12).trim(),
+      previewText: "p ".repeat(100),
+      blocks: [
+        {
+          type: "heroHeading",
+          params: { title: "h ".repeat(60) },
+        },
+        {
+          type: "ctaButton",
+          params: {
+            label: "c ".repeat(30),
+            url: "https://tryamie.com",
+          },
+        },
+        {
+          type: "image",
+          params: {
+            src: "https://assets.tryamie.com/product.jpg",
+            alt: "a ".repeat(100),
+          },
+        },
+      ],
+    };
+
+    const normalized = normalizeLengthLimitedModelStrings({
+      value: output,
+      schema: AmieComposerModelOutput,
+    });
+
+    expect(AMIE_COMPOSER_COPY_LIMITS).toEqual({
+      subject: 60,
+      previewText: 140,
+      heading: 80,
+      cta: 40,
+      alt: 125,
+    });
+    expect(normalized).toMatchObject({
+      subject: "subject subject subject subject subject subject subject",
+      previewText: "p ".repeat(70).trim(),
+      blocks: [
+        { params: { title: "h ".repeat(40).trim() } },
+        { params: { label: "c ".repeat(20).trim() } },
+        { params: { alt: "a ".repeat(63).trim() } },
+      ],
+    });
   });
 
   it("clamps a revision with 21 blocks and preserves its trailing footer", async () => {

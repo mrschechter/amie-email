@@ -32,6 +32,7 @@ import {
 import { findAllUserPropertyResources } from "backend-lib/src/userProperties";
 import { FastifyInstance } from "fastify";
 import {
+  AMIE_COMPOSER_COPY_LIMITS,
   AMIE_MAX_BLOCKS,
   AmieAssembleRequest,
   AmieAssembleResponse,
@@ -367,6 +368,31 @@ function boundedFallback(value: string, maxLength: number): string {
   return fitWholeWords(normalized, maxLength) ?? "Amie";
 }
 
+function modelStringLimit({
+  blockType,
+  field,
+  parent,
+}: {
+  blockType?: string;
+  field: string;
+  parent?: Record<string, unknown>;
+}): number | undefined {
+  if (field === "subject" || parent?.type === "set_subject")
+    return AMIE_COMPOSER_COPY_LIMITS.subject;
+  if (field === "previewText" || parent?.type === "set_preview_text")
+    return AMIE_COMPOSER_COPY_LIMITS.previewText;
+  if (field === "title" || field === "headline" || field === "heading")
+    return AMIE_COMPOSER_COPY_LIMITS.heading;
+  if (field === "ctaLabel") return AMIE_COMPOSER_COPY_LIMITS.cta;
+  if (
+    field === "label" &&
+    (blockType === "ctaButton" || blockType === "twoColumn")
+  )
+    return AMIE_COMPOSER_COPY_LIMITS.cta;
+  if (field === "alt") return AMIE_COMPOSER_COPY_LIMITS.alt;
+  return undefined;
+}
+
 export function normalizeLengthLimitedModelStrings({
   value,
   schema,
@@ -374,6 +400,7 @@ export function normalizeLengthLimitedModelStrings({
   required = false,
   parent,
   firstHeading = firstHeadingText(value),
+  blockType,
 }: {
   value: unknown;
   schema: TSchema;
@@ -381,26 +408,26 @@ export function normalizeLengthLimitedModelStrings({
   required?: boolean;
   parent?: Record<string, unknown>;
   firstHeading?: string;
+  blockType?: string;
 }): unknown {
   if (TypeGuard.IsString(schema) && typeof value === "string") {
-    if (schema.maxLength === undefined) return value;
-    const normalized = value.trim().replace(/\s+/g, " ");
     const field = path.split("/").at(-1) ?? path;
+    const maxLength = modelStringLimit({ blockType, field, parent });
+    if (maxLength === undefined) return value;
+    const normalized = value.trim().replace(/\s+/g, " ");
     const fallback = fallbackForBoundedField({ field, firstHeading, parent });
-    if (value.length > schema.maxLength) {
+    if (value.length > maxLength) {
       logger().info(
         { field: path || field, originalLength: value.length },
         "Amie composer clamped model output field",
       );
     }
     if (normalized.length === 0)
-      return required
-        ? boundedFallback(fallback, schema.maxLength)
-        : normalized;
-    if (normalized.length <= schema.maxLength) return normalized;
-    const clamped = fitWholeWords(normalized, schema.maxLength);
+      return required ? boundedFallback(fallback, maxLength) : normalized;
+    if (normalized.length <= maxLength) return normalized;
+    const clamped = fitWholeWords(normalized, maxLength);
     if (clamped !== undefined) return clamped;
-    return required ? boundedFallback(fallback, schema.maxLength) : "";
+    return required ? boundedFallback(fallback, maxLength) : "";
   }
   if (TypeGuard.IsArray(schema) && isUnknownArray(value)) {
     let items = value;
@@ -426,10 +453,13 @@ export function normalizeLengthLimitedModelStrings({
         schema: schema.items,
         path: `${path}/${index}`,
         firstHeading,
+        blockType,
       }),
     );
   }
   if (TypeGuard.IsObject(schema) && isStringRecord(value)) {
+    const nestedBlockType =
+      typeof value.type === "string" ? value.type : blockType;
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => {
         const property = schema.properties[key];
@@ -444,6 +474,7 @@ export function normalizeLengthLimitedModelStrings({
                 required: schema.required?.includes(key) ?? false,
                 parent: value,
                 firstHeading,
+                blockType: nestedBlockType,
               }),
             ];
       }),
@@ -462,6 +493,7 @@ export function normalizeLengthLimitedModelStrings({
           required,
           parent,
           firstHeading,
+          blockType,
         });
   }
   return value;
@@ -498,6 +530,7 @@ function normalizeEditBlockProps(
           schema: blockSchema,
           path: `/ops/${index}/props`,
           firstHeading,
+          blockType: target?.type,
         }),
       };
     }),

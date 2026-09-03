@@ -10,13 +10,21 @@ const HttpOrLiquidUrl = Type.Union([
   Type.String({ pattern: "^\\s*\\{\\{[\\s\\S]*\\}\\}\\s*$" }),
 ]);
 
-// Keep copy constraints in the schemas themselves so every consumer (including
-// model-output normalization) has one source of truth for the limits.
-const AmieSubjectText = Type.String({ maxLength: 60 });
-const AmiePreviewText = Type.String({ minLength: 1, maxLength: 140 });
-const AmieBlockHeadingText = Type.String({ maxLength: 80 });
-const AmieCtaText = Type.String({ maxLength: 40 });
-const AmieAltText = Type.String({ maxLength: 125 });
+export const AMIE_COMPOSER_COPY_LIMITS = {
+  subject: 60,
+  previewText: 140,
+  heading: 80,
+  cta: 40,
+  alt: 125,
+} as const;
+
+const AmieSubjectText = Type.String({
+  maxLength: AMIE_COMPOSER_COPY_LIMITS.subject,
+});
+const AmiePreviewText = Type.String({ minLength: 1 });
+const AmieBlockHeadingText = Type.String();
+const AmieCtaText = Type.String();
+const AmieAltText = Type.String();
 
 export const AMIE_MAX_BLOCKS = 20;
 
@@ -427,7 +435,7 @@ export const AmieComposerModelOutput = strictObject({
 export type AmieComposerModelOutput = Static<typeof AmieComposerModelOutput>;
 
 export const AmieCritiqueModelOutput = strictObject({
-  subject: AmieSubjectText,
+  subject: Type.String(),
   previewText: AmiePreviewText,
   blocks: Type.Array(AmieBlockSpec, { maxItems: AMIE_MAX_BLOCKS }),
   designNotes: Type.String(),
