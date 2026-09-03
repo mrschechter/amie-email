@@ -115,6 +115,239 @@ describe("amieComposerController", () => {
     });
   });
 
+  it("clamps an overlong model subject at a word boundary without retrying", async () => {
+    const subject =
+      "A kinder way to feel supported through every step of your wellness journey today";
+    const blocks = [
+      {
+        type: "ctaButton",
+        params: { label: "Learn more", url: "https://tryamie.com" },
+      },
+      {
+        type: "footer",
+        params: { addressLine: "Server", unsubscribe: "Unsubscribe" },
+      },
+    ];
+    const send = bedrockSendMock()
+      .mockResolvedValueOnce({
+        body: bedrockBody({ subject, previewText: "A warm preview.", blocks }),
+      })
+      .mockResolvedValueOnce({
+        body: bedrockBody({
+          subject,
+          previewText: "A warm preview.",
+          blocks,
+          designNotes: "Checked the draft.",
+        }),
+      });
+
+    const response = await composeAmieEmail({
+      request: { workspaceId: "workspace-1", prompt: "Compose an email" },
+      bedrockClient: { send },
+      modelId: "fast-model",
+    });
+
+    expect(response.subject).toBe(
+      "A kinder way to feel supported through every step of your",
+    );
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("clamps overlong preview text at a word boundary", async () => {
+    const previewText =
+      "This preview text has intentionally been written with many extra words so that it exceeds the schema limit while still offering a clean and natural word boundary for the composer to use safely today and tomorrow";
+    const blocks = [
+      {
+        type: "ctaButton",
+        params: { label: "Learn more", url: "https://tryamie.com" },
+      },
+      {
+        type: "footer",
+        params: { addressLine: "Server", unsubscribe: "Unsubscribe" },
+      },
+    ];
+    const send = bedrockSendMock()
+      .mockResolvedValueOnce({
+        body: bedrockBody({ subject: "A warm note", previewText, blocks }),
+      })
+      .mockResolvedValueOnce({
+        body: bedrockBody({
+          subject: "A warm note",
+          previewText,
+          blocks,
+          designNotes: "Checked the draft.",
+        }),
+      });
+
+    const response = await composeAmieEmail({
+      request: { workspaceId: "workspace-1", prompt: "Compose an email" },
+      bedrockClient: { send },
+      modelId: "fast-model",
+    });
+
+    expect(response.previewText).toBe(
+      "This preview text has intentionally been written with many extra words so that it exceeds the schema limit while still offering a clean and",
+    );
+  });
+
+  it("leaves already-valid length-limited model output untouched", async () => {
+    const blocks = [
+      {
+        type: "heroHeading",
+        params: { title: "A gentler way forward", subtitle: "Made for you" },
+      },
+      {
+        type: "ctaButton",
+        params: { label: "See what’s new", url: "https://tryamie.com" },
+      },
+      {
+        type: "footer",
+        params: { addressLine: "Server", unsubscribe: "Unsubscribe" },
+      },
+    ];
+    const output = {
+      subject: "A thoughtful hello",
+      previewText: "A note for your day.",
+      blocks,
+    };
+    const send = bedrockSendMock()
+      .mockResolvedValueOnce({ body: bedrockBody(output) })
+      .mockResolvedValueOnce({
+        body: bedrockBody({ ...output, designNotes: "Checked the draft." }),
+      });
+
+    const response = await composeAmieEmail({
+      request: { workspaceId: "workspace-1", prompt: "Compose an email" },
+      bedrockClient: { send },
+      modelId: "fast-model",
+    });
+
+    expect(response).toMatchObject(output);
+  });
+
+  it("uses safe fallbacks for required bounded strings that trim empty", async () => {
+    const imageUrl = "https://assets.tryamie.com/product.jpg";
+    const output = {
+      subject: " \n ",
+      previewText: "\t",
+      blocks: [
+        {
+          type: "heroHeading",
+          params: { title: "  A calm   update  " },
+        },
+        {
+          type: "heroImage",
+          params: { src: imageUrl, alt: " \n" },
+        },
+        {
+          type: "ctaButton",
+          params: { label: "  ", url: "https://tryamie.com" },
+        },
+        {
+          type: "footer",
+          params: { addressLine: "Server", unsubscribe: "Unsubscribe" },
+        },
+      ],
+    };
+    const send = bedrockSendMock()
+      .mockResolvedValueOnce({ body: bedrockBody(output) })
+      .mockResolvedValueOnce({
+        body: bedrockBody({ ...output, designNotes: "Checked the draft." }),
+      });
+
+    const response = await composeAmieEmail({
+      request: {
+        workspaceId: "workspace-1",
+        prompt: "Compose an email",
+        images: [{ url: imageUrl }],
+      },
+      bedrockClient: { send },
+      modelId: "fast-model",
+    });
+
+    expect(response.subject).toBe("A calm update");
+    expect(response.previewText).toBe("A thoughtful update from Amie.");
+    const heroImage = response.blocks.find(
+      (block) => block.type === "heroImage",
+    );
+    const cta = response.blocks.find((block) => block.type === "ctaButton");
+    expect(heroImage).toMatchObject({
+      params: { alt: "Amie product and lifestyle" },
+    });
+    expect(cta).toMatchObject({ params: { label: "Learn more" } });
+  });
+
+  it("clamps length-limited output on the edit path", async () => {
+    const send = bedrockSendMock().mockResolvedValue({
+      body: bedrockBody({
+        reply: "I tightened the subject.",
+        ops: [
+          {
+            type: "set_subject",
+            value:
+              "Learn about the simplest possible way to support your everyday wellness goals",
+          },
+          {
+            type: "set_block_props",
+            blockId: "hero",
+            props: {
+              params: {
+                title:
+                  "A steady and supportive everyday approach to feeling more comfortable confident and completely ready",
+              },
+            },
+          },
+        ],
+      }),
+    });
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      fastModelId: "fast-model",
+      bedrockClient: { send },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose/edit",
+      payload: {
+        workspaceId: "workspace-1",
+        templateId: "template-1",
+        message: "Update the subject",
+        conversation: [],
+        document: {
+          subject: "Original subject",
+          previewText: "Original preview",
+          blocks: [
+            {
+              id: "hero",
+              type: "heroHeading",
+              params: { title: "Everyday wellness" },
+            },
+          ],
+        },
+        renderedText: "Everyday wellness",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json<AmieEditResponse>();
+    expect(body.ops[0]).toEqual({
+      type: "set_subject",
+      value: "Learn about the simplest possible way to support your",
+    });
+    expect(body.document.subject).toBe(
+      "Learn about the simplest possible way to support your",
+    );
+    expect(body.document.blocks[0]).toMatchObject({
+      params: {
+        title:
+          "A steady and supportive everyday approach to feeling more comfortable confident",
+      },
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it("normalizes invalid subject and body Liquid before returning a draft", async () => {
     const invalidLiquid = {
       subject: "Come back, {{ firstName }}",

@@ -5,6 +5,7 @@ import {
   ResponseStream,
 } from "@aws-sdk/client-bedrock-runtime";
 import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
+import { TSchema, TypeGuard } from "@sinclair/typebox";
 import { AssetStorageClient, storage } from "backend-lib/src/blobStorage";
 import backendConfig from "backend-lib/src/config";
 import logger from "backend-lib/src/logger";
@@ -297,6 +298,193 @@ function parsedJson(modelText: string): unknown {
   }
 }
 
+function isStringRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
+}
+
+function blockHeadingText(block: Record<string, unknown>): unknown {
+  if (!isStringRecord(block.params)) return undefined;
+  if (block.type === "heroHeading" || block.type === "productCard")
+    return block.params.title;
+  if (block.type === "heroImage") return block.params.headline;
+  if (block.type === "twoColumn" || block.type === "bulletList")
+    return block.params.heading;
+  return undefined;
+}
+
+function firstHeadingText(value: unknown): string | undefined {
+  if (!isStringRecord(value) || !isUnknownArray(value.blocks)) return undefined;
+  return value.blocks
+    .map((block): string | undefined => {
+      if (!isStringRecord(block)) return undefined;
+      const heading = blockHeadingText(block);
+      return typeof heading === "string" && heading.trim().length > 0
+        ? heading
+        : undefined;
+    })
+    .find((heading) => heading !== undefined);
+}
+
+function schemaMatchesValueShape(value: unknown, schema: TSchema): boolean {
+  if (!TypeGuard.IsObject(schema) || !isStringRecord(value)) return true;
+  return Object.entries(schema.properties).every(([key, property]) =>
+    TypeGuard.IsLiteral(property) ? value[key] === property.const : true,
+  );
+}
+
+function fallbackForBoundedField({
+  field,
+  firstHeading,
+  parent,
+}: {
+  field: string;
+  firstHeading?: string;
+  parent?: Record<string, unknown>;
+}): string {
+  if (field === "subject" || parent?.type === "set_subject")
+    return firstHeading ?? "Amie";
+  if (field === "previewText" || parent?.type === "set_preview_text")
+    return "A thoughtful update from Amie.";
+  if (field === "label" || field === "ctaLabel") return "Learn more";
+  if (field === "alt") return "Amie product and lifestyle";
+  return "Amie";
+}
+
+function fitWholeWords(value: string, maxLength: number): string | undefined {
+  if (value.length <= maxLength) return value;
+  const boundary = value.lastIndexOf(" ", maxLength);
+  return boundary > 0 ? value.slice(0, boundary) : undefined;
+}
+
+function boundedFallback(value: string, maxLength: number): string {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  return fitWholeWords(normalized, maxLength) ?? "Amie";
+}
+
+function normalizeLengthLimitedModelStrings({
+  value,
+  schema,
+  path = "",
+  required = false,
+  parent,
+  firstHeading = firstHeadingText(value),
+}: {
+  value: unknown;
+  schema: TSchema;
+  path?: string;
+  required?: boolean;
+  parent?: Record<string, unknown>;
+  firstHeading?: string;
+}): unknown {
+  if (TypeGuard.IsString(schema) && typeof value === "string") {
+    if (schema.maxLength === undefined) return value;
+    const normalized = value.trim().replace(/\s+/g, " ");
+    const field = path.split("/").at(-1) ?? path;
+    const fallback = fallbackForBoundedField({ field, firstHeading, parent });
+    if (value.length > schema.maxLength) {
+      logger().info(
+        { field: path || field, originalLength: value.length },
+        "Amie composer clamped model output field",
+      );
+    }
+    if (normalized.length === 0)
+      return required
+        ? boundedFallback(fallback, schema.maxLength)
+        : normalized;
+    if (normalized.length <= schema.maxLength) return normalized;
+    const clamped = fitWholeWords(normalized, schema.maxLength);
+    if (clamped !== undefined) return clamped;
+    return required ? boundedFallback(fallback, schema.maxLength) : "";
+  }
+  if (TypeGuard.IsArray(schema) && isUnknownArray(value)) {
+    return value.map((item, index) =>
+      normalizeLengthLimitedModelStrings({
+        value: item,
+        schema: schema.items,
+        path: `${path}/${index}`,
+        firstHeading,
+      }),
+    );
+  }
+  if (TypeGuard.IsObject(schema) && isStringRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => {
+        const property = schema.properties[key];
+        return property === undefined
+          ? [key, item]
+          : [
+              key,
+              normalizeLengthLimitedModelStrings({
+                value: item,
+                schema: property,
+                path: `${path}/${key}`,
+                required: schema.required?.includes(key) ?? false,
+                parent: value,
+                firstHeading,
+              }),
+            ];
+      }),
+    );
+  }
+  if (TypeGuard.IsUnion(schema)) {
+    const matchingSchema = schema.anyOf.find((candidate) =>
+      schemaMatchesValueShape(value, candidate),
+    );
+    return matchingSchema === undefined
+      ? value
+      : normalizeLengthLimitedModelStrings({
+          value,
+          schema: matchingSchema,
+          path,
+          required,
+          parent,
+          firstHeading,
+        });
+  }
+  return value;
+}
+
+function normalizeEditBlockProps(
+  value: unknown,
+  document: AmieEditRequest["document"],
+): unknown {
+  if (!isStringRecord(value) || !isUnknownArray(value.ops)) return value;
+  const firstHeading = firstHeadingText(document);
+  return {
+    ...value,
+    ops: value.ops.map((op, index) => {
+      if (
+        !isStringRecord(op) ||
+        op.type !== "set_block_props" ||
+        typeof op.blockId !== "string" ||
+        !isStringRecord(op.props)
+      ) {
+        return op;
+      }
+      const target = document.blocks.find((block) => block.id === op.blockId);
+      const blockSchema = target
+        ? AmieBlockSpec.anyOf.find((candidate) =>
+            schemaMatchesValueShape(target, candidate),
+          )
+        : undefined;
+      if (blockSchema === undefined) return op;
+      return {
+        ...op,
+        props: normalizeLengthLimitedModelStrings({
+          value: op.props,
+          schema: blockSchema,
+          path: `/ops/${index}/props`,
+          firstHeading,
+        }),
+      };
+    }),
+  };
+}
+
 function validationFailure(
   modelText: string,
   errors: { path: string; message: string }[],
@@ -314,7 +502,10 @@ function validationFailure(
 
 function parseComposeOutput(modelText: string): AmieComposerModelOutput {
   const validated = schemaValidate(
-    parsedJson(modelText),
+    normalizeLengthLimitedModelStrings({
+      value: parsedJson(modelText),
+      schema: AmieComposerModelOutput,
+    }),
     AmieComposerModelOutput,
   );
   if (validated.isErr()) validationFailure(modelText, validated.error);
@@ -323,15 +514,29 @@ function parseComposeOutput(modelText: string): AmieComposerModelOutput {
 
 function parseCritiqueOutput(modelText: string): AmieCritiqueModelOutput {
   const validated = schemaValidate(
-    parsedJson(modelText),
+    normalizeLengthLimitedModelStrings({
+      value: parsedJson(modelText),
+      schema: AmieCritiqueModelOutput,
+    }),
     AmieCritiqueModelOutput,
   );
   if (validated.isErr()) validationFailure(modelText, validated.error);
   return validated.value;
 }
 
-function parseEditOutput(modelText: string): AmieEditModelOutput {
-  const validated = schemaValidate(parsedJson(modelText), AmieEditModelOutput);
+function parseEditOutput(
+  modelText: string,
+  document: AmieEditRequest["document"],
+): AmieEditModelOutput {
+  const normalized = normalizeLengthLimitedModelStrings({
+    value: parsedJson(modelText),
+    schema: AmieEditModelOutput,
+    firstHeading: firstHeadingText(document),
+  });
+  const validated = schemaValidate(
+    normalizeEditBlockProps(normalized, document),
+    AmieEditModelOutput,
+  );
   if (validated.isErr()) validationFailure(modelText, validated.error);
   return validated.value;
 }
@@ -387,7 +592,7 @@ export async function editAmieEmail({
     temperature: 0.1,
     maxTokens: MAX_EDIT_OUTPUT_TOKENS,
   });
-  const output = parseEditOutput(modelText);
+  const output = parseEditOutput(modelText, request.document);
   const applied = applyAmieEditOps({
     document: request.document,
     ops: output.ops,
@@ -702,10 +907,7 @@ function semanticAudit(
     }
   }
   return {
-    subject: nonEmpty(
-      output.subject.trim().slice(0, 60),
-      "A thoughtful update from Amie",
-    ),
+    subject: nonEmpty(output.subject, "A thoughtful update from Amie"),
     previewText: nonEmpty(output.previewText, "A thoughtful update from Amie."),
     blocks,
     designNotes: nonEmpty(

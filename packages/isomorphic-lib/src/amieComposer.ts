@@ -10,6 +10,14 @@ const HttpOrLiquidUrl = Type.Union([
   Type.String({ pattern: "^\\s*\\{\\{[\\s\\S]*\\}\\}\\s*$" }),
 ]);
 
+// Keep copy constraints in the schemas themselves so every consumer (including
+// model-output normalization) has one source of truth for the limits.
+const AmieSubjectText = Type.String({ maxLength: 60 });
+const AmiePreviewText = Type.String({ minLength: 1, maxLength: 140 });
+const AmieBlockHeadingText = Type.String({ maxLength: 80 });
+const AmieCtaText = Type.String({ maxLength: 40 });
+const AmieAltText = Type.String({ maxLength: 125 });
+
 export const AmieBrandBackground = Type.Union([
   Type.Literal("ivory"),
   Type.Literal("blush"),
@@ -61,7 +69,7 @@ export const AmieHeaderBlock = styledBlock({
 export const AmieHeroHeadingBlock = styledBlock({
   type: Type.Literal("heroHeading"),
   params: strictObject({
-    title: Type.String(),
+    title: AmieBlockHeadingText,
     subtitle: Type.Optional(Type.String()),
   }),
 });
@@ -73,17 +81,17 @@ export const AmieParagraphBlock = styledBlock({
 
 export const AmieCtaButtonBlock = styledBlock({
   type: Type.Literal("ctaButton"),
-  params: strictObject({ label: Type.String(), url: HttpOrLiquidUrl }),
+  params: strictObject({ label: AmieCtaText, url: HttpOrLiquidUrl }),
 });
 
 export const AmieProductCardBlock = styledBlock({
   type: Type.Literal("productCard"),
   params: strictObject({
-    title: Type.String(),
+    title: AmieBlockHeadingText,
     description: Type.String(),
     price: Type.Optional(Type.String()),
     imageUrl: Type.Optional(HttpUrl),
-    ctaLabel: Type.Optional(Type.String()),
+    ctaLabel: Type.Optional(AmieCtaText),
     ctaUrl: Type.Optional(HttpOrLiquidUrl),
   }),
 });
@@ -92,7 +100,7 @@ export const AmieImageBlock = styledBlock({
   type: Type.Literal("image"),
   params: strictObject({
     src: HttpUrl,
-    alt: Type.String(),
+    alt: AmieAltText,
     width: Type.Optional(Type.Integer({ minimum: 1, maximum: 1200 })),
     href: Type.Optional(HttpOrLiquidUrl),
   }),
@@ -102,8 +110,8 @@ export const AmieHeroImageBlock = styledBlock({
   type: Type.Literal("heroImage"),
   params: strictObject({
     src: HttpUrl,
-    alt: Type.String(),
-    headline: Type.Optional(Type.String()),
+    alt: AmieAltText,
+    headline: Type.Optional(AmieBlockHeadingText),
     href: Type.Optional(HttpOrLiquidUrl),
   }),
 });
@@ -131,14 +139,14 @@ export const AmieTwoColumnBlock = styledBlock({
   params: strictObject({
     image: strictObject({
       src: HttpUrl,
-      alt: Type.String(),
+      alt: AmieAltText,
       href: Type.Optional(HttpOrLiquidUrl),
     }),
     imageSide: Type.Union([Type.Literal("left"), Type.Literal("right")]),
-    heading: Type.Optional(Type.String()),
+    heading: Type.Optional(AmieBlockHeadingText),
     body: Type.String(),
     cta: Type.Optional(
-      strictObject({ label: Type.String(), url: HttpOrLiquidUrl }),
+      strictObject({ label: AmieCtaText, url: HttpOrLiquidUrl }),
     ),
   }),
 });
@@ -146,7 +154,7 @@ export const AmieTwoColumnBlock = styledBlock({
 export const AmieBulletListBlock = styledBlock({
   type: Type.Literal("bulletList"),
   params: strictObject({
-    heading: Type.Optional(Type.String()),
+    heading: Type.Optional(AmieBlockHeadingText),
     items: Type.Array(Type.String(), { minItems: 1 }),
   }),
 });
@@ -260,10 +268,10 @@ const blockId = Type.String({ minLength: 1 });
 const afterBlockId = Type.Union([blockId, Type.Null()]);
 
 export const AmieEditOp = Type.Union([
-  strictObject({ type: Type.Literal("set_subject"), value: Type.String() }),
+  strictObject({ type: Type.Literal("set_subject"), value: AmieSubjectText }),
   strictObject({
     type: Type.Literal("set_preview_text"),
-    value: Type.String(),
+    value: AmiePreviewText,
   }),
   strictObject({
     type: Type.Literal("replace_text"),
@@ -403,8 +411,8 @@ export type AmieGenerateImageInstruction = Static<
 >;
 
 export const AmieComposerModelOutput = strictObject({
-  subject: Type.String({ maxLength: 60 }),
-  previewText: Type.String({ minLength: 1 }),
+  subject: AmieSubjectText,
+  previewText: AmiePreviewText,
   blocks: Type.Array(AmieBlockSpec, { maxItems: 12 }),
   generateImages: Type.Optional(
     Type.Array(AmieGenerateImageInstruction, { maxItems: 3 }),
@@ -413,8 +421,8 @@ export const AmieComposerModelOutput = strictObject({
 export type AmieComposerModelOutput = Static<typeof AmieComposerModelOutput>;
 
 export const AmieCritiqueModelOutput = strictObject({
-  subject: Type.String({ maxLength: 60 }),
-  previewText: Type.String({ minLength: 1 }),
+  subject: AmieSubjectText,
+  previewText: AmiePreviewText,
   blocks: Type.Array(AmieBlockSpec, { maxItems: 12 }),
   designNotes: Type.String(),
 });
