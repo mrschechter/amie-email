@@ -6,6 +6,7 @@ import {
   AmieComposerErrorResponse,
   AmieComposeResponse,
   AmieComposerReasonCode,
+  AmieEditResponse,
   AmieSanitizeHtmlResponse,
 } from "isomorphic-lib/src/amieComposer";
 
@@ -210,6 +211,138 @@ describe("amieComposerController", () => {
       "Edited locally.",
     );
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("uses the fast 1,200-token editor and applies a widow fix", async () => {
+    const send = bedrockSendMock().mockResolvedValue({
+      body: bedrockBody({
+        reply: "I joined the final two headline words.",
+        ops: [
+          {
+            type: "replace_text",
+            blockId: "hero",
+            find: "completely ready",
+            replace: "completely&nbsp;ready",
+          },
+        ],
+      }),
+    });
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      modelId: "primary-model",
+      fastModelId: "fast-model",
+      bedrockClient: { send },
+      userPropertyNames: () => Promise.resolve(["firstName"]),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose/edit",
+      payload: {
+        workspaceId: "workspace-1",
+        templateId: "template-1",
+        message: "Fix ready being on its own line",
+        conversation: [],
+        document: {
+          subject: "Subject",
+          previewText: "Preview",
+          blocks: [
+            {
+              id: "hero",
+              type: "heroHeading",
+              params: { title: "Feel completely ready" },
+            },
+          ],
+        },
+        renderedText: "Feel completely\nready",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json<AmieEditResponse>();
+    expect(body.document.blocks[0]).toMatchObject({
+      id: "hero",
+      params: { title: "Feel completely&nbsp;ready" },
+    });
+    expect(body.html).toContain("completely&nbsp;ready");
+    const command = send.mock.calls[0]?.[0];
+    expect(command?.input.modelId).toBe("fast-model");
+    expect(String(command?.input.body)).toContain('"max_tokens":1200');
+    expect(String(command?.input.body)).toContain("WIDOW CANDIDATE");
+    expect(String(command?.input.body)).toContain(
+      "Never answer with a checklist",
+    );
+  });
+
+  it("rejects an invalid model edit-op schema", async () => {
+    const send = bedrockSendMock().mockResolvedValue({
+      body: bedrockBody({
+        reply: "Changed it.",
+        ops: [{ type: "replace_text", blockId: "hero", replace: "ready" }],
+      }),
+    });
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      fastModelId: "fast-model",
+      bedrockClient: { send },
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose/edit",
+      payload: {
+        workspaceId: "workspace-1",
+        templateId: "template-1",
+        message: "Fix it",
+        conversation: [],
+        document: {
+          subject: "Subject",
+          previewText: "Preview",
+          blocks: [
+            { id: "hero", type: "heroHeading", params: { title: "Ready" } },
+          ],
+        },
+        renderedText: "Ready",
+      },
+    });
+    expect(response.statusCode).toBe(502);
+    expect(response.json<AmieComposerErrorResponse>().reasonCode).toBe(
+      AmieComposerReasonCode.InvalidModelResponse,
+    );
+  });
+
+  it("returns a no_op with the unchanged document", async () => {
+    const send = bedrockSendMock().mockResolvedValue({
+      body: bedrockBody({
+        reply: "The heading already wraps cleanly; try a shorter subject next.",
+        ops: [{ type: "no_op", reason: "The heading already wraps cleanly." }],
+      }),
+    });
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      bedrockClient: { send },
+    });
+    const document = {
+      subject: "Subject",
+      previewText: "Preview",
+      blocks: [{ id: "body", type: "paragraph", params: { text: "Fine" } }],
+    };
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose/edit",
+      payload: {
+        workspaceId: "workspace-1",
+        templateId: "template-1",
+        message: "Improve it",
+        conversation: [],
+        document,
+        renderedText: "Fine",
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json<AmieEditResponse>().document).toEqual(document);
   });
 
   it("sanitizes pasted HTML without invoking Bedrock", async () => {

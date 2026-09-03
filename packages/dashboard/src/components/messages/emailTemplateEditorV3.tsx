@@ -22,6 +22,9 @@ import {
   AmieBlockSpec,
   AmieComposeRequest,
   AmieComposeResponse,
+  AmieEditDocument,
+  AmieEditOp,
+  AmieEditResponse,
 } from "isomorphic-lib/src/amieComposer";
 import {
   ChannelType,
@@ -51,6 +54,7 @@ import {
   AmieComposeStatus,
   previewTextFromHtml,
   streamAmieComposition,
+  streamAmieEdit,
   withPreviewText,
 } from "./amieComposerHtml";
 import ImageAssetsPanel from "./imageAssetsPanel";
@@ -83,6 +87,66 @@ interface DisplayMessage extends ConversationMessage {
   href?: string;
   hrefLabel?: string;
   showAuditChips?: boolean;
+  changes?: string[];
+  undoable?: boolean;
+}
+
+interface EditHistoryEntry {
+  subject: string;
+  body: string;
+  blocks: AmieBlockSpec[] | null | undefined;
+  lastAssembledBody: string | null;
+}
+
+const FULL_DRAFT_INTENT =
+  /\b(?:write|create|draft)\s+(?:me\s+)?(?:a\s+)?new email\b|\bstart over\b/i;
+
+function editWasApplied(response: AmieEditResponse): boolean {
+  return (
+    response.ops.some((op) => op.type !== "no_op") &&
+    !response.warnings.some((warning) =>
+      /no changes were applied/i.test(warning),
+    )
+  );
+}
+
+export function withStableBlockIds(blocks: AmieBlockSpec[]): AmieBlockSpec[] {
+  const used = new Set<string>();
+  return blocks.map((block, index) => {
+    let id = block.id ?? `block-${index + 1}`;
+    while (used.has(id)) id = `${id}-${index + 1}`;
+    used.add(id);
+    return { ...block, id };
+  });
+}
+
+export function describeEditOp(
+  op: AmieEditOp,
+  blocks: AmieBlockSpec[],
+): string | null {
+  if (op.type === "no_op") return `No change: ${op.reason}`;
+  if (op.type === "set_subject") return `Subject: ${op.value}`;
+  if (op.type === "set_preview_text") return `Preview text: ${op.value}`;
+  if (op.type === "set_style_token")
+    return `Style: set ${op.name} to ${op.value}`;
+  if (op.type === "insert_block") return `Added ${op.block.type} block`;
+  const block = blocks.find((candidate) => candidate.id === op.blockId);
+  const label =
+    block?.type === "heroHeading" ? "Headline" : block?.type ?? "Block";
+  if (op.type === "replace_text") {
+    if (/&nbsp;|\u00a0/.test(op.replace)) {
+      const finalWord = op.replace
+        .replace(/&nbsp;/g, " ")
+        .trim()
+        .split(/\s+/)
+        .at(-1);
+      return `${label}: added a non-breaking space${finalWord ? ` before '${finalWord}'` : ""}`;
+    }
+    return `${label}: replaced '${op.find}' with '${op.replace}'`;
+  }
+  if (op.type === "set_block_props") return `${label}: updated properties`;
+  if (op.type === "remove_block") return `Removed ${label.toLowerCase()}`;
+  return `Moved ${label.toLowerCase()}`;
 }
 
 function isCodeEmailDraft(
@@ -120,6 +184,43 @@ export function emailHtmlToSms(html: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 1500);
+}
+
+function wrapRenderedText(value: string, width = 68): string {
+  const words = value.replace(/\s+/g, " ").trim().split(" ");
+  const lines: string[] = [];
+  let line = "";
+  words.filter(Boolean).forEach((word) => {
+    if (!line || `${line} ${word}`.length <= width)
+      line = line ? `${line} ${word}` : word;
+    else {
+      lines.push(line);
+      line = word;
+    }
+  });
+  if (line) lines.push(line);
+  return lines.join("\n");
+}
+
+export function emailHtmlToRenderedText(html: string): string {
+  if (typeof window !== "undefined") {
+    const document = new DOMParser().parseFromString(html, "text/html");
+    document
+      .querySelectorAll(
+        "style,script,head,[data-amie-preview-text],.preheader,[data-amie-block='footer']",
+      )
+      .forEach((node) => node.remove());
+    const blockText = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-amie-block]"),
+    ).map((block) => wrapRenderedText(block.innerText));
+    if (blockText.length) return blockText.filter(Boolean).join("\n\n");
+    return wrapRenderedText(document.body.textContent ?? "");
+  }
+  return wrapRenderedText(
+    html
+      .replace(/<br\s*\/?>|<\/(?:p|div|td|tr|h[1-6])>/gi, "\n")
+      .replace(/<[^>]+>/g, " "),
+  );
 }
 
 export function relativeSavedLabel(
@@ -293,7 +394,13 @@ function SegmentControl<T extends string>({
   );
 }
 
-function AssistantMessage({ message }: { message: DisplayMessage }) {
+function AssistantMessage({
+  message,
+  onUndo,
+}: {
+  message: DisplayMessage;
+  onUndo: () => void;
+}) {
   return (
     <Box sx={{ alignSelf: "flex-start", maxWidth: "92%" }}>
       <Stack
@@ -380,12 +487,46 @@ function AssistantMessage({ message }: { message: DisplayMessage }) {
             ))}
           </Stack>
         ) : null}
+        {message.changes?.length ? (
+          <Box
+            sx={{
+              mt: 1.25,
+              pt: 1,
+              borderTop: `1px solid ${COLORS.borderSoft}`,
+            }}
+          >
+            {message.changes.map((change) => (
+              <Typography
+                key={change}
+                sx={{ color: COLORS.muted, fontSize: 12 }}
+              >
+                {change}
+              </Typography>
+            ))}
+            {message.undoable ? (
+              <Button
+                size="small"
+                onClick={onUndo}
+                sx={{
+                  mt: 0.5,
+                  minWidth: 0,
+                  p: 0,
+                  color: COLORS.teal,
+                  textTransform: "none",
+                }}
+              >
+                Undo
+              </Button>
+            ) : null}
+          </Box>
+        ) : null}
       </Box>
     </Box>
   );
 }
 
 export default function EmailTemplateEditorV3({
+  templateId,
   draft,
   setDraft,
   disabled,
@@ -423,6 +564,8 @@ export default function EmailTemplateEditorV3({
     relativeSavedLabel(lastSavedAt, isSaving),
   );
   const originalPromptRef = useRef("Revise the existing email template");
+  const inFlightRef = useRef(false);
+  const editHistoryRef = useRef<EditHistoryEntry[]>([]);
   const lastAssembledBodyRef = useRef<string | null>(
     isCodeEmailDraft(draft) && draft.amieBlocks?.length ? draft.body : null,
   );
@@ -475,6 +618,57 @@ export default function EmailTemplateEditorV3({
     [setDraft],
   );
 
+  const applyEditResponse = useCallback(
+    (response: AmieEditResponse, previous: EditHistoryEntry) => {
+      const body = withPreviewText(
+        response.html,
+        response.document.previewText,
+      );
+      if (editWasApplied(response)) {
+        editHistoryRef.current = [
+          ...editHistoryRef.current.slice(-19),
+          previous,
+        ];
+      }
+      lastAssembledBodyRef.current = response.document.rawHtml ? null : body;
+      setDraft((current) =>
+        isCodeEmailDraft(current)
+          ? {
+              ...current,
+              emailContentsType: EmailContentsType.Code,
+              subject: response.document.subject,
+              body,
+              amieBlocks: response.document.blocks,
+            }
+          : current,
+      );
+    },
+    [setDraft],
+  );
+
+  const undoLastEdit = useCallback(() => {
+    const previous = editHistoryRef.current.pop();
+    if (!previous) return;
+    lastAssembledBodyRef.current = previous.lastAssembledBody;
+    setDraft((current) =>
+      isCodeEmailDraft(current)
+        ? {
+            ...current,
+            subject: previous.subject,
+            body: previous.body,
+            amieBlocks: previous.blocks,
+          }
+        : current,
+    );
+    setConversation((current) =>
+      current.map((entry) =>
+        entry.undoable
+          ? { ...entry, undoable: false, content: `${entry.content} (Undone.)` }
+          : entry,
+      ),
+    );
+  }, [setDraft]);
+
   const requestComposition = useCallback(
     async (message: string, mode: "apply" | "variant" = "apply") => {
       const cleanMessage = message.trim();
@@ -482,11 +676,12 @@ export default function EmailTemplateEditorV3({
         !cleanMessage ||
         !workspaceId ||
         !emailDraft ||
-        isComposing ||
+        inFlightRef.current ||
         composerConfig.data?.enabled !== true
       ) {
         return;
       }
+      inFlightRef.current = true;
       const apiConversation = conversation.map(({ role, content }) => ({
         role,
         content,
@@ -495,27 +690,13 @@ export default function EmailTemplateEditorV3({
         ...apiConversation,
         { role: "user", content: cleanMessage },
       ];
-      const currentBlocks = composerBlocksForDraft({
-        body: emailDraft.body,
-        blocks: emailDraft.amieBlocks,
-        lastAssembledBody: lastAssembledBodyRef.current,
-      });
-      const request: AmieComposeRequest & {
-        currentSubject?: string;
-        currentPreviewText?: string;
-      } = {
-        workspaceId,
-        prompt: originalPromptRef.current,
-        currentBlocks,
-        currentSubject: emailDraft.subject,
-        currentPreviewText: previewText,
-        conversation: nextConversation,
-        images: assets.map((asset) => ({
-          url: asset.url,
-          name: asset.name,
-          alt: asset.alt,
-        })),
-      };
+      const currentBlocks = withStableBlockIds(
+        composerBlocksForDraft({
+          body: emailDraft.body,
+          blocks: emailDraft.amieBlocks,
+          lastAssembledBody: lastAssembledBodyRef.current,
+        }),
+      );
       setIsComposing(true);
       setError(null);
       setWarnings([]);
@@ -528,69 +709,139 @@ export default function EmailTemplateEditorV3({
         { id: assistantId, role: "assistant", content: "" },
       ]);
       try {
-        const response = await streamAmieComposition({
-          url: `${baseApiUrl}/content/templates/compose/stream`,
-          request,
-          headers: authHeaders,
-          onStatus: setComposeStatus,
-          onChunk: (text) =>
-            setConversation((current) =>
-              current.map((entry) =>
-                entry.id === assistantId
-                  ? { ...entry, content: `${entry.content}${text}` }
-                  : entry,
-              ),
+        const onChunk = (text: string) =>
+          setConversation((current) =>
+            current.map((entry) =>
+              entry.id === assistantId
+                ? { ...entry, content: `${entry.content}${text}` }
+                : entry,
             ),
-        });
-        const responseBody = withPreviewText(
-          response.html,
-          response.previewText,
-        );
-        setWarnings(response.warnings ?? []);
-        if (mode === "variant") {
-          const created = await createTemplate.mutateAsync({
-            name: `${title} — Variant B`,
-            definition: {
-              ...emailDraft,
-              emailContentsType: EmailContentsType.Code,
-              subject: response.subject,
-              body: responseBody,
-              amieBlocks: response.blocks,
+          );
+        const shouldEdit =
+          mode === "apply" && !FULL_DRAFT_INTENT.test(cleanMessage);
+        if (shouldEdit) {
+          const rawBlock =
+            currentBlocks.length === 1 && currentBlocks[0]?.type === "rawHtml"
+              ? currentBlocks[0]
+              : undefined;
+          const document: AmieEditDocument = {
+            subject: emailDraft.subject,
+            previewText,
+            blocks: currentBlocks,
+            ...(rawBlock ? { rawHtml: emailDraft.body } : {}),
+          };
+          const previous: EditHistoryEntry = {
+            subject: emailDraft.subject,
+            body: emailDraft.body,
+            blocks: emailDraft.amieBlocks,
+            lastAssembledBody: lastAssembledBodyRef.current,
+          };
+          const response = await streamAmieEdit({
+            url: `${baseApiUrl}/content/templates/compose/edit/stream`,
+            request: {
+              workspaceId,
+              templateId,
+              message: cleanMessage,
+              conversation: apiConversation,
+              document,
+              renderedText: emailHtmlToRenderedText(previewBody),
             },
-            resourceType: ResourceTypeEnum.Declarative,
+            headers: authHeaders,
+            onStatus: setComposeStatus,
+            onChunk,
           });
+          applyEditResponse(response, previous);
+          setWarnings(response.warnings);
+          const changes = response.ops
+            .map((op) => describeEditOp(op, currentBlocks))
+            .filter((description): description is string =>
+              Boolean(description),
+            );
+          const undoable = editWasApplied(response);
           setConversation((current) =>
             current.map((entry) =>
               entry.id === assistantId
                 ? {
                     ...entry,
-                    content:
-                      entry.content ||
-                      "Variant B is ready with an alternative subject and body.",
-                    href: `/templates/email/${created.id}`,
-                    hrefLabel: "Open Variant B",
-                    showAuditChips: containsBrandAndFooter(responseBody),
+                    content: entry.content || response.reply,
+                    changes,
+                    undoable,
                   }
-                : entry,
+                : { ...entry, undoable: false },
             ),
           );
         } else {
-          applyComposerResponse(response);
-          setConversation((current) =>
-            current.map((entry) =>
-              entry.id === assistantId
-                ? {
-                    ...entry,
-                    content:
-                      entry.content ||
-                      (conversation.length
-                        ? `Updated. ${response.designNotes} Preview refreshed →`
-                        : `Drafted it — subject, preview text, and body are on the right. ${response.designNotes}`),
-                    showAuditChips: containsBrandAndFooter(responseBody),
-                  }
-                : entry,
-            ),
+          const request: AmieComposeRequest & {
+            currentSubject?: string;
+            currentPreviewText?: string;
+          } = {
+            workspaceId,
+            prompt: originalPromptRef.current,
+            currentBlocks,
+            currentSubject: emailDraft.subject,
+            currentPreviewText: previewText,
+            conversation: nextConversation,
+            images: assets.map((asset) => ({
+              url: asset.url,
+              name: asset.name,
+              alt: asset.alt,
+            })),
+          };
+          const response = await streamAmieComposition({
+            url: `${baseApiUrl}/content/templates/compose/stream`,
+            request,
+            headers: authHeaders,
+            onStatus: setComposeStatus,
+            onChunk,
+          });
+          const responseBody = withPreviewText(
+            response.html,
+            response.previewText,
           );
+          setWarnings(response.warnings ?? []);
+          if (mode === "variant") {
+            const created = await createTemplate.mutateAsync({
+              name: `${title} — Variant B`,
+              definition: {
+                ...emailDraft,
+                emailContentsType: EmailContentsType.Code,
+                subject: response.subject,
+                body: responseBody,
+                amieBlocks: response.blocks,
+              },
+              resourceType: ResourceTypeEnum.Declarative,
+            });
+            setConversation((current) =>
+              current.map((entry) =>
+                entry.id === assistantId
+                  ? {
+                      ...entry,
+                      content:
+                        entry.content ||
+                        "Variant B is ready with an alternative subject and body.",
+                      href: `/templates/email/${created.id}`,
+                      hrefLabel: "Open Variant B",
+                      showAuditChips: containsBrandAndFooter(responseBody),
+                    }
+                  : entry,
+              ),
+            );
+          } else {
+            applyComposerResponse(response);
+            setConversation((current) =>
+              current.map((entry) =>
+                entry.id === assistantId
+                  ? {
+                      ...entry,
+                      content:
+                        entry.content ||
+                        `Drafted it — subject, preview text, and body are on the right. ${response.designNotes}`,
+                      showAuditChips: containsBrandAndFooter(responseBody),
+                    }
+                  : entry,
+              ),
+            );
+          }
         }
         if (conversation.length === 0) originalPromptRef.current = cleanMessage;
         setInput("");
@@ -600,11 +851,13 @@ export default function EmailTemplateEditorV3({
         );
         setError("That change didn’t go through. Your draft is untouched.");
       } finally {
+        inFlightRef.current = false;
         setIsComposing(false);
       }
     },
     [
       applyComposerResponse,
+      applyEditResponse,
       assets,
       authHeaders,
       baseApiUrl,
@@ -612,8 +865,9 @@ export default function EmailTemplateEditorV3({
       conversation,
       createTemplate,
       emailDraft,
-      isComposing,
       previewText,
+      previewBody,
+      templateId,
       title,
       workspaceId,
     ],
@@ -969,6 +1223,7 @@ export default function EmailTemplateEditorV3({
                 >
                   {conversation.length === 0 ? (
                     <AssistantMessage
+                      onUndo={undoLastEdit}
                       message={{
                         id: "empty-state",
                         role: "assistant",
@@ -995,7 +1250,11 @@ export default function EmailTemplateEditorV3({
                         {message.content}
                       </Box>
                     ) : (
-                      <AssistantMessage key={message.id} message={message} />
+                      <AssistantMessage
+                        key={message.id}
+                        message={message}
+                        onUndo={undoLastEdit}
+                      />
                     ),
                   )}
                   {isComposing ? (
@@ -1161,7 +1420,9 @@ export default function EmailTemplateEditorV3({
                         }
                         event.preventDefault();
                         if (!input.trim() || assistantDisabled) return;
-                        void requestComposition(input);
+                        event.currentTarget
+                          .closest<HTMLFormElement>("form")
+                          ?.requestSubmit();
                       }}
                       placeholder="Describe a change, or ask for a new draft…"
                       InputProps={{

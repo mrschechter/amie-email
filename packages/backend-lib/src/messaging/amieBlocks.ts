@@ -43,7 +43,7 @@ function escapeHtml(value: string): string {
       index % 2 === 1
         ? part
         : part
-            .replace(/&/g, "&amp;")
+            .replace(/&(?!(?:nbsp);)/gi, "&amp;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;")
@@ -414,7 +414,7 @@ export function assembleEmail(
             }
           : block;
       const rowBackground = block.style?.background ?? sectionBackground;
-      return `<tr><td data-amie-block="${index}" bgcolor="${AMIE_BACKGROUND_COLORS[rowBackground]}" style="padding:0;background-color:${AMIE_BACKGROUND_COLORS[rowBackground]};">${renderBlock(renderedBlock)}</td></tr>`;
+      return `<tr><td data-amie-block="${block.id ?? index}" bgcolor="${AMIE_BACKGROUND_COLORS[rowBackground]}" style="padding:0;background-color:${AMIE_BACKGROUND_COLORS[rowBackground]};">${renderBlock(renderedBlock)}</td></tr>`;
     })
     .join("\n");
 

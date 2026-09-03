@@ -48,6 +48,7 @@ const styledBlock = <T extends Parameters<typeof Type.Object>[0]>(
   properties: T,
 ) =>
   strictObject({
+    id: Type.Optional(Type.String({ minLength: 1 })),
     ...properties,
     style: Type.Optional(AmieBlockStyle),
   });
@@ -215,27 +216,112 @@ export type AmieBlockSpec = Static<typeof AmieBlockSpec>;
 export const BlockSpec = AmieBlockSpec;
 export type BlockSpec = Static<typeof BlockSpec>;
 export type AmieHeaderParams = Static<typeof AmieHeaderBlock>["params"];
-export type AmieHeroHeadingParams = Static<typeof AmieHeroHeadingBlock>["params"];
+export type AmieHeroHeadingParams = Static<
+  typeof AmieHeroHeadingBlock
+>["params"];
 export type AmieParagraphParams = Static<typeof AmieParagraphBlock>["params"];
 export type AmieCtaButtonParams = Static<typeof AmieCtaButtonBlock>["params"];
-export type AmieProductCardParams = Static<typeof AmieProductCardBlock>["params"];
+export type AmieProductCardParams = Static<
+  typeof AmieProductCardBlock
+>["params"];
 export type AmieImageParams = Static<typeof AmieImageBlock>["params"];
 export type AmieHeroImageParams = Static<typeof AmieHeroImageBlock>["params"];
-export type AmieTestimonialParams = Static<typeof AmieTestimonialBlock>["params"];
+export type AmieTestimonialParams = Static<
+  typeof AmieTestimonialBlock
+>["params"];
 export type AmieDividerParams = Static<typeof AmieDividerBlock>["params"];
 export type AmieFooterParams = Static<typeof AmieFooterBlock>["params"];
 export type AmieTwoColumnParams = Static<typeof AmieTwoColumnBlock>["params"];
 export type AmieBulletListParams = Static<typeof AmieBulletListBlock>["params"];
 export type AmieStatsRowParams = Static<typeof AmieStatsRowBlock>["params"];
-export type AmieQuoteCalloutParams = Static<typeof AmieQuoteCalloutBlock>["params"];
+export type AmieQuoteCalloutParams = Static<
+  typeof AmieQuoteCalloutBlock
+>["params"];
 export type AmieSpacerParams = Static<typeof AmieSpacerBlock>["params"];
-export type AmieSectionBreakParams = Static<typeof AmieSectionBreakBlock>["params"];
+export type AmieSectionBreakParams = Static<
+  typeof AmieSectionBreakBlock
+>["params"];
 export type AmieRawHtmlParams = Static<typeof AmieRawHtmlBlock>["params"];
 
 export const AmieComposerConversationMessage = strictObject({
   role: Type.Union([Type.Literal("user"), Type.Literal("assistant")]),
   content: Type.String(),
 });
+
+export const AmieEditDocument = strictObject({
+  subject: Type.String(),
+  previewText: Type.String(),
+  blocks: Type.Array(AmieBlockSpec, { maxItems: 12 }),
+  rawHtml: Type.Optional(Type.String()),
+});
+export type AmieEditDocument = Static<typeof AmieEditDocument>;
+
+const blockId = Type.String({ minLength: 1 });
+const afterBlockId = Type.Union([blockId, Type.Null()]);
+
+export const AmieEditOp = Type.Union([
+  strictObject({ type: Type.Literal("set_subject"), value: Type.String() }),
+  strictObject({
+    type: Type.Literal("set_preview_text"),
+    value: Type.String(),
+  }),
+  strictObject({
+    type: Type.Literal("replace_text"),
+    blockId,
+    find: Type.String({ minLength: 1 }),
+    replace: Type.String(),
+  }),
+  strictObject({
+    type: Type.Literal("set_block_props"),
+    blockId,
+    props: Type.Record(Type.String(), Type.Unknown()),
+  }),
+  strictObject({
+    type: Type.Literal("insert_block"),
+    afterBlockId,
+    block: AmieBlockSpec,
+  }),
+  strictObject({ type: Type.Literal("remove_block"), blockId }),
+  strictObject({ type: Type.Literal("move_block"), blockId, afterBlockId }),
+  strictObject({
+    type: Type.Literal("set_style_token"),
+    name: Type.Union([
+      Type.Literal("background"),
+      Type.Literal("align"),
+      Type.Literal("padding"),
+      Type.Literal("textSize"),
+      Type.Literal("buttonVariant"),
+    ]),
+    value: Type.String(),
+  }),
+  strictObject({ type: Type.Literal("no_op"), reason: Type.String() }),
+]);
+export type AmieEditOp = Static<typeof AmieEditOp>;
+
+export const AmieEditModelOutput = strictObject({
+  reply: Type.String({ minLength: 1 }),
+  ops: Type.Array(AmieEditOp, { minItems: 1, maxItems: 12 }),
+});
+export type AmieEditModelOutput = Static<typeof AmieEditModelOutput>;
+
+export const AmieEditRequest = strictObject({
+  workspaceId: Type.String(),
+  templateId: Type.String(),
+  message: Type.String({ minLength: 1 }),
+  conversation: Type.Array(AmieComposerConversationMessage),
+  document: AmieEditDocument,
+  renderedText: Type.String(),
+});
+export type AmieEditRequest = Static<typeof AmieEditRequest>;
+
+export const AmieEditResponse = strictObject({
+  reply: Type.String(),
+  ops: Type.Array(AmieEditOp),
+  warnings: Type.Array(Type.String()),
+  document: AmieEditDocument,
+  html: Type.String(),
+});
+export type AmieEditResponse = Static<typeof AmieEditResponse>;
 
 export const AmieDesignBrief = strictObject({
   goal: Type.Optional(
@@ -372,7 +458,9 @@ export const AmieComposerConfigResponse = strictObject({
   enabled: Type.Boolean(),
   imageGenerationEnabled: Type.Boolean(),
 });
-export type AmieComposerConfigResponse = Static<typeof AmieComposerConfigResponse>;
+export type AmieComposerConfigResponse = Static<
+  typeof AmieComposerConfigResponse
+>;
 
 export enum AmieComposerReasonCode {
   Disabled = "AMIE_COMPOSER_DISABLED",
@@ -384,7 +472,9 @@ export const AmieComposerErrorResponse = strictObject({
   message: Type.String(),
   reasonCode: Type.Enum(AmieComposerReasonCode),
 });
-export type AmieComposerErrorResponse = Static<typeof AmieComposerErrorResponse>;
+export type AmieComposerErrorResponse = Static<
+  typeof AmieComposerErrorResponse
+>;
 
 function tagEnd(html: string, start: number): number | null {
   let quote: '"' | "'" | null = null;
