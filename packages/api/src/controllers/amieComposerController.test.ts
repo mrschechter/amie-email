@@ -13,6 +13,7 @@ import {
 import amieComposerController, {
   BedrockInvoker,
   composeAmieEmail,
+  decodeModelText,
   selectComposerModelId,
 } from "./amieComposerController";
 
@@ -36,6 +37,37 @@ function bedrockBody(value: unknown): Uint8Array {
 }
 
 describe("amieComposerController", () => {
+  describe("Bedrock responses", () => {
+    it("returns a text part that follows a thinking part", () => {
+      const body = new TextEncoder().encode(
+        JSON.stringify({
+          content: [
+            { type: "thinking", thinking: "Working through the draft" },
+            { type: "text", text: "{}" },
+          ],
+          stop_reason: "end_turn",
+        }),
+      );
+
+      expect(decodeModelText(body)).toBe("{}");
+    });
+
+    it("includes the stop reason when only thinking is returned", () => {
+      const body = new TextEncoder().encode(
+        JSON.stringify({
+          content: [
+            { type: "thinking", thinking: "Working through the draft" },
+          ],
+          stop_reason: "max_tokens",
+        }),
+      );
+
+      expect(() => decodeModelText(body)).toThrow(
+        "Bedrock response did not contain a text output (stop_reason=max_tokens, parts=thinking)",
+      );
+    });
+  });
+
   describe("model routing", () => {
     it("uses the primary model for a full first draft", () => {
       expect(
@@ -477,7 +509,9 @@ describe("amieComposerController", () => {
     const command: InvokeModelCommand | undefined = send.mock.calls[0]?.[0];
     expect(command).toBeInstanceOf(InvokeModelCommand);
     expect(command?.input.modelId).toBe("test-model");
-    expect(String(command?.input.body)).toContain('"max_tokens":4096');
+    const requestBody: unknown = JSON.parse(String(command?.input.body));
+    expect(requestBody).toMatchObject({ max_tokens: 8192, temperature: 0.3 });
+    expect(requestBody).not.toHaveProperty("thinking");
     expect(String(command?.input.body)).toContain(
       "replaces addressLine with the configured mailing address",
     );
@@ -487,6 +521,44 @@ describe("amieComposerController", () => {
     expect(String(command?.input.body)).toContain(
       "{{ user.firstName | default: 'there' }}",
     );
+  });
+
+  it("disables thinking and omits temperature for Claude 5 requests", async () => {
+    const send = bedrockSendMock().mockResolvedValue({
+      body: bedrockBody({
+        subject: "A complete draft",
+        previewText: "A preview.",
+        blocks: [
+          { type: "paragraph", params: { text: "Draft body." } },
+          {
+            type: "footer",
+            params: { addressLine: "Server", unsubscribe: "Unsubscribe" },
+          },
+        ],
+      }),
+    });
+    const app = fastify();
+    await app.register(amieComposerController, {
+      enabled: true,
+      modelId: "us.anthropic.claude-sonnet-5",
+      bedrockClient: { send },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/compose",
+      payload: { workspaceId: "workspace-1", prompt: "Compose an email" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(send).toHaveBeenCalledTimes(2);
+    for (const [command] of send.mock.calls) {
+      const requestBody: unknown = JSON.parse(String(command.input.body));
+      expect(requestBody).toMatchObject({
+        thinking: { type: "disabled" },
+      });
+      expect(requestBody).not.toHaveProperty("temperature");
+    }
   });
 
   it("includes only the supplied image URLs in the model instructions", async () => {

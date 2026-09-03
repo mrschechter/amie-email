@@ -53,7 +53,7 @@ import { schemaValidate } from "isomorphic-lib/src/resultHandling/schemaValidati
 import config from "../config";
 
 const BEDROCK_REGION = "us-east-1";
-const MAX_MODEL_OUTPUT_TOKENS = 4096;
+const MAX_MODEL_OUTPUT_TOKENS = 8192;
 const MAX_EDIT_OUTPUT_TOKENS = 1200;
 const RAW_MODEL_OUTPUT_LOG_LENGTH = 300;
 const CORRECTIVE_INSTRUCTION =
@@ -209,7 +209,7 @@ export function selectComposerModelId(
   return modelId;
 }
 
-function decodeModelText(body: Uint8Array | undefined): string {
+export function decodeModelText(body: Uint8Array | undefined): string {
   if (!body) {
     throw new ComposerModelError(
       AmieComposerReasonCode.InvalidModelResponse,
@@ -249,9 +249,28 @@ function decodeModelText(body: Uint8Array | undefined): string {
       typeof part.text === "string",
   );
   if (!textPart) {
+    const stopReason =
+      "stop_reason" in payload && typeof payload.stop_reason === "string"
+        ? payload.stop_reason
+        : "unknown";
+    const parts = payload.content
+      .map((part: unknown) => {
+        if (
+          typeof part === "object" &&
+          part !== null &&
+          "type" in part &&
+          typeof part.type === "string"
+        ) {
+          return part.type;
+        }
+        return "unknown";
+      })
+      .join(",");
     throw new ComposerModelError(
       AmieComposerReasonCode.InvalidModelResponse,
-      new Error("Bedrock response did not contain a text output"),
+      new Error(
+        `Bedrock response did not contain a text output (stop_reason=${stopReason}, parts=${parts})`,
+      ),
       bodyText,
     );
   }
@@ -378,16 +397,17 @@ export async function editAmieEmail({
 }
 
 /**
- * Claude 5 family models on Bedrock reject `temperature` ("deprecated for this
- * model"); older models still accept it. Only send it where it is supported.
+ * Claude 5 family models on Bedrock need adaptive thinking disabled and reject
+ * `temperature` ("deprecated for this model"). Older models keep temperature.
  */
 function samplingParams(
   modelId: string,
   temperature: number | undefined,
-): { temperature?: number } {
-  if (temperature === undefined) return {};
-  if (/claude-(sonnet|opus|haiku)-5|claude-5/i.test(modelId)) return {};
-  return { temperature };
+): { temperature?: number; thinking?: { type: "disabled" } } {
+  if (/claude-(sonnet|opus|haiku)-5|claude-5/i.test(modelId)) {
+    return { thinking: { type: "disabled" } };
+  }
+  return temperature === undefined ? {} : { temperature };
 }
 
 async function invokeModel({
