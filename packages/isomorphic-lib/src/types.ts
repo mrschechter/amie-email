@@ -1,7 +1,7 @@
 import { Static, TSchema, Type } from "@sinclair/typebox";
 import { Result } from "neverthrow";
 
-import { AmieBlockSpec } from "./amieComposer";
+import { AMIE_MAX_BLOCKS, AmieBlockSpec } from "./amieComposer";
 import {
   MANUAL_SEGMENT_APPEND_HEADER,
   SEGMENT_ID_HEADER,
@@ -1676,7 +1676,10 @@ export const CodeEmailContents = Type.Composite([
     emailContentsType: Type.Optional(Type.Literal(EmailContentsType.Code)),
     body: Type.String(),
     amieBlocks: Type.Optional(
-      Type.Union([Type.Array(AmieBlockSpec, { maxItems: 12 }), Type.Null()]),
+      Type.Union([
+        Type.Array(AmieBlockSpec, { maxItems: AMIE_MAX_BLOCKS }),
+        Type.Null(),
+      ]),
     ),
   }),
 ]);
