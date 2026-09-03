@@ -969,7 +969,7 @@ async function streamAssistantReply({
       body: JSON.stringify({
         anthropic_version: "bedrock-2023-05-31",
         max_tokens: 80,
-        temperature: 0.2,
+        ...samplingParams(modelId, 0.2),
         system:
           "Write one short, warm sentence acknowledging the requested email edit. Use present tense while work is in progress. Return only that sentence.",
         messages: [{ role: "user", content: latest }],
