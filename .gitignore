@@ -154,3 +154,7 @@ mnt/*
 .playwright-mcp/
 playwright-report/
 test-results/
+
+# never track dependency links (symlinks are not matched by node_modules/)
+node_modules
+**/node_modules
