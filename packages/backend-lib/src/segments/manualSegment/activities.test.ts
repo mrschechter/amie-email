@@ -21,6 +21,7 @@ import {
 import { insertUserPropertyAssignments } from "../../userProperties";
 import { getUsers } from "../../users";
 import { createWorkspace } from "../../workspaces/createWorkspace";
+import { getManualSegmentStatus } from "../manualSegments";
 import { appendToManualSegment, replaceManualSegment } from "./activities";
 
 jest.mock("../../apps/batch");
@@ -294,5 +295,29 @@ describe("replaceManualSegment", () => {
 
     expect(result).toBe(true);
     expect(mockSubmitBatch.mock.calls.length).toBeGreaterThan(1);
+
+    const status = await getManualSegmentStatus({
+      workspaceId: workspace.id,
+      segmentId,
+    });
+    expect(status).not.toBeNull();
+    if (!status) {
+      throw new Error("Manual segment status was not found");
+    }
+    expect(status.lastComputedAt).not.toBeNull();
+
+    const { users } = unwrap(
+      await getUsers({
+        workspaceId: workspace.id,
+        segmentFilter: [segmentId],
+      }),
+    );
+    expect(users).toHaveLength(userIds.length);
+    expect(users).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "user-0" }),
+        expect.objectContaining({ id: "user-149" }),
+      ]),
+    );
   }, 60000);
 });
