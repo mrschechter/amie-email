@@ -105,7 +105,7 @@ export async function getManualSegmentStatus({
   if (!segment) {
     return null;
   }
-  const version = segment.definitionUpdatedAt.toString();
+  const version = segment.definitionUpdatedAt.getTime().toString();
   const period = periods.get({
     computedPropertyId: segment.id,
     version,

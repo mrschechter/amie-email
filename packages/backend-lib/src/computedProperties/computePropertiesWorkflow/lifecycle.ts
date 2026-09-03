@@ -32,6 +32,7 @@ import {
   COMPUTE_PROPERTIES_SCHEDULER_WORKFLOW_ID,
   computePropertiesSchedulerWorkflow,
 } from "../comutePropertiesSchedulerWorkflow";
+import { getWorkspaceIdFromItem } from "../queueUtils";
 
 export async function startComputePropertiesWorkflow({
   workspaceId,
@@ -285,10 +286,12 @@ export async function startComputePropertiesWorkflowGlobal() {
 
 export async function signalComputePropertiesEarly({
   workspaceId,
+  client,
 }: {
   workspaceId: string;
+  client?: WorkflowClient;
 }) {
-  const client = await connectWorkflowClient();
+  const temporalClient = client ?? (await connectWorkflowClient());
   try {
     logger().info(
       {
@@ -296,7 +299,7 @@ export async function signalComputePropertiesEarly({
       },
       "Sending compute properties early signal",
     );
-    await client
+    await temporalClient
       .getHandle(generateComputePropertiesId(workspaceId))
       .signal(computePropertiesEarlySignal);
   } catch (e) {
@@ -331,6 +334,29 @@ export async function enqueueRecompute({
       .getHandle(COMPUTE_PROPERTIES_QUEUE_WORKFLOW_ID)
       .signal(addWorkspacesSignalV2, { workspaces: items });
   } catch (e) {
+    if (e instanceof WorkflowNotFoundError) {
+      const workspaceIds = Array.from(
+        new Set(items.map((item) => getWorkspaceIdFromItem(item))),
+      );
+      logger().warn(
+        {
+          err: e,
+          event: "compute_properties_global_queue_missing",
+          itemCount: items.length,
+          workspaceCount: workspaceIds.length,
+        },
+        "Compute properties global queue missing; starting per-workspace workflows",
+      );
+      await Promise.all(
+        workspaceIds.map((workspaceId) =>
+          startComputePropertiesWorkflow({
+            workspaceId,
+            client: workflowClient,
+          }),
+        ),
+      );
+      return;
+    }
     logger().error(
       {
         err: e,

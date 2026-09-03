@@ -15,7 +15,6 @@ import { v5 as uuidv5, validate as validateUuid } from "uuid";
 
 import { submitBatch } from "../../apps/batch";
 import { computePropertiesIncremental } from "../../computedProperties/computePropertiesWorkflow/activities";
-import { enqueueRecompute } from "../../computedProperties/computePropertiesWorkflow/lifecycle";
 import config from "../../config";
 import { db } from "../../db";
 import * as schema from "../../db/schema";
@@ -27,6 +26,7 @@ import { getContext } from "../../temporal/activity";
 import { Segment } from "../../types";
 import { getEventsCountById } from "../../userEvents";
 import { findAllUserPropertyResources } from "../../userProperties";
+import { enqueueManualSegmentRecompute } from "./recompute";
 
 async function waitForEventAvailability({
   workspaceId,
@@ -74,10 +74,10 @@ async function computePropertiesForManualSegment({
   segment: SavedSegmentResource;
   now: number;
 }) {
-  // Enqueue a follow-up full workspace recompute through the queue workflow
+  // Ensure the workspace's configured compute-properties workflow is available.
   const { workflowClient } = getContext();
-  await enqueueRecompute({
-    items: [{ id: workspaceId }],
+  await enqueueManualSegmentRecompute({
+    workspaceId,
     client: workflowClient,
   });
 
@@ -356,6 +356,8 @@ export async function replaceManualSegment({
         workspaceId,
       ),
     }));
+    // Each chunk must be ingested before the next one to preserve update order.
+    // eslint-disable-next-line no-await-in-loop
     await submitBatch(
       {
         workspaceId,
@@ -369,6 +371,7 @@ export async function replaceManualSegment({
         writeModeOverride: "ch-sync",
       },
     );
+    // eslint-disable-next-line no-await-in-loop
     await waitForEventAvailability({
       workspaceId,
       segmentId,
