@@ -5,16 +5,20 @@ import {
   AMIE_MAX_BLOCKS,
   AmieAssembleResponse,
   AmieComposerConfigResponse,
+  AmieComposeRequest,
   AmieComposerErrorResponse,
   AmieComposeResponse,
   AmieComposerModelOutput,
   AmieComposerReasonCode,
   AmieEditResponse,
+  AmieImportHtmlResponse,
   AmieSanitizeHtmlResponse,
 } from "isomorphic-lib/src/amieComposer";
 import { schemaValidate } from "isomorphic-lib/src/resultHandling/schemaValidation";
 import {
   ChannelType,
+  EmailContentsType,
+  GetMessageTemplatesResponse,
   MessageTemplateResourceDefinition,
 } from "isomorphic-lib/src/types";
 
@@ -22,6 +26,7 @@ import amieComposerController, {
   BedrockInvoker,
   composeAmieEmail,
   decodeModelText,
+  editAmieEmail,
   normalizeLengthLimitedModelStrings,
   selectComposerModelId,
 } from "./amieComposerController";
@@ -260,6 +265,164 @@ describe("amieComposerController", () => {
     expect(
       schemaValidate(definition, MessageTemplateResourceDefinition).isOk(),
     ).toBe(true);
+  });
+
+  it("validates both production template shapes through the templates-list response schema", () => {
+    const mauticCodeTemplate = {
+      workspaceId: "workspace-1",
+      id: "mautic-code",
+      name: "Mautic import",
+      type: ChannelType.Email,
+      updatedAt: 1,
+      definition: {
+        type: ChannelType.Email,
+        body: "<table><tr><td>Legacy Mautic HTML</td></tr></table>",
+        from: "hello@tryamie.com",
+        replyTo: "support@tryamie.com",
+        subject: "A legacy import",
+        emailContentsType: EmailContentsType.Code,
+      },
+    };
+    const blocksTemplate = {
+      workspaceId: "workspace-1",
+      id: "amie-blocks",
+      name: "Amie blocks",
+      type: ChannelType.Email,
+      updatedAt: 2,
+      definition: {
+        type: ChannelType.Email,
+        body: "<p>Rendered body</p>",
+        from: "hello@tryamie.com",
+        subject: "A block email",
+        emailContentsType: EmailContentsType.Code,
+        amieBlocks: [
+          { type: "heroHeading", params: { title: "Still valid" } },
+          {
+            type: "twoColumn",
+            params: {
+              image: { src: "https://example.com/image.jpg", alt: "Image" },
+              body: "Old optional layout fields remain optional.",
+            },
+          },
+        ],
+      },
+    };
+
+    expect(
+      schemaValidate(
+        { templates: [mauticCodeTemplate, blocksTemplate] },
+        GetMessageTemplatesResponse,
+      ).isOk(),
+    ).toBe(true);
+  });
+
+  it("accepts old compose requests without copyMode", () => {
+    expect(
+      schemaValidate(
+        { workspaceId: "workspace-1", prompt: "Draft an email" },
+        AmieComposeRequest,
+      ).isOk(),
+    ).toBe(true);
+  });
+
+  it("uses the verbatim layout prompt and returns fidelity in from_copy mode", async () => {
+    const source =
+      "# A calmer next step\n\nEvery word stays exactly here.\n\n[Button: Begin today](https://example.com/start)";
+    const send = bedrockSendMock().mockResolvedValue({
+      body: bedrockBody({
+        subject: "Generated subject",
+        previewText: "Generated preview",
+        blocks: [
+          { type: "heroHeading", params: { title: "A calmer next step" } },
+          {
+            type: "paragraph",
+            params: { text: "Every word stays exactly here." },
+          },
+          {
+            type: "ctaButton",
+            params: { label: "Begin today", url: "https://example.com/start" },
+          },
+        ],
+      }),
+    });
+
+    const response = await composeAmieEmail({
+      request: {
+        workspaceId: "workspace-1",
+        prompt: "Build my finished email",
+        copyMode: "from_copy",
+        sourceCopy: {
+          text: source,
+          subject: "My exact subject",
+          previewText: "My exact preview",
+          layoutPlan: "Headline first, then copy and CTA.",
+        },
+      },
+      bedrockClient: { send },
+      modelId: "us.anthropic.claude-sonnet-5",
+    });
+
+    expect(response.subject).toBe("My exact subject");
+    expect(response.previewText).toBe("My exact preview");
+    expect(response.fidelity).toEqual({ coverage: 1, missing: [] });
+    expect(send).toHaveBeenCalledTimes(1);
+    const command: InvokeModelCommand | undefined = send.mock.calls[0]?.[0];
+    const payload = String(command?.input.body);
+    expect(payload).toContain("LAYOUT ENGINE, not a writer");
+    expect(payload).toContain("MUST NOT add, drop, summarize, or paraphrase");
+    expect(payload).toContain("Headline first, then copy and CTA.");
+  });
+
+  it("falls back to the deterministic parse when the fidelity correction is still short", async () => {
+    const incomplete = {
+      subject: "Subject",
+      previewText: "Preview",
+      blocks: [{ type: "heroHeading", params: { title: "Keep this heading" } }],
+    };
+    const send = bedrockSendMock().mockResolvedValue({
+      body: bedrockBody(incomplete),
+    });
+
+    const response = await composeAmieEmail({
+      request: {
+        workspaceId: "workspace-1",
+        prompt: "Build my finished email",
+        copyMode: "from_copy",
+        sourceCopy: {
+          text: "# Keep this heading\n\nKeep this sentence exactly.",
+        },
+      },
+      bedrockClient: { send },
+      modelId: "us.anthropic.claude-sonnet-5",
+    });
+
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(response.html).toContain("Keep this sentence exactly.");
+    expect(response.fidelity).toEqual({
+      coverage: 0.5,
+      missing: ["Keep this sentence exactly."],
+    });
+    expect(response.designNotes).toContain("safe verbatim layout");
+  });
+
+  it("returns the deterministic parse after two invalid model outputs", async () => {
+    const send = bedrockSendMock().mockResolvedValue({
+      body: bedrockBody({ nope: true }),
+    });
+    const response = await composeAmieEmail({
+      request: {
+        workspaceId: "workspace-1",
+        prompt: "Build my finished email",
+        copyMode: "from_copy",
+        sourceCopy: { text: "# Exact heading\n\nExact paragraph." },
+      },
+      bedrockClient: { send },
+      modelId: "us.anthropic.claude-sonnet-5",
+    });
+
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(response.html).toContain("Exact paragraph.");
+    expect(response.fidelity).toEqual({ coverage: 1, missing: [] });
   });
 
   it("clamps model copy with the exported limits instead of schema maxLength", () => {
@@ -510,6 +673,98 @@ describe("amieComposerController", () => {
       },
     });
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks unsolicited copy rewrites in verbatim edit mode", async () => {
+    const send = bedrockSendMock().mockResolvedValue({
+      body: bedrockBody({
+        reply: "I adjusted the layout.",
+        ops: [
+          {
+            type: "replace_text",
+            blockId: "body",
+            find: "Every exact word.",
+            replace: "Rewritten words.",
+          },
+        ],
+      }),
+    });
+    const response = await editAmieEmail({
+      request: {
+        workspaceId: "workspace-1",
+        templateId: "template-1",
+        message: "Center the layout",
+        conversation: [],
+        copyMode: "from_copy",
+        document: {
+          subject: "Exact subject",
+          previewText: "Exact preview",
+          blocks: [
+            {
+              id: "body",
+              type: "paragraph",
+              params: { text: "Every exact word." },
+            },
+          ],
+        },
+        renderedText: "Every exact word.",
+      },
+      bedrockClient: { send },
+      modelId: "us.anthropic.claude-sonnet-5",
+    });
+
+    expect(response.ops).toEqual([
+      {
+        type: "no_op",
+        reason: "Verbatim copy mode kept the finished copy unchanged.",
+      },
+    ]);
+    expect(response.document.blocks[0]).toMatchObject({
+      params: { text: "Every exact word." },
+    });
+  });
+
+  it("allows an explicitly requested copy rewrite in verbatim edit mode", async () => {
+    const send = bedrockSendMock().mockResolvedValue({
+      body: bedrockBody({
+        reply: "I shortened the paragraph.",
+        ops: [
+          {
+            type: "replace_text",
+            blockId: "body",
+            find: "Every exact word in this paragraph.",
+            replace: "Every exact word.",
+          },
+        ],
+      }),
+    });
+    const response = await editAmieEmail({
+      request: {
+        workspaceId: "workspace-1",
+        templateId: "template-1",
+        message: "Shorten the paragraph",
+        conversation: [],
+        copyMode: "from_copy",
+        document: {
+          subject: "Exact subject",
+          previewText: "Exact preview",
+          blocks: [
+            {
+              id: "body",
+              type: "paragraph",
+              params: { text: "Every exact word in this paragraph." },
+            },
+          ],
+        },
+        renderedText: "Every exact word in this paragraph.",
+      },
+      bedrockClient: { send },
+      modelId: "us.anthropic.claude-sonnet-5",
+    });
+
+    expect(response.document.blocks[0]).toMatchObject({
+      params: { text: "Every exact word." },
+    });
   });
 
   it("normalizes invalid subject and body Liquid before returning a draft", async () => {
@@ -1459,8 +1714,8 @@ describe("amieComposerController", () => {
     expect(storageSend).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to one sanitized raw HTML block when import conversion fails", async () => {
-    const send = bedrockSendMock().mockRejectedValue(new Error("model down"));
+  it("imports sanitized HTML into native and custom blocks without invoking Bedrock", async () => {
+    const send = bedrockSendMock();
     const app = fastify();
     await app.register(amieComposerController, {
       enabled: true,
@@ -1469,7 +1724,7 @@ describe("amieComposerController", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/compose/import-html",
+      url: "/import-html",
       payload: {
         workspaceId: "workspace-1",
         html: '<p onclick="bad()">Keep me</p><script>bad()</script>',
@@ -1477,12 +1732,12 @@ describe("amieComposerController", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    const body = response.json<AmieComposeResponse>();
+    const body = response.json<AmieImportHtmlResponse>();
     expect(body.blocks).toEqual([
-      { type: "rawHtml", params: { html: "<p>Keep me</p>" } },
+      { type: "paragraph", params: { text: "Keep me" } },
     ]);
-    expect(body.html).not.toContain("<script>");
-    expect(body.designNotes).toContain("fallback block");
+    expect(body).toEqual({ blocks: body.blocks, unmapped: 0, warnings: [] });
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("honors the disabled kill switch", async () => {

@@ -53,11 +53,12 @@ export function extractFirstJsonObject(modelText: string): string | null {
 }
 
 const STYLE_VALUES = {
-  background: new Set(["ivory", "blush", "white", "teal", "sage"]),
+  background: new Set(["ivory", "blush", "white", "teal", "sage", "custom"]),
   align: new Set(["left", "center"]),
-  padding: new Set(["tight", "normal", "loose"]),
+  padding: new Set(["tight", "normal", "loose", "none"]),
   textSize: new Set(["s", "m", "l"]),
   buttonVariant: new Set(["primary", "secondary", "roseGold"]),
+  width: new Set(["full", "inset"]),
 } as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -107,6 +108,13 @@ export function cleanAmieModelStyles(value: unknown): unknown {
             ) {
               style[key] = candidate;
             }
+          }
+          if (
+            style.background === "custom" &&
+            typeof next.style.backgroundHex === "string" &&
+            /^#[0-9A-Fa-f]{6}$/.test(next.style.backgroundHex)
+          ) {
+            style.backgroundHex = next.style.backgroundHex;
           }
           next.style = style;
         } else {

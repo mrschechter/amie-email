@@ -17,11 +17,13 @@ import {
 const STYLE_VALUES: {
   [K in keyof AmieBlockStyle]-?: readonly NonNullable<AmieBlockStyle[K]>[];
 } = {
-  background: ["ivory", "blush", "white", "teal", "sage"],
+  background: ["ivory", "blush", "white", "teal", "sage", "custom"],
+  backgroundHex: [],
   align: ["left", "center"],
-  padding: ["tight", "normal", "loose"],
+  padding: ["tight", "normal", "loose", "none"],
   textSize: ["s", "m", "l"],
   buttonVariant: ["primary", "secondary", "roseGold"],
+  width: ["full", "inset"],
 };
 
 function replacePlainText(
@@ -154,7 +156,9 @@ function applyOne(blocks: AmieBlockSpec[], op: AmieEditOp): AmieBlockSpec[] {
   }
   if (op.type === "set_style_token") {
     const allowed = STYLE_VALUES[op.name];
-    if (!allowed.some((value) => value === op.value))
+    const validHex =
+      op.name === "backgroundHex" && /^#[0-9A-Fa-f]{6}$/.test(op.value);
+    if (!validHex && !allowed.some((value) => value === op.value))
       throw new Error(`Invalid ${op.name} style token: ${op.value}`);
     return blocks.map((block) =>
       validatedBlock({
@@ -314,6 +318,10 @@ function blockHeadings(block: AmieBlockSpec): string[] {
   if (block.type === "productCard") return [block.params.title];
   if (block.type === "twoColumn" && block.params.heading)
     return [block.params.heading];
+  if (block.type === "imageText" && block.params.heading)
+    return [block.params.heading];
+  if (block.type === "columns")
+    return block.params.columns.map((column) => column.heading);
   if (block.type === "bulletList" && block.params.heading)
     return [block.params.heading];
   return [];

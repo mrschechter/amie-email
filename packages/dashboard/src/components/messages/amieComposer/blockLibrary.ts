@@ -7,6 +7,7 @@ export interface BlockLibraryItem {
   label: string;
   description: string;
   color: string;
+  category?: "Advanced";
 }
 
 export const BLOCK_LIBRARY: BlockLibraryItem[] = [
@@ -41,10 +42,28 @@ export const BLOCK_LIBRARY: BlockLibraryItem[] = [
     color: "#9CAF88",
   },
   {
+    type: "bigImage",
+    label: "Big image",
+    description: "Large flexible-width image",
+    color: "#9CAF88",
+  },
+  {
     type: "twoColumn",
     label: "Two column",
     description: "Image beside copy and CTA",
     color: "#F5E6E0",
+  },
+  {
+    type: "imageText",
+    label: "Image + text",
+    description: "Flexible image and copy split",
+    color: "#F5E6E0",
+  },
+  {
+    type: "columns",
+    label: "Columns",
+    description: "Two or three responsive columns",
+    color: "#FAF8F5",
   },
   {
     type: "bulletList",
@@ -106,6 +125,13 @@ export const BLOCK_LIBRARY: BlockLibraryItem[] = [
     description: "Required address and unsubscribe",
     color: "#FAF8F5",
   },
+  {
+    type: "customHtml",
+    label: "Custom HTML",
+    description: "Advanced sanitized HTML section",
+    color: "#FFFFFF",
+    category: "Advanced",
+  },
 ];
 
 export function createBlock(type: AddableBlockType): AmieBlockSpec {
@@ -144,6 +170,15 @@ export function createBlock(type: AddableBlockType): AmieBlockSpec {
           src: "https://tryamie.com/placeholder.png",
           alt: "Choose an image",
         },
+      };
+    case "bigImage":
+      return {
+        type,
+        params: {
+          src: "https://tryamie.com/placeholder.png",
+          alt: "Choose a large image",
+        },
+        style: { width: "full" },
       };
     case "heroImage":
       return {
@@ -186,6 +221,30 @@ export function createBlock(type: AddableBlockType): AmieBlockSpec {
           cta: { label: "Learn more", url: "https://tryamie.com" },
         },
       };
+    case "imageText":
+      return {
+        type,
+        params: {
+          image: {
+            src: "https://tryamie.com/placeholder.png",
+            alt: "Choose an image",
+          },
+          imageSide: "left",
+          ratio: "50/50",
+          heading: "A useful detail",
+          text: "Pair a concise message with a brand image.",
+        },
+      };
+    case "columns":
+      return {
+        type,
+        params: {
+          columns: [
+            { heading: "First idea", text: "Add supporting copy." },
+            { heading: "Second idea", text: "Add supporting copy." },
+          ],
+        },
+      };
     case "bulletList":
       return {
         type,
@@ -216,6 +275,15 @@ export function createBlock(type: AddableBlockType): AmieBlockSpec {
       return { type, params: { height: 24 } };
     case "sectionBreak":
       return { type, params: { background: "ivory" } };
+    case "customHtml":
+      return {
+        type,
+        params: {
+          html: "<p>Add your custom HTML here.</p>",
+          label: "Custom section",
+        },
+        style: { width: "inset" },
+      };
   }
 }
 
@@ -231,12 +299,18 @@ export function blockSummary(block: AmieBlockSpec): string {
       return block.params.title;
     case "image":
       return block.params.alt;
+    case "bigImage":
+      return block.params.alt;
     case "heroImage":
       return block.params.headline ?? block.params.alt;
     case "testimonial":
       return block.params.quote;
     case "twoColumn":
       return block.params.heading ?? block.params.body;
+    case "imageText":
+      return block.params.heading ?? block.params.text;
+    case "columns":
+      return `${block.params.columns.length} columns`;
     case "bulletList":
       return block.params.heading ?? `${block.params.items.length} items`;
     case "statsRow":
@@ -251,6 +325,8 @@ export function blockSummary(block: AmieBlockSpec): string {
       return block.params.unsubscribe;
     case "rawHtml":
       return "Imported HTML";
+    case "customHtml":
+      return block.params.label ?? "Custom HTML";
     case "header":
       return "Amie brand";
     case "divider":
