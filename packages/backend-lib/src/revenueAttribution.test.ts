@@ -59,15 +59,18 @@ describe("revenue attribution", () => {
   function orderEvent({
     userId,
     timestamp,
+    orderId = randomUUID(),
+    paidAt = timestamp,
     amountCents = 12500,
     kind = "new",
   }: {
     userId: string;
     timestamp: string;
+    orderId?: string;
+    paidAt?: string;
     amountCents?: number;
     kind?: "new" | "renewal";
   }): BatchItem {
-    const orderId = randomUUID();
     return {
       type: EventType.Track,
       event: "order_paid",
@@ -83,7 +86,7 @@ describe("revenue attribution", () => {
         currency: "USD",
         productKey: "test-product",
         plan: "monthly",
-        paidAt: timestamp,
+        paidAt,
         subscriptionId: randomUUID(),
       },
     };
@@ -111,6 +114,41 @@ describe("revenue attribution", () => {
       attributedOrders: 1,
       attributedRevenueCents: 12500,
       unattributedOrders: 0,
+    });
+  });
+
+  it("deduplicates an order using the latest processing time", async () => {
+    const userId = randomUUID();
+    const orderId = randomUUID();
+    const paidAt = "2026-08-12T10:00:00.000Z";
+    await submit([
+      orderEvent({
+        userId,
+        orderId,
+        paidAt,
+        timestamp: "2026-08-12T10:01:00.000Z",
+        amountCents: 10000,
+      }),
+      orderEvent({
+        userId,
+        orderId,
+        paidAt,
+        timestamp: "2026-08-12T10:02:00.000Z",
+        amountCents: 17500,
+      }),
+    ]);
+
+    const result = await getRevenueSummary({
+      workspaceId,
+      startDate: rangeStart,
+      endDate: rangeEnd,
+    });
+
+    expect(result.summary).toMatchObject({
+      totalOrders: 1,
+      totalRevenueCents: 17500,
+      unattributedOrders: 1,
+      unattributedRevenueCents: 17500,
     });
   });
 
