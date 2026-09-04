@@ -14,6 +14,9 @@ export interface LinkEditorPanelProps {
 export const isValidLinkUrl = (url: string) =>
   /^(\S+):(\/\/)?\S+$/.test(url) || /{{\s*[^}\s][^}]*\s*}}/.test(url);
 
+export const getLinkEditorInputType = (url: string) =>
+  /{{\s*[^}\s][^}]*\s*}}/.test(url) ? "text" : "url";
+
 export const useLinkEditorState = ({
   initialUrl,
   initialOpenInNewTab,
@@ -69,7 +72,7 @@ export function LinkEditorPanel({
         <label className="flex items-center gap-2 p-2 rounded-lg bg-neutral-100 dark:bg-neutral-900 cursor-text">
           <Icon name="Link" className="flex-none text-black dark:text-white" />
           <input
-            type="url"
+            type={getLinkEditorInputType(state.url)}
             className="flex-1 bg-transparent outline-none min-w-[12rem] text-black text-sm dark:text-white"
             placeholder="Enter URL"
             value={state.url}
