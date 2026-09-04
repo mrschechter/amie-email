@@ -79,7 +79,7 @@ function buildAttributionCtes({
         AND event_time >= parseDateTime64BestEffort(${startDateParam}, 3, 'UTC')
         AND event_time <= parseDateTime64BestEffort(${endDateParam}, 3, 'UTC')
     ),
-    orders AS (
+    deduplicated_orders AS (
       SELECT
         order_id,
         argMax(user_id, processing_time) AS user_id,
@@ -87,10 +87,14 @@ function buildAttributionCtes({
         argMax(amount_cents, processing_time) AS amount_cents,
         argMax(order_kind, processing_time) AS order_kind
       FROM raw_orders
+      GROUP BY order_id
+    ),
+    orders AS (
+      SELECT *
+      FROM deduplicated_orders
       WHERE
         order_time >= parseDateTime64BestEffort(${startDateParam}, 3, 'UTC')
         AND order_time <= parseDateTime64BestEffort(${endDateParam}, 3, 'UTC')
-      GROUP BY order_id
     ),
     clicks AS (
       SELECT
