@@ -6570,6 +6570,110 @@ export type GetSummarizedDataResponse = Static<
   typeof GetSummarizedDataResponse
 >;
 
+export const RevenueAttributionFilters = Type.Object({
+  journeyIds: Type.Optional(Type.Array(Type.String())),
+  broadcastIds: Type.Optional(Type.Array(Type.String())),
+  templateIds: Type.Optional(Type.Array(Type.String())),
+});
+
+export type RevenueAttributionFilters = Static<
+  typeof RevenueAttributionFilters
+>;
+
+export const GetRevenueSummaryRequest = Type.Object({
+  workspaceId: Type.String(),
+  startDate: Type.String(),
+  endDate: Type.String(),
+  filters: Type.Optional(RevenueAttributionFilters),
+});
+
+export type GetRevenueSummaryRequest = Static<typeof GetRevenueSummaryRequest>;
+
+export const RevenueSummary = Type.Object({
+  currency: Type.Literal("USD"),
+  sends: Type.Number(),
+  totalOrders: Type.Number(),
+  totalRevenueCents: Type.Number(),
+  attributedOrders: Type.Number(),
+  attributedRevenueCents: Type.Number(),
+  attributedNewOrders: Type.Number(),
+  attributedNewRevenueCents: Type.Number(),
+  attributedRenewalOrders: Type.Number(),
+  attributedRenewalRevenueCents: Type.Number(),
+  unattributedOrders: Type.Number(),
+  unattributedRevenueCents: Type.Number(),
+  revenuePerThousandSendsCents: Type.Number(),
+  averageOrderValueCents: Type.Number(),
+});
+
+export type RevenueSummary = Static<typeof RevenueSummary>;
+
+export const GetRevenueSummaryResponse = Type.Object({
+  summary: RevenueSummary,
+});
+
+export type GetRevenueSummaryResponse = Static<
+  typeof GetRevenueSummaryResponse
+>;
+
+export const RevenueBreakdownGroupBy = Type.Union([
+  Type.Literal("broadcast"),
+  Type.Literal("journey"),
+  Type.Literal("template"),
+  Type.Literal("email"),
+]);
+
+export type RevenueBreakdownGroupBy = Static<typeof RevenueBreakdownGroupBy>;
+
+export const GetRevenueBreakdownRequest = Type.Object({
+  workspaceId: Type.String(),
+  startDate: Type.String(),
+  endDate: Type.String(),
+  groupBy: RevenueBreakdownGroupBy,
+  filters: Type.Optional(RevenueAttributionFilters),
+});
+
+export type GetRevenueBreakdownRequest = Static<
+  typeof GetRevenueBreakdownRequest
+>;
+
+export const DownloadRevenueAttributionRequest = Type.Object({
+  workspaceId: Type.String(),
+  startDate: Type.String(),
+  endDate: Type.String(),
+  filters: Type.Optional(RevenueAttributionFilters),
+});
+
+export type DownloadRevenueAttributionRequest = Static<
+  typeof DownloadRevenueAttributionRequest
+>;
+
+export const RevenueBreakdownRow = Type.Object({
+  sourceType: Type.String(),
+  sourceId: Type.String(),
+  journeyNodeId: Type.String(),
+  templateId: Type.String(),
+  sends: Type.Number(),
+  clicks: Type.Number(),
+  attributedOrders: Type.Number(),
+  attributedNewOrders: Type.Number(),
+  attributedRenewalOrders: Type.Number(),
+  attributedRevenueCents: Type.Number(),
+  revenuePerThousandSendsCents: Type.Number(),
+  averageOrderValueCents: Type.Number(),
+});
+
+export type RevenueBreakdownRow = Static<typeof RevenueBreakdownRow>;
+
+export const GetRevenueBreakdownResponse = Type.Object({
+  currency: Type.Literal("USD"),
+  rows: Type.Array(RevenueBreakdownRow),
+});
+
+export type GetRevenueBreakdownResponse = Static<
+  typeof GetRevenueBreakdownResponse
+>;
+
 export const GetJourneyEditorStatsRequest = Type.Object({
   workspaceId: Type.String(),
   journeyId: Type.String(),

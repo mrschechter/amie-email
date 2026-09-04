@@ -20,6 +20,7 @@ x-backend-app-env: &backend-app-env
   SECRET_KEY: ${SECRET_KEY:?required}
   PASSWORD: ${PASSWORD:?required}
   DASHBOARD_API_BASE: ${DASHBOARD_API_BASE:-https://email.tryamie.com}
+  AMIE_ATTRIBUTION_WINDOW_DAYS: "${AMIE_ATTRIBUTION_WINDOW_DAYS:-5}"
 
 x-logging: &default-logging
   driver: local

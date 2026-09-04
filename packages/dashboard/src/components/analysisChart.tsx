@@ -39,9 +39,7 @@ import { useAnalysisChartQuery } from "../lib/useAnalysisChartQuery";
 import { useResourcesQuery } from "../lib/useResourcesQuery";
 import tokens from "../themeCustomization/tokens";
 import {
-  FilterType,
   getFilterValues,
-  MultiSelectFilter,
   NewAnalysisFilterButton,
   SelectedAnalysisFilters,
   useAnalysisFiltersState,
@@ -58,6 +56,7 @@ import {
 } from "./deliveriesTableV2/deliveriesBody";
 import { DeliveriesDownloadButton } from "./deliveriesTableV2/deliveriesDownloadButton";
 import { DeliveriesSortButton } from "./deliveriesTableV2/deliveriesSortButton";
+import { RevenueByEmailTable } from "./revenueByEmailTable";
 import { SharedFilterContainer } from "./shared/filterStyles";
 
 type TimeOption =
@@ -74,39 +73,20 @@ const defaultTimeOption = {
 const defaultTimeOptionId = defaultTimeOption.id;
 
 const timeOptions: TimeOption[] = [
-  {
-    type: "minutes",
-    id: "last-15-minutes",
-    minutes: 15,
-    label: "Last 15 minutes",
-  },
-  {
-    type: "minutes",
-    id: "last-30-minutes",
-    minutes: 30,
-    label: "Last 30 minutes",
-  },
-  { type: "minutes", id: "last-hour", minutes: 60, label: "Last hour" },
-  {
-    type: "minutes",
-    id: "last-24-hours",
-    minutes: 24 * 60,
-    label: "Last 24 hours",
-  },
   defaultTimeOption,
+  {
+    type: "minutes",
+    id: "last-14-days",
+    minutes: 14 * 24 * 60,
+    label: "Last 14 days",
+  },
   {
     type: "minutes",
     id: "last-30-days",
     minutes: 30 * 24 * 60,
     label: "Last 30 days",
   },
-  {
-    type: "minutes",
-    id: "last-90-days",
-    minutes: 90 * 24 * 60,
-    label: "Last 90 days",
-  },
-  { type: "custom", id: "custom", label: "Custom Date Range" },
+  { type: "custom", id: "custom", label: "Custom range" },
 ];
 
 // Date label rendering is handled by DateRangeSelector
@@ -363,6 +343,19 @@ export function AnalysisChart({ configuration }: AnalysisChartProps = {}) {
     };
   }, [filtersState, hardcodedFilters]);
 
+  const revenueFilters = useMemo(() => {
+    const revenueOnlyFilters = {
+      journeyIds: filters?.journeyIds,
+      broadcastIds: filters?.broadcastIds,
+      templateIds: filters?.templateIds,
+    };
+    return revenueOnlyFilters.journeyIds ||
+      revenueOnlyFilters.broadcastIds ||
+      revenueOnlyFilters.templateIds
+      ? revenueOnlyFilters
+      : undefined;
+  }, [filters]);
+
   const chartQuery = useAnalysisChartQuery(
     {
       startDate: state.dateRange.startDate,
@@ -403,20 +396,6 @@ export function AnalysisChart({ configuration }: AnalysisChartProps = {}) {
       draft.referenceDate = endDate;
     });
   }, [setState]);
-
-  const handleChannelSelect = useCallback(
-    (channel: ChannelType) => {
-      setFiltersState((draft) => {
-        // Add or update channel filter
-        const channelFilter: MultiSelectFilter = {
-          type: FilterType.MultiSelect,
-          value: new Map([[channel, channel]]),
-        };
-        draft.filters.set("channels", channelFilter);
-      });
-    },
-    [setFiltersState],
-  );
 
   // Handle sort changes for deliveries table
   const handleSortChange = useCallback(
@@ -820,9 +799,12 @@ export function AnalysisChart({ configuration }: AnalysisChartProps = {}) {
       <AnalysisSummaryPanel
         dateRange={state.dateRange}
         filtersState={filtersState}
-        onChannelSelect={handleChannelSelect}
         displayMode={state.displayMode}
-        allowedChannels={allowedChannels}
+      />
+
+      <RevenueByEmailTable
+        dateRange={state.dateRange}
+        filters={revenueFilters}
       />
 
       {/* Deliveries Table */}

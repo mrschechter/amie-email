@@ -1,7 +1,5 @@
-import { Email, Sms } from "@mui/icons-material";
 import {
   Box,
-  Button,
   Card,
   CardContent,
   Skeleton,
@@ -13,7 +11,8 @@ import { ChannelType, SummaryMetric } from "isomorphic-lib/src/types";
 import React, { useMemo } from "react";
 
 import { useAnalysisSummaryQuery } from "../../lib/useAnalysisSummaryQuery";
-import { greyButtonStyle } from "../greyButtonStyle";
+import { useRevenueSummaryQuery } from "../../lib/useRevenueAttribution";
+import { formatUsd } from "../revenueByEmailTable";
 import {
   AnalysisFilterKey,
   AnalysisFiltersState,
@@ -26,16 +25,25 @@ interface AnalysisSummaryPanelProps {
     endDate: string;
   };
   filtersState: AnalysisFiltersState;
-  onChannelSelect: (channel: ChannelType) => void;
   displayMode: "absolute" | "percentage";
-  allowedChannels?: ChannelType[];
 }
 
 interface MetricCardProps {
   title: string;
-  value: number;
+  value: number | string;
   isLoading?: boolean;
   isPercentage?: boolean;
+  subtitle?: string;
+}
+
+function formatMetricValue(value: number | string, isPercentage: boolean) {
+  if (isPercentage && typeof value === "number") {
+    return `${value.toFixed(1)}%`;
+  }
+  if (typeof value === "number") {
+    return value.toLocaleString();
+  }
+  return value;
 }
 
 function MetricCard({
@@ -43,6 +51,7 @@ function MetricCard({
   value,
   isLoading = false,
   isPercentage = false,
+  subtitle,
 }: MetricCardProps) {
   return (
     <Card
@@ -72,7 +81,12 @@ function MetricCard({
               mt: 0.75,
             }}
           >
-            {isPercentage ? `${value.toFixed(1)}%` : value.toLocaleString()}
+            {formatMetricValue(value, isPercentage)}
+          </Typography>
+        )}
+        {subtitle && !isLoading && (
+          <Typography variant="caption" color="text.secondary">
+            {subtitle}
           </Typography>
         )}
       </CardContent>
@@ -83,9 +97,7 @@ function MetricCard({
 export function AnalysisSummaryPanel({
   dateRange,
   filtersState,
-  onChannelSelect,
   displayMode,
-  allowedChannels,
 }: AnalysisSummaryPanelProps) {
   // Helper to extract keys from a filter (handles both MultiSelect and Value types)
   const getFilterKeys = (
@@ -103,11 +115,11 @@ export function AnalysisSummaryPanel({
   // Check if channel filter is already applied
   const hasChannelFilter = filtersState.filters.has("channels");
   const channelKeys = getFilterKeys("channels");
-  const selectedChannel =
+  const selectedChannel: ChannelType =
     hasChannelFilter && channelKeys?.[0]
       ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
         (channelKeys[0] as ChannelType)
-      : undefined;
+      : ChannelType.Email;
 
   // Build filters object from filter state
   const filters = useMemo(() => {
@@ -153,18 +165,64 @@ export function AnalysisSummaryPanel({
     {
       startDate: dateRange.startDate,
       endDate: dateRange.endDate,
-      ...(filters || selectedChannel
-        ? {
-            filters: {
-              ...filters,
-              ...(selectedChannel && { channel: selectedChannel }),
-            },
-          }
-        : {}),
+      filters: {
+        ...filters,
+        channel: selectedChannel,
+      },
     },
     {
       placeholderData: keepPreviousData,
     },
+  );
+  const revenueFilters = useMemo(() => {
+    if (!filters) return undefined;
+    const filtered = {
+      journeyIds: filters.journeyIds,
+      broadcastIds: filters.broadcastIds,
+      templateIds: filters.templateIds,
+    };
+    return filtered.journeyIds || filtered.broadcastIds || filtered.templateIds
+      ? filtered
+      : undefined;
+  }, [filters]);
+  const revenueQuery = useRevenueSummaryQuery(
+    {
+      startDate: dateRange.startDate,
+      endDate: dateRange.endDate,
+      ...(revenueFilters && { filters: revenueFilters }),
+    },
+    { placeholderData: keepPreviousData },
+  );
+  const revenue = revenueQuery.data?.summary;
+  const revenueCards = (
+    <>
+      <MetricCard
+        title="ATTRIBUTED REVENUE"
+        value={revenue ? formatUsd(revenue.attributedRevenueCents) : "$0.00"}
+        subtitle={
+          revenue
+            ? `${formatUsd(revenue.attributedNewRevenueCents)} new · ${formatUsd(revenue.attributedRenewalRevenueCents)} renewal`
+            : undefined
+        }
+        isLoading={revenueQuery.isLoading}
+      />
+      <MetricCard
+        title="ATTRIBUTED ORDERS"
+        value={revenue?.attributedOrders ?? 0}
+        subtitle={
+          revenue
+            ? `${revenue.attributedNewOrders.toLocaleString()} new · ${revenue.attributedRenewalOrders.toLocaleString()} renewal`
+            : undefined
+        }
+        isLoading={revenueQuery.isLoading}
+      />
+    </>
+  );
+  const unattributedLine = !revenueFilters && (
+    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+      Orders without a recent email click: {revenue?.unattributedOrders ?? 0} /{" "}
+      {formatUsd(revenue?.unattributedRevenueCents ?? 0)}
+    </Typography>
   );
 
   // Calculate percentage values when in percentage mode
@@ -189,112 +247,46 @@ export function AnalysisSummaryPanel({
     return rawSummary;
   }, [summaryQuery.data?.summary, displayMode]);
 
-  if (!hasChannelFilter) {
-    // Show basic sent messages count with channel selection buttons
-    return (
-      <Box sx={{ py: 0.5 }}>
-        <Stack
-          direction="row"
-          spacing={1.75}
-          alignItems="center"
-          justifyContent="center"
-        >
-          <MetricCard
-            title="SENT"
-            value={summary.sent}
-            isLoading={summaryQuery.isLoading}
-            isPercentage={displayMode === "percentage"}
-          />
-          <Stack direction="row" spacing={1} alignItems="center">
-            <Typography variant="body2" color="text.secondary">
-              Select a channel to see a detailed summary.
-            </Typography>
-            <Stack direction="row" spacing={0.5}>
-              {(!allowedChannels ||
-                allowedChannels.includes(ChannelType.Email)) && (
-                <Button
-                  variant="contained"
-                  size="small"
-                  startIcon={<Email />}
-                  onClick={() => onChannelSelect(ChannelType.Email)}
-                  disableRipple
-                  sx={{
-                    ...greyButtonStyle,
-                    textTransform: "none",
-                    fontWeight: "bold",
-                  }}
-                >
-                  Email
-                </Button>
-              )}
-              {(!allowedChannels ||
-                allowedChannels.includes(ChannelType.Sms)) && (
-                <Button
-                  variant="contained"
-                  size="small"
-                  startIcon={<Sms />}
-                  onClick={() => onChannelSelect(ChannelType.Sms)}
-                  disableRipple
-                  sx={{
-                    ...greyButtonStyle,
-                    textTransform: "none",
-                    fontWeight: "bold",
-                  }}
-                >
-                  SMS
-                </Button>
-              )}
-            </Stack>
-          </Stack>
-        </Stack>
-      </Box>
-    );
-  }
-
-  // Show detailed summary for selected channel
   return (
-    <Stack
-      direction="row"
-      spacing={1.75}
-      justifyContent="center"
-      sx={{ py: 1, width: "100%" }}
-    >
-      <MetricCard
-        title="SENT"
-        value={summary.sent}
-        isLoading={summaryQuery.isLoading}
-        isPercentage={displayMode === "percentage"}
-      />
-      <MetricCard
-        title="DELIVERIES"
-        value={summary.deliveries}
-        isLoading={summaryQuery.isLoading}
-        isPercentage={displayMode === "percentage"}
-      />
-      <MetricCard
-        title={selectedChannel === ChannelType.Email ? "OPENS" : "DELIVERED"}
-        value={
-          selectedChannel === ChannelType.Email
-            ? summary.opens
-            : summary.deliveries - summary.bounces
-        }
-        isLoading={summaryQuery.isLoading}
-        isPercentage={displayMode === "percentage"}
-      />
-      {selectedChannel === ChannelType.Email && (
+    <Box sx={{ py: 1, width: "100%" }}>
+      <Stack direction="row" spacing={1.75} justifyContent="center">
         <MetricCard
-          title="CLICKS"
-          value={summary.clicks}
+          title="SENT"
+          value={summary.sent}
           isLoading={summaryQuery.isLoading}
           isPercentage={displayMode === "percentage"}
         />
-      )}
-      <MetricCard
-        title={selectedChannel === ChannelType.Email ? "BOUNCES" : "FAILED"}
-        value={summary.bounces}
-        isLoading={summaryQuery.isLoading}
-        isPercentage={displayMode === "percentage"}
-      />
-    </Stack>
+        <MetricCard
+          title="DELIVERED"
+          value={summary.deliveries}
+          isLoading={summaryQuery.isLoading}
+          isPercentage={displayMode === "percentage"}
+        />
+        {selectedChannel === ChannelType.Email && (
+          <MetricCard
+            title="OPENED"
+            value={summary.opens}
+            isLoading={summaryQuery.isLoading}
+            isPercentage={displayMode === "percentage"}
+          />
+        )}
+        {selectedChannel === ChannelType.Email && (
+          <MetricCard
+            title="CLICKED"
+            value={summary.clicks}
+            isLoading={summaryQuery.isLoading}
+            isPercentage={displayMode === "percentage"}
+          />
+        )}
+        <MetricCard
+          title={selectedChannel === ChannelType.Email ? "BOUNCED" : "FAILED"}
+          value={summary.bounces}
+          isLoading={summaryQuery.isLoading}
+          isPercentage={displayMode === "percentage"}
+        />
+        {revenueCards}
+      </Stack>
+      {unattributedLine}
+    </Box>
   );
 }
