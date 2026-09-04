@@ -106,6 +106,7 @@ import {
   PublisherUpToDateStatus,
 } from "./publisher";
 import { SettingsCommand, SettingsMenu } from "./settingsMenu";
+import { getTestUserProperties } from "./templateEditorTestData";
 import TemplatePreview from "./templatePreview";
 
 const USER_PROPERTY_WARNING_KEY = "user-property-warning";
@@ -942,7 +943,10 @@ export default function TemplateEditor({
     "templateId" | "userProperties" | "tags"
   > = {
     templateId,
-    userProperties: debouncedUserProperties,
+    userProperties: getTestUserProperties({
+      current: state.userProperties,
+      preview: debouncedUserProperties,
+    }),
     tags: buildTags({
       workspaceId: workspace.id,
       templateId,
