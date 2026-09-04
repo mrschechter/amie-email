@@ -11,6 +11,7 @@ x-backend-app-env: &backend-app-env
   KAFKA_PASSWORD: "password"
   KAFKA_ENABLE_ADMIN_SASL: "false"
   CLICKHOUSE_HOST: "http://clickhouse-server:8123"
+  AMIE_ATTRIBUTION_WINDOW_DAYS: "${AMIE_ATTRIBUTION_WINDOW_DAYS:-5}"
   TEMPORAL_ADDRESS: "temporal:7233"
   API_HOST: "0.0.0.0"
   LOG_CONFIG: true
