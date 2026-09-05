@@ -6591,6 +6591,10 @@ export type GetRevenueSummaryRequest = Static<typeof GetRevenueSummaryRequest>;
 
 export const RevenueSummary = Type.Object({
   currency: Type.Literal("USD"),
+  attributionTouch: Type.Union([
+    Type.Literal("click"),
+    Type.Literal("click_or_open"),
+  ]),
   sends: Type.Number(),
   totalOrders: Type.Number(),
   totalRevenueCents: Type.Number(),
@@ -6600,6 +6604,8 @@ export const RevenueSummary = Type.Object({
   attributedNewRevenueCents: Type.Number(),
   attributedRenewalOrders: Type.Number(),
   attributedRenewalRevenueCents: Type.Number(),
+  attributedUnknownOrders: Type.Number(),
+  attributedUnknownRevenueCents: Type.Number(),
   unattributedOrders: Type.Number(),
   unattributedRevenueCents: Type.Number(),
   revenuePerThousandSendsCents: Type.Number(),
@@ -6658,6 +6664,7 @@ export const RevenueBreakdownRow = Type.Object({
   attributedOrders: Type.Number(),
   attributedNewOrders: Type.Number(),
   attributedRenewalOrders: Type.Number(),
+  attributedUnknownOrders: Type.Number(),
   attributedRevenueCents: Type.Number(),
   revenuePerThousandSendsCents: Type.Number(),
   averageOrderValueCents: Type.Number(),
