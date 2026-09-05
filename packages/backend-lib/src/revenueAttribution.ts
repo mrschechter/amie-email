@@ -54,18 +54,41 @@ function buildAttributionCtes({
     "Int32",
   );
 
+  const touchEvents = [InternalEventType.EmailClicked, SMS_CLICKED_EVENT];
+  if (config().amieAttributionIncludeOpens) {
+    touchEvents.push(InternalEventType.EmailOpened);
+  }
+  const touchEventsParam = qb.addQueryValue(touchEvents, "Array(String)");
+
   return `
     raw_orders AS (
       SELECT
-        if(JSONExtractString(properties, 'orderId') = '', message_id,
-          JSONExtractString(properties, 'orderId')) AS order_id,
+        JSON_VALUE(properties, '$.orderId') AS raw_order_id,
+        multiIf(
+          raw_order_id = '', message_id,
+          match(raw_order_id, '^gid://shopify/Order/[0-9]+$'),
+            extract(raw_order_id, '([0-9]+)$'),
+          raw_order_id
+        ) AS order_id,
         user_id,
         coalesce(
           parseDateTime64BestEffortOrNull(JSONExtractString(properties, 'paidAt'), 3, 'UTC'),
           event_time
         ) AS order_time,
-        toInt64OrZero(JSON_VALUE(properties, '$.amountCents')) AS amount_cents,
-        JSONExtractString(properties, 'kind') AS order_kind,
+        if(
+          JSONHas(properties, 'amountCents'),
+          toInt64OrZero(JSON_VALUE(properties, '$.amountCents')),
+          toInt64(round(toFloat64OrZero(JSON_VALUE(properties, '$.total')) * 100))
+        ) AS amount_cents,
+        if(
+          JSONExtractString(properties, 'kind') != '',
+          JSONExtractString(properties, 'kind'),
+          multiIf(
+            JSON_VALUE(properties, '$.isFirstOrder') = 'true', 'new',
+            JSON_VALUE(properties, '$.isFirstOrder') = 'false', 'renewal',
+            'unknown'
+          )
+        ) AS order_kind,
         processing_time
       FROM user_events_v2
       WHERE
@@ -96,10 +119,10 @@ function buildAttributionCtes({
         order_time >= parseDateTime64BestEffort(${startDateParam}, 3, 'UTC')
         AND order_time <= parseDateTime64BestEffort(${endDateParam}, 3, 'UTC')
     ),
-    clicks AS (
+    touches AS (
       SELECT
         user_id,
-        event_time AS click_time,
+        event_time AS touch_time,
         template_id,
         broadcast_id,
         journey_id,
@@ -108,7 +131,7 @@ function buildAttributionCtes({
       FROM internal_events
       WHERE
         workspace_id = ${workspaceIdParam}
-        AND event IN ('${InternalEventType.EmailClicked}', '${SMS_CLICKED_EVENT}')
+        AND event IN ${touchEventsParam}
         AND user_id != ''
         AND hidden = false
         AND processing_time >= subtractDays(
@@ -130,20 +153,20 @@ function buildAttributionCtes({
         o.amount_cents,
         o.order_kind,
         if(
-          c.click_time >= subtractDays(o.order_time, ${windowDaysParam}),
-          c.click_time,
+          c.touch_time >= subtractDays(o.order_time, ${windowDaysParam}),
+          c.touch_time,
           toDateTime64(0, 3, 'UTC')
-        ) AS click_time,
-        if(c.click_time >= subtractDays(o.order_time, ${windowDaysParam}), c.template_id, '') AS template_id,
-        if(c.click_time >= subtractDays(o.order_time, ${windowDaysParam}), c.broadcast_id, '') AS broadcast_id,
-        if(c.click_time >= subtractDays(o.order_time, ${windowDaysParam}), c.journey_id, '') AS journey_id,
-        if(c.click_time >= subtractDays(o.order_time, ${windowDaysParam}), c.journey_node_id, '') AS journey_node_id,
-        if(c.click_time >= subtractDays(o.order_time, ${windowDaysParam}), c.attributed_message_id, '') AS attributed_message_id
+        ) AS touch_time,
+        if(c.touch_time >= subtractDays(o.order_time, ${windowDaysParam}), c.template_id, '') AS template_id,
+        if(c.touch_time >= subtractDays(o.order_time, ${windowDaysParam}), c.broadcast_id, '') AS broadcast_id,
+        if(c.touch_time >= subtractDays(o.order_time, ${windowDaysParam}), c.journey_id, '') AS journey_id,
+        if(c.touch_time >= subtractDays(o.order_time, ${windowDaysParam}), c.journey_node_id, '') AS journey_node_id,
+        if(c.touch_time >= subtractDays(o.order_time, ${windowDaysParam}), c.attributed_message_id, '') AS attributed_message_id
       FROM (SELECT * FROM orders ORDER BY user_id, order_time) AS o
       ASOF LEFT JOIN (
-        SELECT * FROM clicks ORDER BY user_id, click_time
+        SELECT * FROM touches ORDER BY user_id, touch_time
       ) AS c
-        ON o.user_id = c.user_id AND o.order_time >= c.click_time
+        ON o.user_id = c.user_id AND o.order_time >= c.touch_time
     )`;
 }
 
@@ -260,6 +283,8 @@ export async function getRevenueSummary({
       sumIf(amount_cents, attributed_message_id != '' AND order_kind = 'new') AS attributed_new_revenue_cents,
       countIf(attributed_message_id != '' AND order_kind = 'renewal') AS attributed_renewal_orders,
       sumIf(amount_cents, attributed_message_id != '' AND order_kind = 'renewal') AS attributed_renewal_revenue_cents,
+      countIf(attributed_message_id != '' AND order_kind NOT IN ('new', 'renewal')) AS attributed_unknown_orders,
+      sumIf(amount_cents, attributed_message_id != '' AND order_kind NOT IN ('new', 'renewal')) AS attributed_unknown_revenue_cents,
       countIf(attributed_message_id = '') AS unattributed_orders,
       sumIf(amount_cents, attributed_message_id = '') AS unattributed_revenue_cents
     FROM filtered_orders
@@ -286,6 +311,8 @@ export async function getRevenueSummary({
     attributed_new_revenue_cents: NumericValue;
     attributed_renewal_orders: NumericValue;
     attributed_renewal_revenue_cents: NumericValue;
+    attributed_unknown_orders: NumericValue;
+    attributed_unknown_revenue_cents: NumericValue;
     unattributed_orders: NumericValue;
     unattributed_revenue_cents: NumericValue;
   }>();
@@ -297,6 +324,9 @@ export async function getRevenueSummary({
   return {
     summary: {
       currency: "USD",
+      attributionTouch: config().amieAttributionIncludeOpens
+        ? "click_or_open"
+        : "click",
       sends,
       totalOrders: toNumber(row?.total_orders),
       totalRevenueCents: toNumber(row?.total_revenue_cents),
@@ -307,6 +337,10 @@ export async function getRevenueSummary({
       attributedRenewalOrders: toNumber(row?.attributed_renewal_orders),
       attributedRenewalRevenueCents: toNumber(
         row?.attributed_renewal_revenue_cents,
+      ),
+      attributedUnknownOrders: toNumber(row?.attributed_unknown_orders),
+      attributedUnknownRevenueCents: toNumber(
+        row?.attributed_unknown_revenue_cents,
       ),
       unattributedOrders: toNumber(row?.unattributed_orders),
       unattributedRevenueCents: toNumber(row?.unattributed_revenue_cents),
@@ -416,6 +450,7 @@ export async function getRevenueBreakdown({
         0 AS attributed_orders,
         0 AS attributed_new_orders,
         0 AS attributed_renewal_orders,
+        0 AS attributed_unknown_orders,
         toInt64(0) AS attributed_revenue_cents
       FROM internal_events AS ie
       WHERE
@@ -440,6 +475,7 @@ export async function getRevenueBreakdown({
         count() AS attributed_orders,
         countIf(ao.order_kind = 'new') AS attributed_new_orders,
         countIf(ao.order_kind = 'renewal') AS attributed_renewal_orders,
+        countIf(ao.order_kind NOT IN ('new', 'renewal')) AS attributed_unknown_orders,
         sum(ao.amount_cents) AS attributed_revenue_cents
       FROM attributed_orders AS ao
       ${attributionFilter}
@@ -457,6 +493,7 @@ export async function getRevenueBreakdown({
       sum(attributed_orders) AS attributed_orders,
       sum(attributed_new_orders) AS attributed_new_orders,
       sum(attributed_renewal_orders) AS attributed_renewal_orders,
+      sum(attributed_unknown_orders) AS attributed_unknown_orders,
       sum(attributed_revenue_cents) AS attributed_revenue_cents
     FROM (
       SELECT * FROM activity
@@ -487,6 +524,7 @@ export async function getRevenueBreakdown({
     attributed_orders: NumericValue;
     attributed_new_orders: NumericValue;
     attributed_renewal_orders: NumericValue;
+    attributed_unknown_orders: NumericValue;
     attributed_revenue_cents: NumericValue;
   }>();
 
@@ -506,6 +544,7 @@ export async function getRevenueBreakdown({
         attributedOrders,
         attributedNewOrders: toNumber(row.attributed_new_orders),
         attributedRenewalOrders: toNumber(row.attributed_renewal_orders),
+        attributedUnknownOrders: toNumber(row.attributed_unknown_orders),
         attributedRevenueCents,
         revenuePerThousandSendsCents:
           sends > 0 ? (attributedRevenueCents * 1000) / sends : 0,
@@ -560,6 +599,7 @@ export async function buildRevenueAttributionFile(
     "Attributed orders": row.attributedOrders,
     "New orders": row.attributedNewOrders,
     "Renewal orders": row.attributedRenewalOrders,
+    "Unknown orders": row.attributedUnknownOrders,
     "Attributed revenue (USD)": (row.attributedRevenueCents / 100).toFixed(2),
     "Revenue per 1k sends (USD)": (
       row.revenuePerThousandSendsCents / 100
