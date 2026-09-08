@@ -12,9 +12,12 @@ import {
   TriggerBroadcastRequest,
 } from "isomorphic-lib/src/types";
 import { GetServerSideProps } from "next";
+import Link from "next/link";
 import { useRouter } from "next/router";
 import { validate } from "uuid";
 
+import analyticsStyles from "../../../components/analytics/analytics.module.css";
+import PerformancePanel from "../../../components/analytics/performancePanel";
 import {
   DEFAULT_DELIVERIES_TABLE_V2_PROPS,
   DeliveriesTableV2,
@@ -152,40 +155,68 @@ export default function BroadcastReview() {
 
   return (
     <BroadcastLayout activeStep="review" id={id}>
-      <Typography variant="h6">
-        Broadcast Review
-      </Typography>
-      <Stack spacing={2} sx={{ width: "100%" }}>
-        <Tooltip
-          title={!notStarted ? "Broadcast has already been triggered" : ""}
+      <nav
+        className={`${analyticsStyles.root} ${analyticsStyles.tabs}`}
+        style={{ padding: "10px 0", margin: 0 }}
+        aria-label="Broadcast tabs"
+      >
+        <Link
+          href={{
+            pathname: router.pathname,
+            query: { ...router.query, tab: "review" },
+          }}
+          aria-current={router.query.tab !== "performance" ? "page" : undefined}
         >
-          <span>
-            <LoadingButton
-              loading={
-                broadcastTriggerRequest.type === CompletionStatus.InProgress
-              }
-              disabled={triggerDisabled}
-              variant="contained"
-              onClick={handleTrigger}
+          Review
+        </Link>
+        <Link
+          href={{
+            pathname: router.pathname,
+            query: { ...router.query, tab: "performance" },
+          }}
+          aria-current={router.query.tab === "performance" ? "page" : undefined}
+        >
+          Performance
+        </Link>
+      </nav>
+      {router.query.tab === "performance" ? (
+        <PerformancePanel kind="broadcasts" id={id} />
+      ) : (
+        <>
+          <Typography variant="h6">Broadcast Review</Typography>
+          <Stack spacing={2} sx={{ width: "100%" }}>
+            <Tooltip
+              title={!notStarted ? "Broadcast has already been triggered" : ""}
             >
-              Trigger Broadcast
-            </LoadingButton>
-          </span>
-        </Tooltip>
-        {!notStarted && (
-          <Stack sx={{ flex: 1 }} spacing={1}>
-            <DeliveriesTableV2
-              {...DEFAULT_DELIVERIES_TABLE_V2_PROPS}
-              columnAllowList={DEFAULT_ALLOWED_COLUMNS.filter(
-                (c) => c !== "origin",
-              )}
-              journeyId={persistedBroadcast?.journeyId}
-              autoReloadByDefault
-              reloadPeriodMs={10000}
-            />
+              <span>
+                <LoadingButton
+                  loading={
+                    broadcastTriggerRequest.type === CompletionStatus.InProgress
+                  }
+                  disabled={triggerDisabled}
+                  variant="contained"
+                  onClick={handleTrigger}
+                >
+                  Trigger Broadcast
+                </LoadingButton>
+              </span>
+            </Tooltip>
+            {!notStarted && (
+              <Stack sx={{ flex: 1 }} spacing={1}>
+                <DeliveriesTableV2
+                  {...DEFAULT_DELIVERIES_TABLE_V2_PROPS}
+                  columnAllowList={DEFAULT_ALLOWED_COLUMNS.filter(
+                    (c) => c !== "origin",
+                  )}
+                  journeyId={persistedBroadcast?.journeyId}
+                  autoReloadByDefault
+                  reloadPeriodMs={10000}
+                />
+              </Stack>
+            )}
           </Stack>
-        )}
-      </Stack>
+        </>
+      )}
     </BroadcastLayout>
   );
 }

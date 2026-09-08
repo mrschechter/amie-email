@@ -3,9 +3,12 @@ import { db } from "backend-lib/src/db";
 import * as schema from "backend-lib/src/db/schema";
 import { and, eq } from "drizzle-orm";
 import { GetServerSideProps } from "next";
+import Link from "next/link";
 import { useRouter } from "next/router";
 import { validate } from "uuid";
 
+import analyticsStyles from "../../components/analytics/analytics.module.css";
+import PerformancePanel from "../../components/analytics/performancePanel";
 import DashboardContent from "../../components/dashboardContent";
 import JourneyV2 from "../../components/journeys/v2";
 import { addInitialStateToProps } from "../../lib/addInitialStateToProps";
@@ -58,7 +61,35 @@ export default function JourneyPageV2() {
   return (
     <DashboardContent>
       <Stack sx={{ height: "100%", width: "100%" }}>
-        <JourneyV2 id={id} />
+        <nav
+          className={`${analyticsStyles.root} ${analyticsStyles.tabs}`}
+          style={{ padding: "10px 24px", margin: 0 }}
+          aria-label="Journey tabs"
+        >
+          <Link
+            href={{
+              pathname: path.pathname,
+              query: { ...path.query, tab: "builder" },
+            }}
+            aria-current={path.query.tab !== "performance" ? "page" : undefined}
+          >
+            Builder
+          </Link>
+          <Link
+            href={{
+              pathname: path.pathname,
+              query: { ...path.query, tab: "performance" },
+            }}
+            aria-current={path.query.tab === "performance" ? "page" : undefined}
+          >
+            Performance
+          </Link>
+        </nav>
+        {path.query.tab === "performance" ? (
+          <PerformancePanel kind="flows" id={id} />
+        ) : (
+          <JourneyV2 id={id} />
+        )}
       </Stack>
     </DashboardContent>
   );

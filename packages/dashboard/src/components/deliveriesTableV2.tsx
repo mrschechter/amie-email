@@ -112,6 +112,7 @@ export const DEFAULT_DELIVERIES_TABLE_V2_PROPS: DeliveriesTableV2Props = {
 };
 
 interface DeliveriesTableV2Props {
+  initialDateRange?: { startDate: string; endDate: string };
   templateUriTemplate?: string;
   broadcastUriTemplate?: string;
   originUriTemplate?: string;
@@ -128,6 +129,7 @@ interface DeliveriesTableV2Props {
 }
 
 export function DeliveriesTableV2({
+  initialDateRange,
   templateUriTemplate,
   originUriTemplate,
   userId,
@@ -158,7 +160,10 @@ export function DeliveriesTableV2({
 
   const [deliveriesFilterState, setDeliveriesFilterState] =
     useDeliveriesFilterState();
-  const initialEndDate = useMemo(() => new Date(), []);
+  const initialEndDate = useMemo(
+    () => (initialDateRange ? new Date(initialDateRange.endDate) : new Date()),
+    [initialDateRange],
+  );
   const defaultOption = timeOptions.find(
     (o) => o.id === defaultTimeOptionOverride,
   );
@@ -172,9 +177,13 @@ export function DeliveriesTableV2({
 
   const [state, setState] = useImmer<State>({
     dateRange: {
-      startDate: initialStartDate,
+      startDate: initialDateRange
+        ? new Date(initialDateRange.startDate)
+        : initialStartDate,
       endDate: initialEndDate,
-      selectedTimeOption: defaultTimeOptionOverride,
+      selectedTimeOption: initialDateRange
+        ? "custom"
+        : defaultTimeOptionOverride,
     },
     referenceDate: new Date(),
     query: {

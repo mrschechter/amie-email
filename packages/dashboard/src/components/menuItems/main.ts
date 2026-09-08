@@ -26,7 +26,7 @@ const menuItems: { items: MenuItemGroup[] } = {
       children: [
         {
           id: "analysis",
-          title: "Analysis",
+          title: "Analytics",
           type: "item",
           url: "/analysis/overview",
           icon: BarChartOutlined,
