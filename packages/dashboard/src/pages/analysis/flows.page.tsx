@@ -17,5 +17,5 @@ export const getServerSideProps: GetServerSideProps<PropsWithInitialState> =
   });
 
 export default function Page() {
-  return <AnalyticsPage tab="overview" />;
+  return <AnalyticsPage tab="flows" />;
 }

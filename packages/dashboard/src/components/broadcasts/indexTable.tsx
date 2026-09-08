@@ -68,10 +68,17 @@ import Link from "next/link";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { useUniversalRouter } from "../../lib/authModeProvider";
+import {
+  analyticsError,
+  defaultAnalyticsRange,
+  useAnalytics,
+} from "../../lib/useAnalytics";
 import { useArchiveBroadcastMutation } from "../../lib/useArchiveBroadcastMutation";
 import { useBroadcastsQuery } from "../../lib/useBroadcastsQuery";
 import { useCreateBroadcastMutation } from "../../lib/useCreateBroadcastMutation";
 import { useDuplicateResourceMutation } from "../../lib/useDuplicateResourceMutation";
+import { performanceColumns } from "../analytics/listColumns";
+import { StatusPill } from "../analytics/performanceTable";
 import { GreyButton } from "../greyButtonStyle";
 
 // Use the union type for the table row data
@@ -81,7 +88,7 @@ type Row = BroadcastResource | BroadcastResourceV2;
 function humanizeBroadcastStatus(status: string): string {
   switch (status) {
     case "NotStarted":
-      return "Not Started";
+      return "Draft";
     case "InProgress":
       return "In Progress";
     case "Triggered": // V1 status, might map to Running/Completed in practice
@@ -252,8 +259,7 @@ function NameCell({ row, getValue }: CellContext<Row, unknown>) {
 function StatusCell({ getValue }: CellContext<Row, unknown>) {
   const rawStatus = getValue<string>();
   const humanizedStatus = humanizeBroadcastStatus(rawStatus);
-  // TODO: Consider using MUI Chip for better visual styling
-  return <Typography variant="body2">{humanizedStatus}</Typography>;
+  return <StatusPill status={humanizedStatus} />;
 }
 
 // TimeCell for displaying timestamps like createdAt
@@ -344,6 +350,11 @@ function ScheduledAtCell({ row }: CellContext<Row, unknown>) {
 }
 
 export default function BroadcastsTable() {
+  const analyticsRange = useMemo(defaultAnalyticsRange, []);
+  const analytics = useAnalytics("broadcasts", {
+    ...analyticsRange,
+    compare: false,
+  });
   const theme = useTheme();
   const universalRouter = useUniversalRouter();
   // const queryClient = useQueryClient(); // Not used directly here anymore for mutations
@@ -381,16 +392,15 @@ export default function BroadcastsTable() {
   });
 
   // query.data is (BroadcastResource | BroadcastResourceV2)[]
-  const rawData: Row[] = query.data ?? [];
-
   // Filter data based on showArchived state
   const broadcastsData: Row[] = useMemo(() => {
+    const rawData: Row[] = query.data ?? [];
     if (showArchived) {
       return rawData;
     }
     // Assuming an 'archived' property exists on Row type items
     return rawData.filter((b) => !b.archived);
-  }, [rawData, showArchived]);
+  }, [query.data, showArchived]);
 
   const [pagination, setPagination] = useState({
     pageIndex: 0, // initial page index
@@ -419,6 +429,7 @@ export default function BroadcastsTable() {
         accessorKey: "status",
         cell: StatusCell,
       },
+      ...performanceColumns<Row>(analytics.data?.rows),
       {
         id: "createdAt",
         header: "Created At",
@@ -438,7 +449,7 @@ export default function BroadcastsTable() {
         cell: ActionsCell, // Use direct cell renderer
       },
     ];
-  }, []); // No dependency needed now
+  }, [analytics.data]); // No dependency needed now
 
   const table = useReactTable({
     columns,
@@ -567,6 +578,15 @@ export default function BroadcastsTable() {
             </Button>
           </Stack>
         </Stack>
+        {analytics.error && (
+          <Typography role="alert" color="error">
+            30-day performance: {analyticsError(analytics.error)}
+          </Typography>
+        )}
+        <Typography variant="caption" color="text.secondary">
+          Open, click, and attributed revenue columns cover the last 30 days
+          (UTC).
+        </Typography>
         <TableContainer component={Paper}>
           <Table stickyHeader>
             <TableHead>
@@ -575,6 +595,11 @@ export default function BroadcastsTable() {
                   {headerGroup.headers.map((header) => (
                     <TableCell
                       key={header.id}
+                      align={
+                        header.column.id.startsWith("analytics")
+                          ? "right"
+                          : "left"
+                      }
                       colSpan={header.colSpan}
                       style={{
                         width:
@@ -637,7 +662,14 @@ export default function BroadcastsTable() {
                   }}
                 >
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
+                    <TableCell
+                      key={cell.id}
+                      align={
+                        cell.column.id.startsWith("analytics")
+                          ? "right"
+                          : "left"
+                      }
+                    >
                       {flexRender(
                         cell.column.columnDef.cell,
                         cell.getContext(),

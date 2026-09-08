@@ -63,11 +63,18 @@ import Link from "next/link";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { useUniversalRouter } from "../../../lib/authModeProvider";
+import {
+  analyticsError,
+  defaultAnalyticsRange,
+  useAnalytics,
+} from "../../../lib/useAnalytics";
 import { useCreateJourneyMutation } from "../../../lib/useCreateJourneyMutation";
 import { useDeleteJourneyMutation } from "../../../lib/useDeleteJourneyMutation";
 import { useDuplicateResourceMutation } from "../../../lib/useDuplicateResourceMutation";
 import { useJourneyMutation } from "../../../lib/useJourneyMutation";
 import { useJourneysQuery } from "../../../lib/useJourneysQuery";
+import { performanceColumns } from "../../analytics/listColumns";
+import { StatusPill } from "../../analytics/performanceTable";
 import { GreyButton } from "../../greyButtonStyle";
 import { DEFAULT_EDGES, DEFAULT_JOURNEY_NODES } from "../defaults";
 import { JourneyStateForDraft, journeyStateToDraft } from "../store";
@@ -77,7 +84,7 @@ type Row = GetJourneysResponseItem;
 function humanizeJourneyStatus(status: JourneyResourceStatus): string {
   switch (status) {
     case "NotStarted":
-      return "Not Started";
+      return "Draft";
     case "Running":
       return "Running";
     case "Paused":
@@ -247,9 +254,7 @@ function NameCell({ row, getValue }: CellContext<Row, unknown>) {
 
 function StatusCell({ getValue }: CellContext<Row, unknown>) {
   const rawStatus = getValue<JourneyResourceStatus>();
-  return (
-    <Typography variant="body2">{humanizeJourneyStatus(rawStatus)}</Typography>
-  );
+  return <StatusPill status={humanizeJourneyStatus(rawStatus)} />;
 }
 
 function TimeCell({ getValue }: CellContext<Row, unknown>) {
@@ -312,6 +317,11 @@ function TimeCell({ getValue }: CellContext<Row, unknown>) {
 }
 
 export default function JourneysTable() {
+  const analyticsRange = useMemo(defaultAnalyticsRange, []);
+  const analytics = useAnalytics("flows", {
+    ...analyticsRange,
+    compare: false,
+  });
   const router = useUniversalRouter();
   const nameInputRef = useRef<HTMLInputElement>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -370,6 +380,7 @@ export default function JourneysTable() {
         accessorKey: "status",
         cell: StatusCell,
       },
+      ...performanceColumns<Row>(analytics.data?.rows),
       {
         id: "createdAt",
         header: "Created At",
@@ -383,7 +394,7 @@ export default function JourneysTable() {
         cell: ActionsCell,
       },
     ],
-    [],
+    [analytics.data],
   );
 
   const table = useReactTable({
@@ -459,6 +470,15 @@ export default function JourneysTable() {
             New Journey
           </Button>
         </Stack>
+        {analytics.error && (
+          <Typography role="alert" color="error">
+            30-day performance: {analyticsError(analytics.error)}
+          </Typography>
+        )}
+        <Typography variant="caption" color="text.secondary">
+          Open, click, and attributed revenue columns cover the last 30 days
+          (UTC).
+        </Typography>
         <TableContainer component={Paper}>
           <Table stickyHeader>
             <TableHead>
@@ -467,6 +487,11 @@ export default function JourneysTable() {
                   {headerGroup.headers.map((header) => (
                     <TableCell
                       key={header.id}
+                      align={
+                        header.column.id.startsWith("analytics")
+                          ? "right"
+                          : "left"
+                      }
                       colSpan={header.colSpan}
                       style={{
                         width:
@@ -521,7 +546,14 @@ export default function JourneysTable() {
               {table.getRowModel().rows.map((row) => (
                 <TableRow key={row.id} hover>
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
+                    <TableCell
+                      key={cell.id}
+                      align={
+                        cell.column.id.startsWith("analytics")
+                          ? "right"
+                          : "left"
+                      }
+                    >
                       {flexRender(
                         cell.column.columnDef.cell,
                         cell.getContext(),
