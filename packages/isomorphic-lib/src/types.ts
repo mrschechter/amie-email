@@ -3910,6 +3910,7 @@ export const NodeStats = Type.Union([
 export type NodeStats = Static<typeof NodeStats>;
 
 export const JourneyStats = Type.Object({
+  processedCounts: Type.Optional(Type.Record(Type.String(), Type.Number())),
   journeyId: Type.String(),
   workspaceId: Type.String(),
   nodeStats: Type.Record(Type.String(), NodeStats),
@@ -6585,6 +6586,9 @@ export const GetRevenueSummaryRequest = Type.Object({
   startDate: Type.String(),
   endDate: Type.String(),
   filters: Type.Optional(RevenueAttributionFilters),
+  windowDays: Type.Optional(
+    Type.Union([Type.Literal(5), Type.Literal(7), Type.Literal(14)]),
+  ),
 });
 
 export type GetRevenueSummaryRequest = Static<typeof GetRevenueSummaryRequest>;
@@ -6637,6 +6641,9 @@ export const GetRevenueBreakdownRequest = Type.Object({
   endDate: Type.String(),
   groupBy: RevenueBreakdownGroupBy,
   filters: Type.Optional(RevenueAttributionFilters),
+  windowDays: Type.Optional(
+    Type.Union([Type.Literal(5), Type.Literal(7), Type.Literal(14)]),
+  ),
 });
 
 export type GetRevenueBreakdownRequest = Static<
@@ -6648,6 +6655,10 @@ export const DownloadRevenueAttributionRequest = Type.Object({
   startDate: Type.String(),
   endDate: Type.String(),
   filters: Type.Optional(RevenueAttributionFilters),
+  windowDays: Type.Optional(
+    Type.Union([Type.Literal(5), Type.Literal(7), Type.Literal(14)]),
+  ),
+  exportKind: Type.Optional(Type.Literal("orders")),
 });
 
 export type DownloadRevenueAttributionRequest = Static<

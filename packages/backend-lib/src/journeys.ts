@@ -366,15 +366,17 @@ export async function getJourneyMessageStats({
   const statsMap = new Map<string, Map<string, Map<string, number>>>();
   await streamClickhouseQuery(resultsSet, (row) => {
     for (const i of row) {
-      const item = i as {
-        journey_id: string;
-        // represents the last observed event for a given email
-        // so for example a clicked email will also have been opened and
-        // delivered
-        event: string;
-        node_id: string;
-        count: string;
-      };
+      const item = unwrap(
+        schemaValidateWithErr(
+          i,
+          Type.Object({
+            journey_id: Type.String(),
+            event: Type.String(),
+            node_id: Type.String(),
+            count: Type.String(),
+          }),
+        ),
+      );
       const journeyStats =
         statsMap.get(item.journey_id) ?? new Map<string, Map<string, number>>();
       const nodeStats =
@@ -471,12 +473,19 @@ export async function getJourneyMessageStats({
 export async function getJourneysStats({
   workspaceId,
   journeyIds: allJourneyIds,
+  startDate,
+  endDate,
+  includeMessageStats = true,
 }: {
   workspaceId: string;
   journeyIds?: string[];
+  startDate?: string;
+  endDate?: string;
+  includeMessageStats?: boolean;
 }): Promise<JourneyStats[]> {
   const qb = new ClickHouseQueryBuilder();
   const conditions: SQL[] = [
+    eq(dbJourney.workspaceId, workspaceId),
     not(eq(dbJourney.status, JourneyResourceStatusEnum.NotStarted)),
     isNotNull(dbJourney.definition),
   ];
@@ -500,12 +509,15 @@ export async function getJourneysStats({
             properties,
             '$.nodeId'
         ) node_id,
-        uniq(message_id) as count
+        uniqExact(message_id) as count
     from internal_events
     where
         workspace_id = ${workspaceIdQuery}
         and journey_id in ${journeyIdsQuery}
         and event = 'DFJourneyNodeProcessed'
+        and hidden = false
+        ${startDate ? `and event_time >= parseDateTime64BestEffort(${qb.addQueryValue(startDate, "String")}, 3, 'UTC')` : ""}
+        ${endDate ? `and event_time < parseDateTime64BestEffort(${qb.addQueryValue(endDate, "String")}, 3, 'UTC')` : ""}
     group by journey_id, node_id
 `;
 
@@ -519,30 +531,32 @@ export async function getJourneysStats({
       query_params: qb.getQueries(),
       format: "JSONEachRow",
     }),
-    getJourneyMessageStats({
-      workspaceId,
-      journeys: enrichedJourneys.flatMap((j) => {
-        if (!j.definition) {
-          return [];
-        }
-        const nodes = j.definition.nodes.flatMap((n) => {
-          if (n.type !== JourneyNodeType.MessageNode) {
-            return [];
-          }
-          return {
-            id: n.id,
-            channel: n.variant.type,
-          };
-        });
-        if (!nodes.length) {
-          return [];
-        }
-        return {
-          id: j.id,
-          nodes,
-        };
-      }),
-    }),
+    includeMessageStats
+      ? getJourneyMessageStats({
+          workspaceId,
+          journeys: enrichedJourneys.flatMap((j) => {
+            if (!j.definition) {
+              return [];
+            }
+            const nodes = j.definition.nodes.flatMap((n) => {
+              if (n.type !== JourneyNodeType.MessageNode) {
+                return [];
+              }
+              return {
+                id: n.id,
+                channel: n.variant.type,
+              };
+            });
+            if (!nodes.length) {
+              return [];
+            }
+            return {
+              id: j.id,
+              nodes,
+            };
+          }),
+        })
+      : Promise.resolve([]),
   ]);
 
   const stream = statsResultSet.stream();
@@ -604,6 +618,7 @@ export async function getJourneysStats({
       workspaceId,
       journeyId,
       nodeStats: {},
+      processedCounts: Object.fromEntries(nodeProcessedMap),
     };
     journeysStats.push(stats);
     const heritageMap = buildHeritageMap(definition);

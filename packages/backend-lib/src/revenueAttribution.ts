@@ -1,5 +1,9 @@
 import { writeToString } from "@fast-csv/format";
 import {
+  RevenueOrder,
+  validateAnalyticsRange,
+} from "isomorphic-lib/src/analytics";
+import {
   GetRevenueBreakdownRequest,
   GetRevenueBreakdownResponse,
   GetRevenueSummaryRequest,
@@ -35,29 +39,31 @@ function revenueQuerySettings() {
   } as const;
 }
 
-function buildAttributionCtes({
+export function buildAttributionCtes({
   qb,
   workspaceId,
   startDate,
   endDate,
+  windowDays = config().amieAttributionWindowDays,
 }: {
   qb: ClickHouseQueryBuilder;
   workspaceId: string;
   startDate: string;
   endDate: string;
+  windowDays?: number;
 }): string {
+  validateAnalyticsRange(startDate, endDate);
+  if (![5, 7, 14].includes(windowDays))
+    throw Object.assign(
+      new Error("Attribution window must be 5, 7, or 14 days."),
+      { statusCode: 400 },
+    );
   const workspaceIdParam = qb.addQueryValue(workspaceId, "String");
   const startDateParam = qb.addQueryValue(startDate, "String");
   const endDateParam = qb.addQueryValue(endDate, "String");
-  const windowDaysParam = qb.addQueryValue(
-    config().amieAttributionWindowDays,
-    "Int32",
-  );
+  const windowDaysParam = qb.addQueryValue(windowDays, "Int32");
 
   const touchEvents = [InternalEventType.EmailClicked, SMS_CLICKED_EVENT];
-  if (config().amieAttributionIncludeOpens) {
-    touchEvents.push(InternalEventType.EmailOpened);
-  }
   const touchEventsParam = qb.addQueryValue(touchEvents, "Array(String)");
 
   return `
@@ -97,10 +103,8 @@ function buildAttributionCtes({
         AND event = '${ORDER_PAID_EVENT}'
         AND user_id != ''
         AND hidden = false
-        AND processing_time >= parseDateTime64BestEffort(${startDateParam}, 3, 'UTC')
-        AND processing_time <= parseDateTime64BestEffort(${endDateParam}, 3, 'UTC')
         AND event_time >= parseDateTime64BestEffort(${startDateParam}, 3, 'UTC')
-        AND event_time <= parseDateTime64BestEffort(${endDateParam}, 3, 'UTC')
+        AND event_time < parseDateTime64BestEffort(${endDateParam}, 3, 'UTC')
     ),
     deduplicated_orders AS (
       SELECT
@@ -117,7 +121,7 @@ function buildAttributionCtes({
       FROM deduplicated_orders
       WHERE
         order_time >= parseDateTime64BestEffort(${startDateParam}, 3, 'UTC')
-        AND order_time <= parseDateTime64BestEffort(${endDateParam}, 3, 'UTC')
+        AND order_time < parseDateTime64BestEffort(${endDateParam}, 3, 'UTC')
     ),
     touches AS (
       SELECT
@@ -134,16 +138,11 @@ function buildAttributionCtes({
         AND event IN ${touchEventsParam}
         AND user_id != ''
         AND hidden = false
-        AND processing_time >= subtractDays(
-          parseDateTime64BestEffort(${startDateParam}, 3, 'UTC'),
-          ${windowDaysParam}
-        )
-        AND processing_time <= parseDateTime64BestEffort(${endDateParam}, 3, 'UTC')
         AND event_time >= subtractDays(
           parseDateTime64BestEffort(${startDateParam}, 3, 'UTC'),
           ${windowDaysParam}
         )
-        AND event_time <= parseDateTime64BestEffort(${endDateParam}, 3, 'UTC')
+        AND event_time < parseDateTime64BestEffort(${endDateParam}, 3, 'UTC')
     ),
     attributed_orders AS (
       SELECT
@@ -164,7 +163,13 @@ function buildAttributionCtes({
         if(c.touch_time >= subtractDays(o.order_time, ${windowDaysParam}), c.attributed_message_id, '') AS attributed_message_id
       FROM (SELECT * FROM orders ORDER BY user_id, order_time) AS o
       ASOF LEFT JOIN (
-        SELECT * FROM touches ORDER BY user_id, touch_time
+        SELECT user_id, touch_time,
+          argMax(t.template_id, t.attributed_message_id) AS template_id,
+          argMax(t.broadcast_id, t.attributed_message_id) AS broadcast_id,
+          argMax(t.journey_id, t.attributed_message_id) AS journey_id,
+          argMax(t.journey_node_id, t.attributed_message_id) AS journey_node_id,
+          max(t.attributed_message_id) AS attributed_message_id
+        FROM touches AS t GROUP BY user_id, touch_time ORDER BY user_id, touch_time
       ) AS c
         ON o.user_id = c.user_id AND o.order_time >= c.touch_time
     )`;
@@ -233,6 +238,7 @@ export async function getRevenueSummary({
   startDate,
   endDate,
   filters,
+  windowDays,
 }: GetRevenueSummaryRequest): Promise<GetRevenueSummaryResponse> {
   const qb = new ClickHouseQueryBuilder();
   const attributionCtes = buildAttributionCtes({
@@ -240,6 +246,7 @@ export async function getRevenueSummary({
     workspaceId,
     startDate,
     endDate,
+    windowDays,
   });
   const attributionFilter = buildAttributionFilter({
     qb,
@@ -269,8 +276,8 @@ export async function getRevenueSummary({
         ie.workspace_id = ${workspaceIdParam}
         AND ie.event = '${InternalEventType.MessageSent}'
         AND ie.hidden = false
-        AND ie.processing_time >= parseDateTimeBestEffort(${startDateParam}, 'UTC')
-        AND ie.processing_time <= parseDateTimeBestEffort(${endDateParam}, 'UTC')
+        AND ie.event_time >= parseDateTimeBestEffort(${startDateParam}, 'UTC')
+        AND ie.event_time < parseDateTimeBestEffort(${endDateParam}, 'UTC')
         ${eventFilter}
     )
     SELECT
@@ -324,9 +331,7 @@ export async function getRevenueSummary({
   return {
     summary: {
       currency: "USD",
-      attributionTouch: config().amieAttributionIncludeOpens
-        ? "click_or_open"
-        : "click",
+      attributionTouch: "click",
       sends,
       totalOrders: toNumber(row?.total_orders),
       totalRevenueCents: toNumber(row?.total_revenue_cents),
@@ -373,9 +378,9 @@ function dimensionSql(groupBy: RevenueBreakdownGroupBy): DimensionSql {
     case "journey":
       return {
         activity:
-          "'journey' AS source_type, ie.journey_id AS source_id, JSONExtractString(ie.properties, 'nodeId') AS journey_node_id, '' AS template_id",
+          "'journey' AS source_type, ie.journey_id AS source_id, '' AS journey_node_id, '' AS template_id",
         attribution:
-          "'journey' AS source_type, ao.journey_id AS source_id, ao.journey_node_id AS journey_node_id, '' AS template_id",
+          "'journey' AS source_type, ao.journey_id AS source_id, '' AS journey_node_id, '' AS template_id",
         requiredActivityDimension: "ie.journey_id != ''",
         requiredAttributionDimension: "ao.journey_id != ''",
       };
@@ -413,6 +418,7 @@ export async function getRevenueBreakdown({
   endDate,
   groupBy,
   filters,
+  windowDays,
 }: GetRevenueBreakdownRequest): Promise<GetRevenueBreakdownResponse> {
   const qb = new ClickHouseQueryBuilder();
   const attributionCtes = buildAttributionCtes({
@@ -420,6 +426,7 @@ export async function getRevenueBreakdown({
     workspaceId,
     startDate,
     endDate,
+    windowDays,
   });
   const attributionFilter = buildAttributionFilter({
     qb,
@@ -461,8 +468,8 @@ export async function getRevenueBreakdown({
           '${SMS_CLICKED_EVENT}'
         )
         AND ie.hidden = false
-        AND ie.processing_time >= parseDateTimeBestEffort(${startDateParam}, 'UTC')
-        AND ie.processing_time <= parseDateTimeBestEffort(${endDateParam}, 'UTC')
+        AND ie.event_time >= parseDateTimeBestEffort(${startDateParam}, 'UTC')
+        AND ie.event_time < parseDateTimeBestEffort(${endDateParam}, 'UTC')
         AND ${dimensions.requiredActivityDimension}
         ${eventFilter}
       GROUP BY source_type, source_id, journey_node_id, template_id
@@ -555,9 +562,121 @@ export async function getRevenueBreakdown({
   };
 }
 
+/** One revenue fact per source/node/template/day/kind, including unattributed orders. */
+export interface RevenueFact {
+  journeyId: string;
+  broadcastId: string;
+  nodeId: string;
+  templateId: string;
+  day: string;
+  kind: string;
+  attributed: number;
+  orders: number;
+  revenueCents: number;
+}
+export function buildRevenueFactsQuery(request: GetRevenueSummaryRequest) {
+  const qb = new ClickHouseQueryBuilder();
+  const ctes = buildAttributionCtes({ ...request, qb });
+  return {
+    query: `WITH ${ctes}
+      SELECT journey_id AS journeyId, broadcast_id AS broadcastId,
+        journey_node_id AS nodeId, template_id AS templateId,
+        toString(toDate(order_time, 'UTC')) AS day, order_kind AS kind,
+        toUInt8(attributed_message_id != '') AS attributed,
+        count() AS orders, sum(amount_cents) AS revenueCents
+      FROM attributed_orders
+      GROUP BY journeyId, broadcastId, nodeId, templateId, day, kind, attributed`,
+    query_params: qb.getQueries(),
+  };
+}
+export async function getRevenueFacts(
+  request: GetRevenueSummaryRequest,
+): Promise<RevenueFact[]> {
+  const result = await chQuery({
+    ...buildRevenueFactsQuery(request),
+    format: "JSONEachRow",
+    clickhouse_settings: revenueQuerySettings(),
+  });
+  const rows = await result.json<RevenueFact>();
+  return rows.map((row) => ({
+    ...row,
+    attributed: Number(row.attributed),
+    orders: Number(row.orders),
+    revenueCents: Number(row.revenueCents),
+  }));
+}
+
+export function buildRevenueOrdersQuery(
+  request: GetRevenueSummaryRequest,
+  limit?: number,
+  offset = 0,
+) {
+  const qb = new ClickHouseQueryBuilder();
+  const ctes = buildAttributionCtes({ ...request, qb });
+  const filter = buildAttributionFilter({
+    qb,
+    filters: request.filters,
+    alias: "ao",
+  });
+  return {
+    query: `WITH ${ctes}
+      SELECT order_id AS orderId, user_id AS userId, toString(order_time) AS date,
+        amount_cents AS amountCents, order_kind AS kind,
+        journey_id AS journeyId, broadcast_id AS broadcastId,
+        journey_node_id AS nodeId, template_id AS templateId, attributed_message_id AS messageId,
+        if(attributed_message_id = '', NULL, dateDiff('second', touch_time, order_time) / 60.0) AS minutesSinceClick
+      FROM attributed_orders AS ao ${filter}
+      ORDER BY order_time DESC, order_id DESC
+      ${limit === undefined ? "" : `LIMIT ${qb.addQueryValue(limit, "UInt32")} OFFSET ${qb.addQueryValue(offset, "UInt32")}`}`,
+    query_params: qb.getQueries(),
+  };
+}
+export async function getRevenueOrders(
+  request: GetRevenueSummaryRequest,
+  limit?: number,
+  offset = 0,
+): Promise<RevenueOrder[]> {
+  const result = await chQuery({
+    ...buildRevenueOrdersQuery(request, limit, offset),
+    format: "JSONEachRow",
+    clickhouse_settings: revenueQuerySettings(),
+  });
+  return (await result.json<RevenueOrder>()).map((row) => ({
+    ...row,
+    amountCents: Number(row.amountCents),
+    minutesSinceClick:
+      row.minutesSinceClick === null ? null : Number(row.minutesSinceClick),
+  }));
+}
+
 export async function buildRevenueAttributionFile(
-  request: Omit<GetRevenueBreakdownRequest, "groupBy">,
+  request: Omit<GetRevenueBreakdownRequest, "groupBy"> & {
+    exportKind?: "orders";
+  },
 ): Promise<{ fileName: string; fileContent: string }> {
+  if (request.exportKind === "orders") {
+    const orders = await getRevenueOrders(request);
+    return {
+      fileName: `revenue-orders-${request.startDate.slice(0, 10)}.csv`,
+      fileContent: await writeToString(
+        orders.map((order) => ({
+          Order: order.orderId,
+          "User ID": order.userId,
+          "Date (UTC)": order.date,
+          "Amount (USD)": (order.amountCents / 100).toFixed(2),
+          Kind: order.kind,
+          "Attributed to":
+            order.broadcastId ||
+            order.journeyId ||
+            order.templateId ||
+            "Unattributed",
+          "Message ID": order.messageId,
+          "Minutes since click": order.minutesSinceClick ?? "",
+        })),
+        { headers: true },
+      ),
+    };
+  }
   const [breakdown, resources] = await Promise.all([
     getRevenueBreakdown({ ...request, groupBy: "email" }),
     getResources({
