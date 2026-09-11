@@ -7,6 +7,8 @@ import {
   JourneyDefinition,
   JourneyNodeType,
   JourneyResource,
+  JourneyResourceStatusEnum,
+  SavedJourneyResource,
   SegmentSplitVariantType,
 } from "isomorphic-lib/src/types";
 import { Overwrite } from "utility-types";
@@ -23,6 +25,8 @@ import {
   findDirectUiChildren,
   findDirectUiParents,
   journeyDefinitionFromState,
+  journeyResourceToState,
+  journeyStateToDraft,
   journeyToState,
 } from "./store";
 
@@ -958,5 +962,29 @@ describe("when journey has RandomCohortNode", () => {
         ]),
       );
     }
+  });
+});
+
+describe("journeyResourceToState", () => {
+  it("loads the published definition when a draft exists but View Draft is off", () => {
+    const definition = unwrap(
+      journeyDefinitionFromState({ state: EXAMPLE_JOURNEY_STATE }),
+    );
+    const journey: SavedJourneyResource = {
+      id: uuid(),
+      workspaceId: uuid(),
+      name: "Published journey with a draft",
+      status: JourneyResourceStatusEnum.Running,
+      definition,
+      draft: journeyStateToDraft({ journeyNodes: [], journeyEdges: [] }),
+      createdAt: 0,
+      updatedAt: 0,
+    };
+
+    const state = journeyResourceToState(journey, { viewDraft: false });
+
+    expect(state.journeyNodes).toHaveLength(
+      journeyToState({ definition, name: journey.name }).journeyNodes.length,
+    );
   });
 });
