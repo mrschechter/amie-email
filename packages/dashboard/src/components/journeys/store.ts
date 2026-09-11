@@ -2311,8 +2311,9 @@ export function shouldDraftBeUpdated({
 
 export function journeyResourceToState(
   journey: SavedJourneyResource,
+  { viewDraft = true }: { viewDraft?: boolean } = {},
 ): JourneyStateForResource {
-  if (journey.draft) {
+  if (viewDraft && journey.draft) {
     const resource: JourneyResourceWithDraftForState = {
       ...journey,
       draft: journey.draft,

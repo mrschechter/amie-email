@@ -1,5 +1,5 @@
 import { SavedJourneyResource } from "isomorphic-lib/src/types";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useImmer } from "use-immer";
 
 import { useAppStorePick } from "../../lib/appStore";
@@ -28,14 +28,17 @@ export default function JourneyV2({ id }: { id: string }) {
     id,
     step: JourneyV2StepKeys.EDITOR,
   });
+  const [isInitialized, setIsInitialized] = useState(false);
   const {
     initJourneyState,
+    setViewDraft,
     viewDraft,
     journeyEdges,
     journeyNodes,
     journeyNodesIndex,
   } = useAppStorePick([
     "initJourneyState",
+    "setViewDraft",
     "viewDraft",
     "journeyEdges",
     "journeyNodes",
@@ -63,13 +66,18 @@ export default function JourneyV2({ id }: { id: string }) {
     // assume that definition and draft values were not excluded from the query
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
     const savedJourney = journey as SavedJourneyResource;
-    const stateFromJourney = journeyResourceToState(savedJourney);
+    const viewDraftOnLoad = !savedJourney.definition;
+    setViewDraft(viewDraftOnLoad);
+    const stateFromJourney = journeyResourceToState(savedJourney, {
+      viewDraft: viewDraftOnLoad,
+    });
     initJourneyState(stateFromJourney);
+    setIsInitialized(true);
   }, !!journey);
 
   // Update journey when draft changes.
   useEffect(() => {
-    if (!journey || !viewDraft) {
+    if (!isInitialized || !journey || !viewDraft) {
       return;
     }
     if (
@@ -92,7 +100,14 @@ export default function JourneyV2({ id }: { id: string }) {
     };
     updateJourney(upsertPayload);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [journey, journeyEdges, journeyNodes, journeyNodesIndex, viewDraft]);
+  }, [
+    isInitialized,
+    journey,
+    journeyEdges,
+    journeyNodes,
+    journeyNodesIndex,
+    viewDraft,
+  ]);
 
   return (
     <JourneyV2Context.Provider value={context}>
