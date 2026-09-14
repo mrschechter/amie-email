@@ -56,7 +56,7 @@ const eventConditions = {
   bounced: "event = 'DFEmailBounced'",
   complaint: "event IN ('DFEmailMarkedSpam', 'DFEmailComplaint')",
   unsubscribed:
-    "(event = 'DFEmailUnsubscribed' OR (event = 'DFSubscriptionChange' AND JSONExtractString(properties, 'action') = 'Unsubscribe'))",
+    "(event = 'DFEmailUnsubscribed' OR (event = 'DFSubscriptionChange' AND action = 'Unsubscribe'))",
   smsFailed: "event = 'DFSmsFailed'",
 };
 
@@ -70,33 +70,31 @@ export function buildAnalyticsQuery(
   const workspace = qb.addQueryValue(request.workspaceId, "String");
   const start = qb.addQueryValue(request.startDate, "String");
   const end = qb.addQueryValue(request.endDate, "String");
-  // Filter before reading properties or resolving message IDs. Keep event-time
-  // semantics: processing_time can fall outside the range for late/backfilled events.
+  // The slim table is sorted by workspace and event time, including late arrivals.
   const query = `WITH events AS (
-    SELECT event, event_time, properties, message_id
-    FROM dittofeed.user_events_v2
+    SELECT event, event_time, resolved_id, journey_id, node_id, template_id,
+      broadcast_id, address, channel, action
+    FROM dittofeed.message_events_slim
     PREWHERE workspace_id = ${workspace}
-      -- user_events_v2 is ordered by (workspace_id, processing_time, ...): a processing_time
-      -- band lets ClickHouse skip granules; event_time keeps the exact semantics. Message
-      -- events are written live, so a 2-day slack covers late arrivals without a full scan.
-      AND processing_time >= parseDateTime64BestEffort(${start}, 3, 'UTC') - INTERVAL 2 DAY
-      AND processing_time < parseDateTime64BestEffort(${end}, 3, 'UTC') + INTERVAL 2 DAY
       AND event_time >= parseDateTime64BestEffort(${start}, 3, 'UTC')
       AND event_time < parseDateTime64BestEffort(${end}, 3, 'UTC')
-      AND event_type = 'track' AND hidden = false
-      AND (event IN ('DFInternalMessageSent', 'DFSubscriptionChange') OR startsWith(event, 'DFEmail') OR startsWith(event, 'DFSms'))
-  ), resolved_events AS (
-    SELECT event, event_time, properties,
-      if(JSONExtractString(properties, 'messageId') != '', JSONExtractString(properties, 'messageId'), message_id) AS resolved_id
-    FROM events
-    WHERE JSONExtractString(properties, 'variant', 'type') NOT IN ('MobilePush', 'Webhook')
+    WHERE hidden = false AND channel NOT IN ('MobilePush', 'Webhook')
   ), dimensions AS (
     SELECT resolved_id,
-      ${["journeyId", "nodeId", "templateId", "broadcastId"].map((key) => `argMaxIf(JSONExtractString(properties, '${key}'), event_time, JSONExtractString(properties, '${key}') != '') AS ${key}`).join(",\n      ")},
-      argMaxIf(coalesce(nullIf(JSONExtractString(properties, 'email'), ''), nullIf(JSONExtractString(properties, 'variant', 'to'), ''), ''), event_time,
-        JSONExtractString(properties, 'email') != '' OR JSONExtractString(properties, 'variant', 'to') != '') AS address,
-      argMaxIf(JSONExtractString(properties, 'variant', 'type'), event_time, JSONExtractString(properties, 'variant', 'type') != '') AS channel
-    FROM resolved_events GROUP BY resolved_id
+      ${Object.entries({
+        journey_id: "journeyId",
+        node_id: "nodeId",
+        template_id: "templateId",
+        broadcast_id: "broadcastId",
+      })
+        .map(
+          ([column, alias]) =>
+            `argMaxIf(${column}, event_time, ${column} != '') AS ${alias}`,
+        )
+        .join(",\n      ")},
+      argMaxIf(events.address, event_time, events.address != '') AS address,
+      argMaxIf(events.channel, event_time, events.channel != '') AS channel
+    FROM events GROUP BY resolved_id
   ), messages AS (
     SELECT e.resolved_id, ${groupBy === "day" ? "toString(toDate(e.event_time, 'UTC'))" : "''"} AS day,
       d.journeyId AS journeyId, d.nodeId AS nodeId, d.templateId AS templateId, d.broadcastId AS broadcastId,
@@ -109,7 +107,7 @@ export function buildAnalyticsQuery(
       countIf(${eventConditions.opened}) AS rawOpened, countIf(${eventConditions.clicked}) AS rawClicked,
       if(countIf(${eventConditions.sends}) = 0, '', formatDateTime(maxIf(event_time, ${eventConditions.sends}), '%Y-%m-%dT%H:%i:%SZ', 'UTC')) AS lastSend,
       if(countIf(${eventConditions.sends}) = 0, '', formatDateTime(minIf(event_time, ${eventConditions.sends}), '%Y-%m-%dT%H:%i:%SZ', 'UTC')) AS sentAt
-    FROM resolved_events e INNER JOIN dimensions d ON e.resolved_id = d.resolved_id
+    FROM events e INNER JOIN dimensions d ON e.resolved_id = d.resolved_id
     ${groupBy === "domain" ? "WHERE d.channel NOT IN ('Sms', 'MobilePush', 'Webhook') AND NOT startsWith(e.event, 'DFSms')" : ""}
     GROUP BY e.resolved_id, day, journeyId, nodeId, templateId, broadcastId, domain
   )
@@ -124,14 +122,15 @@ export function buildDeliverabilityAddressesQuery(request: AnalyticsRequest) {
   const qb = new ClickHouseQueryBuilder();
   return {
     query: `SELECT user_id AS userId,
-      coalesce(nullIf(JSONExtractString(properties, 'email'), ''), nullIf(JSONExtractString(properties, 'variant', 'to'), ''), user_id) AS address,
+      if(slim.address = '', user_id, slim.address) AS address,
       event, toString(max(event_time)) AS date
-      FROM dittofeed.user_events_v2
-      WHERE workspace_id = ${qb.addQueryValue(request.workspaceId, "String")} AND event_type = 'track' AND hidden = false
+      FROM dittofeed.message_events_slim AS slim
+      PREWHERE workspace_id = ${qb.addQueryValue(request.workspaceId, "String")}
         AND event_time >= parseDateTime64BestEffort(${qb.addQueryValue(request.startDate, "String")}, 3, 'UTC')
         AND event_time < parseDateTime64BestEffort(${qb.addQueryValue(request.endDate, "String")}, 3, 'UTC')
+      WHERE hidden = false
         AND (event IN ('DFEmailMarkedSpam', 'DFEmailComplaint') OR
-          (event = 'DFEmailBounced' AND lowerUTF8(coalesce(nullIf(JSONExtractString(properties, 'bounceType'), ''), JSONExtractString(properties, 'bounce', 'bounceType'))) IN ('permanent', 'hard', 'hardbounce')))
+          (event = 'DFEmailBounced' AND lowerUTF8(bounce_type) IN ('permanent', 'hard', 'hardbounce')))
       GROUP BY userId, address, event ORDER BY date DESC, userId LIMIT 1000`,
     query_params: qb.getQueries(),
   };

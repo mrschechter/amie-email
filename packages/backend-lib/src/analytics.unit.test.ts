@@ -21,6 +21,10 @@ import {
 } from "./analyticsHelpers";
 import { query } from "./clickhouse";
 import {
+  buildMessageEventsSlimBackfillQuery,
+  messageEventsSlimBackfillChunks,
+} from "./messageEventsSlimBackfill";
+import {
   buildRevenueAttributionFile,
   buildRevenueFactsQuery,
   buildRevenueOrdersQuery,
@@ -28,6 +32,12 @@ import {
   getRevenueFacts,
   RevenueFact,
 } from "./revenueAttribution";
+import {
+  CREATE_MESSAGE_EVENTS_SLIM_MV_QUERY,
+  CREATE_MESSAGE_EVENTS_SLIM_TABLE_QUERY,
+  MESSAGE_EVENTS_SLIM_FILTER,
+  MESSAGE_EVENTS_SLIM_SELECT,
+} from "./userEvents/messageEventsSlim";
 
 const mockJourneys = [
   { id: "flow", name: "Reminder flow", status: "Running", definition: null },
@@ -128,7 +138,7 @@ describe("analytics SQL builders (DB-free)", () => {
         v1: request.startDate,
         v2: request.endDate,
       });
-      expect(result.query).toContain("FROM dittofeed.user_events_v2");
+      expect(result.query).toContain("FROM dittofeed.message_events_slim");
       expect(result.query).toContain("hidden = false");
       expect(result.query).toContain("event_time < parseDateTime64BestEffort");
       expect(result.query).toContain("countIf(event = 'DFEmailOpened') > 0");
@@ -137,13 +147,15 @@ describe("analytics SQL builders (DB-free)", () => {
     },
   );
   it.each(["message", "day", "domain"] as const)(
-    "bounds the base %s events scan before JSON extraction",
+    "reads typed columns and bounds the base %s events scan",
     (group) => {
       const { query: sql } = buildAnalyticsQuery(request, group);
-      const baseCte = sql.split("), resolved_events AS (")[0];
+      const baseCte = sql.split("), dimensions AS (")[0];
       expect(baseCte).toContain(
-        "SELECT event, event_time, properties, message_id",
+        "SELECT event, event_time, resolved_id, journey_id, node_id, template_id",
       );
+      expect(baseCte).toContain("FROM dittofeed.message_events_slim");
+      expect(baseCte).not.toContain("JSONExtractString");
       expect(baseCte).toContain("PREWHERE workspace_id = {v0:String}");
       expect(baseCte).toContain(
         "event_time >= parseDateTime64BestEffort({v1:String}, 3, 'UTC')",
@@ -151,16 +163,14 @@ describe("analytics SQL builders (DB-free)", () => {
       expect(baseCte).toContain(
         "event_time < parseDateTime64BestEffort({v2:String}, 3, 'UTC')",
       );
-      expect(baseCte).toContain("event_type = 'track' AND hidden = false");
+      expect(baseCte).toContain("hidden = false");
       expect(baseCte).not.toContain("JSONExtract");
       expect(sql).not.toContain("SELECT *");
-      // In-range events ingested later must still count in the selected period.
-      expect(sql).toContain(
-        "processing_time >= parseDateTime64BestEffort({v1:String}, 3, 'UTC') - INTERVAL 2 DAY",
-      );
-      expect(sql).toContain(
-        "processing_time < parseDateTime64BestEffort({v2:String}, 3, 'UTC') + INTERVAL 2 DAY",
-      );
+      // Late/backfilled events count regardless of their processing time.
+      expect(sql).not.toContain("processing_time");
+      expect(sql).not.toContain("JSONExtractString");
+      expect(sql).toContain("action = 'Unsubscribe'");
+      expect(sql).toContain("channel NOT IN ('MobilePush', 'Webhook')");
     },
   );
   it("requires a permanent/hard classification for bounce addresses", () => {
@@ -171,6 +181,12 @@ describe("analytics SQL builders (DB-free)", () => {
     }).toMatchSnapshot();
     expect(result.query).toContain("'permanent', 'hard', 'hardbounce'");
     expect(result.query).toContain("LIMIT 1000");
+    expect(result.query).toContain("FROM dittofeed.message_events_slim");
+    expect(result.query).toContain("lowerUTF8(bounce_type)");
+    expect(result.query).toContain(
+      "if(slim.address = '', user_id, slim.address)",
+    );
+    expect(result.query).not.toContain("JSONExtract");
     expect(result.query_params.v0).toBe(request.workspaceId);
   });
   it("binds the selected attribution window and ignores opens even when the legacy flag is true", () => {
@@ -446,7 +462,9 @@ describe("analytics report assembly", () => {
         v1: range.startDate,
         v2: range.endDate,
       });
-      const baseCte = options?.query.split("), resolved_events AS (")[0];
+      const baseCte = options?.query.split("), dimensions AS (")[0];
+      expect(baseCte).toContain("FROM dittofeed.message_events_slim");
+      expect(baseCte).not.toContain("JSONExtractString");
       expect(baseCte).toContain("PREWHERE workspace_id = {v0:String}");
       expect(baseCte).toContain(
         "event_time >= parseDateTime64BestEffort({v1:String}, 3, 'UTC')",
@@ -531,4 +549,94 @@ it("exports all order rows with dollar amounts through the existing CSV function
   expect(jest.mocked(query).mock.calls.at(-1)?.[0].query).not.toContain(
     "LIMIT",
   );
+});
+
+describe("message events slim migration", () => {
+  it("uses the same projection and event filter for live ingestion and backfill", () => {
+    const backfill = buildMessageEventsSlimBackfillQuery(request);
+    expect(CREATE_MESSAGE_EVENTS_SLIM_MV_QUERY).toContain(
+      MESSAGE_EVENTS_SLIM_SELECT,
+    );
+    expect(backfill.query).toContain(MESSAGE_EVENTS_SLIM_SELECT);
+    expect(CREATE_MESSAGE_EVENTS_SLIM_MV_QUERY).toContain(
+      MESSAGE_EVENTS_SLIM_FILTER,
+    );
+    expect(backfill.query).toContain(MESSAGE_EVENTS_SLIM_FILTER);
+    expect(CREATE_MESSAGE_EVENTS_SLIM_TABLE_QUERY).toContain(
+      "ORDER BY (workspace_id, event_time, resolved_id, event, message_id)",
+    );
+    expect(CREATE_MESSAGE_EVENTS_SLIM_TABLE_QUERY).not.toContain(
+      "PARTITION BY",
+    );
+    expect({
+      table: CREATE_MESSAGE_EVENTS_SLIM_TABLE_QUERY,
+      mv: CREATE_MESSAGE_EVENTS_SLIM_MV_QUERY,
+      backfill,
+    }).toMatchSnapshot();
+  });
+  it("deduplicates within each chunk and against all destination processing times", () => {
+    const result = buildMessageEventsSlimBackfillQuery(request);
+    expect(result.query).toContain(
+      "(workspace_id, message_id, event, event_time) NOT IN",
+    );
+    expect(result.query).toContain(
+      "LIMIT 1 BY workspace_id, message_id, event, event_time",
+    );
+    const destination = result.query.split("NOT IN (")[1];
+    expect(destination).not.toContain("processing_time >=");
+    expect(destination).not.toContain("processing_time <");
+    expect(result.query).not.toContain(request.workspaceId);
+    expect(result.query_params).toEqual({
+      v0: request.startDate,
+      v1: request.endDate,
+      v2: request.workspaceId,
+    });
+    expect(
+      buildMessageEventsSlimBackfillQuery({
+        startDate: request.startDate,
+        endDate: request.endDate,
+      }).query,
+    ).not.toContain("WHERE  AND");
+  });
+  it("chunks processing time without gaps, including a partial final chunk", () => {
+    expect(
+      messageEventsSlimBackfillChunks({
+        startDate: "2026-09-01T00:00:00.001Z",
+        endDate: "2026-09-01T02:30:00.002Z",
+        intervalMinutes: 60,
+      }),
+    ).toEqual([
+      {
+        startDate: "2026-09-01T00:00:00.001Z",
+        endDate: "2026-09-01T01:00:00.001Z",
+      },
+      {
+        startDate: "2026-09-01T01:00:00.001Z",
+        endDate: "2026-09-01T02:00:00.001Z",
+      },
+      {
+        startDate: "2026-09-01T02:00:00.001Z",
+        endDate: "2026-09-01T02:30:00.002Z",
+      },
+    ]);
+    for (const intervalMinutes of [0, -1, NaN, Infinity]) {
+      expect(() =>
+        messageEventsSlimBackfillChunks({ ...request, intervalMinutes }),
+      ).toThrow();
+    }
+    expect(() =>
+      messageEventsSlimBackfillChunks({
+        ...request,
+        startDate: "bad",
+        intervalMinutes: 60,
+      }),
+    ).toThrow();
+    expect(() =>
+      messageEventsSlimBackfillChunks({
+        ...request,
+        endDate: request.startDate,
+        intervalMinutes: 60,
+      }),
+    ).toThrow();
+  });
 });
