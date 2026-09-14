@@ -7,6 +7,10 @@ import {
   InternalEventType,
   JSONValue,
 } from "../types";
+import {
+  CREATE_MESSAGE_EVENTS_SLIM_MV_QUERY,
+  CREATE_MESSAGE_EVENTS_SLIM_TABLE_QUERY,
+} from "./messageEventsSlim";
 
 export interface InsertValue {
   processingTime?: string;
@@ -504,6 +508,7 @@ export async function createUserEventsTables() {
     // This table stores internal events with pre-parsed fields for efficient querying
     // Only processes DF-prefixed track events which contain templateId, broadcastId, etc.
     CREATE_INTERNAL_EVENTS_TABLE_QUERY,
+    CREATE_MESSAGE_EVENTS_SLIM_TABLE_QUERY,
     ...GROUP_TABLES,
     // User property index tables for sortable user properties
     CREATE_USER_PROPERTY_INDEX_CONFIG_QUERY,
@@ -560,6 +565,7 @@ export async function createUserEventsTables() {
     CREATE_UPDATED_COMPUTED_PROPERTY_STATE_V3_MV_QUERY,
     // Materialized view that populates internal_events table with DF-prefixed track events
     CREATE_INTERNAL_EVENTS_TABLE_MATERIALIZED_VIEW_QUERY,
+    CREATE_MESSAGE_EVENTS_SLIM_MV_QUERY,
     ...GROUP_MATERIALIZED_VIEWS,
     // Materialized views for user property indices
     CREATE_USER_PROPERTY_IDX_NUM_MV_QUERY,
