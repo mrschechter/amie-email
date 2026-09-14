@@ -290,13 +290,23 @@ exports[`analytics SQL builders (DB-free) requires a permanent/hard classificati
 exports[`analytics SQL builders (DB-free) snapshots day SQL and binds workspace/range 1`] = `
 {
   "query": "WITH events AS (
-    SELECT *, if(JSONExtractString(properties, 'messageId') != '', JSONExtractString(properties, 'messageId'), message_id) AS resolved_id
+    SELECT event, event_time, properties, message_id
     FROM dittofeed.user_events_v2
-    WHERE workspace_id = {v0:String} AND event_type = 'track' AND hidden = false
+    PREWHERE workspace_id = {v0:String}
+      -- user_events_v2 is ordered by (workspace_id, processing_time, ...): a processing_time
+      -- band lets ClickHouse skip granules; event_time keeps the exact semantics. Message
+      -- events are written live, so a 2-day slack covers late arrivals without a full scan.
+      AND processing_time >= parseDateTime64BestEffort({v1:String}, 3, 'UTC') - INTERVAL 2 DAY
+      AND processing_time < parseDateTime64BestEffort({v2:String}, 3, 'UTC') + INTERVAL 2 DAY
       AND event_time >= parseDateTime64BestEffort({v1:String}, 3, 'UTC')
       AND event_time < parseDateTime64BestEffort({v2:String}, 3, 'UTC')
+      AND event_type = 'track' AND hidden = false
       AND (event IN ('DFInternalMessageSent', 'DFSubscriptionChange') OR startsWith(event, 'DFEmail') OR startsWith(event, 'DFSms'))
-      AND JSONExtractString(properties, 'variant', 'type') NOT IN ('MobilePush', 'Webhook')
+  ), resolved_events AS (
+    SELECT event, event_time, properties,
+      if(JSONExtractString(properties, 'messageId') != '', JSONExtractString(properties, 'messageId'), message_id) AS resolved_id
+    FROM events
+    WHERE JSONExtractString(properties, 'variant', 'type') NOT IN ('MobilePush', 'Webhook')
   ), dimensions AS (
     SELECT resolved_id,
       argMaxIf(JSONExtractString(properties, 'journeyId'), event_time, JSONExtractString(properties, 'journeyId') != '') AS journeyId,
@@ -306,7 +316,7 @@ exports[`analytics SQL builders (DB-free) snapshots day SQL and binds workspace/
       argMaxIf(coalesce(nullIf(JSONExtractString(properties, 'email'), ''), nullIf(JSONExtractString(properties, 'variant', 'to'), ''), ''), event_time,
         JSONExtractString(properties, 'email') != '' OR JSONExtractString(properties, 'variant', 'to') != '') AS address,
       argMaxIf(JSONExtractString(properties, 'variant', 'type'), event_time, JSONExtractString(properties, 'variant', 'type') != '') AS channel
-    FROM events GROUP BY resolved_id
+    FROM resolved_events GROUP BY resolved_id
   ), messages AS (
     SELECT e.resolved_id, toString(toDate(e.event_time, 'UTC')) AS day,
       d.journeyId AS journeyId, d.nodeId AS nodeId, d.templateId AS templateId, d.broadcastId AS broadcastId,
@@ -322,7 +332,7 @@ exports[`analytics SQL builders (DB-free) snapshots day SQL and binds workspace/
       countIf(event = 'DFEmailOpened') AS rawOpened, countIf(event IN ('DFEmailClicked', 'DFSmsClicked')) AS rawClicked,
       if(countIf(event IN ('DFInternalMessageSent', 'DFEmailSent', 'DFSmsSent')) = 0, '', formatDateTime(maxIf(event_time, event IN ('DFInternalMessageSent', 'DFEmailSent', 'DFSmsSent')), '%Y-%m-%dT%H:%i:%SZ', 'UTC')) AS lastSend,
       if(countIf(event IN ('DFInternalMessageSent', 'DFEmailSent', 'DFSmsSent')) = 0, '', formatDateTime(minIf(event_time, event IN ('DFInternalMessageSent', 'DFEmailSent', 'DFSmsSent')), '%Y-%m-%dT%H:%i:%SZ', 'UTC')) AS sentAt
-    FROM events e INNER JOIN dimensions d ON e.resolved_id = d.resolved_id
+    FROM resolved_events e INNER JOIN dimensions d ON e.resolved_id = d.resolved_id
 
     GROUP BY e.resolved_id, day, journeyId, nodeId, templateId, broadcastId, domain
   )
@@ -340,13 +350,23 @@ exports[`analytics SQL builders (DB-free) snapshots day SQL and binds workspace/
 exports[`analytics SQL builders (DB-free) snapshots domain SQL and binds workspace/range 1`] = `
 {
   "query": "WITH events AS (
-    SELECT *, if(JSONExtractString(properties, 'messageId') != '', JSONExtractString(properties, 'messageId'), message_id) AS resolved_id
+    SELECT event, event_time, properties, message_id
     FROM dittofeed.user_events_v2
-    WHERE workspace_id = {v0:String} AND event_type = 'track' AND hidden = false
+    PREWHERE workspace_id = {v0:String}
+      -- user_events_v2 is ordered by (workspace_id, processing_time, ...): a processing_time
+      -- band lets ClickHouse skip granules; event_time keeps the exact semantics. Message
+      -- events are written live, so a 2-day slack covers late arrivals without a full scan.
+      AND processing_time >= parseDateTime64BestEffort({v1:String}, 3, 'UTC') - INTERVAL 2 DAY
+      AND processing_time < parseDateTime64BestEffort({v2:String}, 3, 'UTC') + INTERVAL 2 DAY
       AND event_time >= parseDateTime64BestEffort({v1:String}, 3, 'UTC')
       AND event_time < parseDateTime64BestEffort({v2:String}, 3, 'UTC')
+      AND event_type = 'track' AND hidden = false
       AND (event IN ('DFInternalMessageSent', 'DFSubscriptionChange') OR startsWith(event, 'DFEmail') OR startsWith(event, 'DFSms'))
-      AND JSONExtractString(properties, 'variant', 'type') NOT IN ('MobilePush', 'Webhook')
+  ), resolved_events AS (
+    SELECT event, event_time, properties,
+      if(JSONExtractString(properties, 'messageId') != '', JSONExtractString(properties, 'messageId'), message_id) AS resolved_id
+    FROM events
+    WHERE JSONExtractString(properties, 'variant', 'type') NOT IN ('MobilePush', 'Webhook')
   ), dimensions AS (
     SELECT resolved_id,
       argMaxIf(JSONExtractString(properties, 'journeyId'), event_time, JSONExtractString(properties, 'journeyId') != '') AS journeyId,
@@ -356,7 +376,7 @@ exports[`analytics SQL builders (DB-free) snapshots domain SQL and binds workspa
       argMaxIf(coalesce(nullIf(JSONExtractString(properties, 'email'), ''), nullIf(JSONExtractString(properties, 'variant', 'to'), ''), ''), event_time,
         JSONExtractString(properties, 'email') != '' OR JSONExtractString(properties, 'variant', 'to') != '') AS address,
       argMaxIf(JSONExtractString(properties, 'variant', 'type'), event_time, JSONExtractString(properties, 'variant', 'type') != '') AS channel
-    FROM events GROUP BY resolved_id
+    FROM resolved_events GROUP BY resolved_id
   ), messages AS (
     SELECT e.resolved_id, '' AS day,
       d.journeyId AS journeyId, d.nodeId AS nodeId, d.templateId AS templateId, d.broadcastId AS broadcastId,
@@ -372,7 +392,7 @@ exports[`analytics SQL builders (DB-free) snapshots domain SQL and binds workspa
       countIf(event = 'DFEmailOpened') AS rawOpened, countIf(event IN ('DFEmailClicked', 'DFSmsClicked')) AS rawClicked,
       if(countIf(event IN ('DFInternalMessageSent', 'DFEmailSent', 'DFSmsSent')) = 0, '', formatDateTime(maxIf(event_time, event IN ('DFInternalMessageSent', 'DFEmailSent', 'DFSmsSent')), '%Y-%m-%dT%H:%i:%SZ', 'UTC')) AS lastSend,
       if(countIf(event IN ('DFInternalMessageSent', 'DFEmailSent', 'DFSmsSent')) = 0, '', formatDateTime(minIf(event_time, event IN ('DFInternalMessageSent', 'DFEmailSent', 'DFSmsSent')), '%Y-%m-%dT%H:%i:%SZ', 'UTC')) AS sentAt
-    FROM events e INNER JOIN dimensions d ON e.resolved_id = d.resolved_id
+    FROM resolved_events e INNER JOIN dimensions d ON e.resolved_id = d.resolved_id
     WHERE d.channel NOT IN ('Sms', 'MobilePush', 'Webhook') AND NOT startsWith(e.event, 'DFSms')
     GROUP BY e.resolved_id, day, journeyId, nodeId, templateId, broadcastId, domain
   )
@@ -390,13 +410,23 @@ exports[`analytics SQL builders (DB-free) snapshots domain SQL and binds workspa
 exports[`analytics SQL builders (DB-free) snapshots message SQL and binds workspace/range 1`] = `
 {
   "query": "WITH events AS (
-    SELECT *, if(JSONExtractString(properties, 'messageId') != '', JSONExtractString(properties, 'messageId'), message_id) AS resolved_id
+    SELECT event, event_time, properties, message_id
     FROM dittofeed.user_events_v2
-    WHERE workspace_id = {v0:String} AND event_type = 'track' AND hidden = false
+    PREWHERE workspace_id = {v0:String}
+      -- user_events_v2 is ordered by (workspace_id, processing_time, ...): a processing_time
+      -- band lets ClickHouse skip granules; event_time keeps the exact semantics. Message
+      -- events are written live, so a 2-day slack covers late arrivals without a full scan.
+      AND processing_time >= parseDateTime64BestEffort({v1:String}, 3, 'UTC') - INTERVAL 2 DAY
+      AND processing_time < parseDateTime64BestEffort({v2:String}, 3, 'UTC') + INTERVAL 2 DAY
       AND event_time >= parseDateTime64BestEffort({v1:String}, 3, 'UTC')
       AND event_time < parseDateTime64BestEffort({v2:String}, 3, 'UTC')
+      AND event_type = 'track' AND hidden = false
       AND (event IN ('DFInternalMessageSent', 'DFSubscriptionChange') OR startsWith(event, 'DFEmail') OR startsWith(event, 'DFSms'))
-      AND JSONExtractString(properties, 'variant', 'type') NOT IN ('MobilePush', 'Webhook')
+  ), resolved_events AS (
+    SELECT event, event_time, properties,
+      if(JSONExtractString(properties, 'messageId') != '', JSONExtractString(properties, 'messageId'), message_id) AS resolved_id
+    FROM events
+    WHERE JSONExtractString(properties, 'variant', 'type') NOT IN ('MobilePush', 'Webhook')
   ), dimensions AS (
     SELECT resolved_id,
       argMaxIf(JSONExtractString(properties, 'journeyId'), event_time, JSONExtractString(properties, 'journeyId') != '') AS journeyId,
@@ -406,7 +436,7 @@ exports[`analytics SQL builders (DB-free) snapshots message SQL and binds worksp
       argMaxIf(coalesce(nullIf(JSONExtractString(properties, 'email'), ''), nullIf(JSONExtractString(properties, 'variant', 'to'), ''), ''), event_time,
         JSONExtractString(properties, 'email') != '' OR JSONExtractString(properties, 'variant', 'to') != '') AS address,
       argMaxIf(JSONExtractString(properties, 'variant', 'type'), event_time, JSONExtractString(properties, 'variant', 'type') != '') AS channel
-    FROM events GROUP BY resolved_id
+    FROM resolved_events GROUP BY resolved_id
   ), messages AS (
     SELECT e.resolved_id, '' AS day,
       d.journeyId AS journeyId, d.nodeId AS nodeId, d.templateId AS templateId, d.broadcastId AS broadcastId,
@@ -422,7 +452,7 @@ exports[`analytics SQL builders (DB-free) snapshots message SQL and binds worksp
       countIf(event = 'DFEmailOpened') AS rawOpened, countIf(event IN ('DFEmailClicked', 'DFSmsClicked')) AS rawClicked,
       if(countIf(event IN ('DFInternalMessageSent', 'DFEmailSent', 'DFSmsSent')) = 0, '', formatDateTime(maxIf(event_time, event IN ('DFInternalMessageSent', 'DFEmailSent', 'DFSmsSent')), '%Y-%m-%dT%H:%i:%SZ', 'UTC')) AS lastSend,
       if(countIf(event IN ('DFInternalMessageSent', 'DFEmailSent', 'DFSmsSent')) = 0, '', formatDateTime(minIf(event_time, event IN ('DFInternalMessageSent', 'DFEmailSent', 'DFSmsSent')), '%Y-%m-%dT%H:%i:%SZ', 'UTC')) AS sentAt
-    FROM events e INNER JOIN dimensions d ON e.resolved_id = d.resolved_id
+    FROM resolved_events e INNER JOIN dimensions d ON e.resolved_id = d.resolved_id
 
     GROUP BY e.resolved_id, day, journeyId, nodeId, templateId, broadcastId, domain
   )

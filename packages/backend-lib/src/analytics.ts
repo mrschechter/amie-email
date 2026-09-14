@@ -70,21 +70,33 @@ export function buildAnalyticsQuery(
   const workspace = qb.addQueryValue(request.workspaceId, "String");
   const start = qb.addQueryValue(request.startDate, "String");
   const end = qb.addQueryValue(request.endDate, "String");
+  // Filter before reading properties or resolving message IDs. Keep event-time
+  // semantics: processing_time can fall outside the range for late/backfilled events.
   const query = `WITH events AS (
-    SELECT *, if(JSONExtractString(properties, 'messageId') != '', JSONExtractString(properties, 'messageId'), message_id) AS resolved_id
+    SELECT event, event_time, properties, message_id
     FROM dittofeed.user_events_v2
-    WHERE workspace_id = ${workspace} AND event_type = 'track' AND hidden = false
+    PREWHERE workspace_id = ${workspace}
+      -- user_events_v2 is ordered by (workspace_id, processing_time, ...): a processing_time
+      -- band lets ClickHouse skip granules; event_time keeps the exact semantics. Message
+      -- events are written live, so a 2-day slack covers late arrivals without a full scan.
+      AND processing_time >= parseDateTime64BestEffort(${start}, 3, 'UTC') - INTERVAL 2 DAY
+      AND processing_time < parseDateTime64BestEffort(${end}, 3, 'UTC') + INTERVAL 2 DAY
       AND event_time >= parseDateTime64BestEffort(${start}, 3, 'UTC')
       AND event_time < parseDateTime64BestEffort(${end}, 3, 'UTC')
+      AND event_type = 'track' AND hidden = false
       AND (event IN ('DFInternalMessageSent', 'DFSubscriptionChange') OR startsWith(event, 'DFEmail') OR startsWith(event, 'DFSms'))
-      AND JSONExtractString(properties, 'variant', 'type') NOT IN ('MobilePush', 'Webhook')
+  ), resolved_events AS (
+    SELECT event, event_time, properties,
+      if(JSONExtractString(properties, 'messageId') != '', JSONExtractString(properties, 'messageId'), message_id) AS resolved_id
+    FROM events
+    WHERE JSONExtractString(properties, 'variant', 'type') NOT IN ('MobilePush', 'Webhook')
   ), dimensions AS (
     SELECT resolved_id,
       ${["journeyId", "nodeId", "templateId", "broadcastId"].map((key) => `argMaxIf(JSONExtractString(properties, '${key}'), event_time, JSONExtractString(properties, '${key}') != '') AS ${key}`).join(",\n      ")},
       argMaxIf(coalesce(nullIf(JSONExtractString(properties, 'email'), ''), nullIf(JSONExtractString(properties, 'variant', 'to'), ''), ''), event_time,
         JSONExtractString(properties, 'email') != '' OR JSONExtractString(properties, 'variant', 'to') != '') AS address,
       argMaxIf(JSONExtractString(properties, 'variant', 'type'), event_time, JSONExtractString(properties, 'variant', 'type') != '') AS channel
-    FROM events GROUP BY resolved_id
+    FROM resolved_events GROUP BY resolved_id
   ), messages AS (
     SELECT e.resolved_id, ${groupBy === "day" ? "toString(toDate(e.event_time, 'UTC'))" : "''"} AS day,
       d.journeyId AS journeyId, d.nodeId AS nodeId, d.templateId AS templateId, d.broadcastId AS broadcastId,
@@ -97,7 +109,7 @@ export function buildAnalyticsQuery(
       countIf(${eventConditions.opened}) AS rawOpened, countIf(${eventConditions.clicked}) AS rawClicked,
       if(countIf(${eventConditions.sends}) = 0, '', formatDateTime(maxIf(event_time, ${eventConditions.sends}), '%Y-%m-%dT%H:%i:%SZ', 'UTC')) AS lastSend,
       if(countIf(${eventConditions.sends}) = 0, '', formatDateTime(minIf(event_time, ${eventConditions.sends}), '%Y-%m-%dT%H:%i:%SZ', 'UTC')) AS sentAt
-    FROM events e INNER JOIN dimensions d ON e.resolved_id = d.resolved_id
+    FROM resolved_events e INNER JOIN dimensions d ON e.resolved_id = d.resolved_id
     ${groupBy === "domain" ? "WHERE d.channel NOT IN ('Sms', 'MobilePush', 'Webhook') AND NOT startsWith(e.event, 'DFSms')" : ""}
     GROUP BY e.resolved_id, day, journeyId, nodeId, templateId, broadcastId, domain
   )

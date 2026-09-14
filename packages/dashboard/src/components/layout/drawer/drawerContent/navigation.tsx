@@ -12,7 +12,7 @@ import NavGroup from "./navigation/navGroup";
 // ==============================|| DRAWER CONTENT - NAVIGATION ||============================== //
 
 function Navigation() {
-  const { features } = useAppStorePick(["features"]);
+  const { features, authMode } = useAppStorePick(["features", "authMode"]);
   const layout = useContext(LayoutContext);
   const items = layout?.items;
   const title = layout?.pageTitle;
@@ -22,7 +22,10 @@ function Navigation() {
 
   const navGroups = items
     ? items.flatMap((item) => {
-        if (features.WhiteLabel && item.id === "support") {
+        if (
+          (features.WhiteLabel || authMode === "single-tenant") &&
+          item.id === "support"
+        ) {
           return [];
         }
         switch (item.type) {

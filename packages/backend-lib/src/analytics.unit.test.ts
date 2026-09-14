@@ -136,6 +136,33 @@ describe("analytics SQL builders (DB-free)", () => {
       expect(result.query).not.toContain("has_opened OR has_clicked");
     },
   );
+  it.each(["message", "day", "domain"] as const)(
+    "bounds the base %s events scan before JSON extraction",
+    (group) => {
+      const { query: sql } = buildAnalyticsQuery(request, group);
+      const baseCte = sql.split("), resolved_events AS (")[0];
+      expect(baseCte).toContain(
+        "SELECT event, event_time, properties, message_id",
+      );
+      expect(baseCte).toContain("PREWHERE workspace_id = {v0:String}");
+      expect(baseCte).toContain(
+        "event_time >= parseDateTime64BestEffort({v1:String}, 3, 'UTC')",
+      );
+      expect(baseCte).toContain(
+        "event_time < parseDateTime64BestEffort({v2:String}, 3, 'UTC')",
+      );
+      expect(baseCte).toContain("event_type = 'track' AND hidden = false");
+      expect(baseCte).not.toContain("JSONExtract");
+      expect(sql).not.toContain("SELECT *");
+      // In-range events ingested later must still count in the selected period.
+      expect(sql).toContain(
+        "processing_time >= parseDateTime64BestEffort({v1:String}, 3, 'UTC') - INTERVAL 2 DAY",
+      );
+      expect(sql).toContain(
+        "processing_time < parseDateTime64BestEffort({v2:String}, 3, 'UTC') + INTERVAL 2 DAY",
+      );
+    },
+  );
   it("requires a permanent/hard classification for bounce addresses", () => {
     const result = buildDeliverabilityAddressesQuery(request);
     expect({
@@ -405,6 +432,29 @@ describe("analytics report assembly", () => {
     ]);
     expect(report).toBe(concurrent);
     expect(jest.mocked(query).mock.calls.length - beforeCalls).toBe(5);
+    const eventQueries = jest
+      .mocked(query)
+      .mock.calls.slice(beforeCalls)
+      .map(([options]) => options)
+      .filter((options) => options.query.startsWith("WITH events AS ("));
+    expect(eventQueries).toHaveLength(3);
+    const previous = previousPeriod(request.startDate, request.endDate);
+    [request, request, previous].forEach((range, index) => {
+      const options = eventQueries[index];
+      expect(options?.query_params).toEqual({
+        v0: reportRequest.workspaceId,
+        v1: range.startDate,
+        v2: range.endDate,
+      });
+      const baseCte = options?.query.split("), resolved_events AS (")[0];
+      expect(baseCte).toContain("PREWHERE workspace_id = {v0:String}");
+      expect(baseCte).toContain(
+        "event_time >= parseDateTime64BestEffort({v1:String}, 3, 'UTC')",
+      );
+      expect(baseCte).toContain(
+        "event_time < parseDateTime64BestEffort({v2:String}, 3, 'UTC')",
+      );
+    });
     expect(report.flows).toHaveLength(1);
     expect(report.flows[0]).toMatchObject({
       name: "Reminder flow",

@@ -309,10 +309,12 @@ function HeaderContent() {
   const matchesXs = useMediaQuery<Theme>((theme) =>
     theme.breakpoints.down("md"),
   );
-  const { features, setCommandPaletteOpen } = useAppStorePick([
+  const { features, authMode, setCommandPaletteOpen } = useAppStorePick([
     "features",
+    "authMode",
     "setCommandPaletteOpen",
   ]);
+  const isSingleTenant = authMode === "single-tenant";
 
   return (
     <>
@@ -371,7 +373,7 @@ function HeaderContent() {
       <Box sx={{ width: "100%", ml: { xs: 0, md: 1 } }} />
       {matchesXs && <Box sx={{ width: "100%", ml: 1 }} />}
       <GitActionsSelect />
-      {!features.WhiteLabel ? (
+      {!isSingleTenant && !features.WhiteLabel ? (
         <IconButton
           component={Link}
           href="https://github.com/dittofeed/dittofeed"
@@ -385,8 +387,8 @@ function HeaderContent() {
         </IconButton>
       ) : null}
 
-      {!matchesXs && <Profile />}
-      {matchesXs && <MobileSection />}
+      {!isSingleTenant && !matchesXs && <Profile />}
+      {!isSingleTenant && matchesXs && <MobileSection />}
     </>
   );
 }
