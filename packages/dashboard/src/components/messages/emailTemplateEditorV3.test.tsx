@@ -19,6 +19,7 @@ import EmailTemplateEditorV3, {
 const mockAxiosGet = jest.fn();
 const mockFetch = jest.fn();
 const mockCreateTemplate = jest.fn();
+const mockAuthHeaders = {};
 
 Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
   configurable: true,
@@ -118,7 +119,7 @@ jest.mock("../../lib/appStore", () => ({
 }));
 
 jest.mock("../../lib/authModeProvider", () => ({
-  useAuthHeaders: () => ({}),
+  useAuthHeaders: () => mockAuthHeaders,
   useBaseApiUrl: () => "http://api.test",
 }));
 
@@ -215,7 +216,7 @@ function pressEnter(
   input.dispatchEvent(event);
 }
 
-function Harness() {
+function Harness({ disabled = false, templateId = "template-1" } = {}) {
   const [draft, setDraftState] = useState<MessageTemplateResourceDraft>({
     type: ChannelType.Email,
     emailContentsType: EmailContentsType.Code,
@@ -243,7 +244,7 @@ function Harness() {
 
   return (
     <EmailTemplateEditorV3
-      templateId="template-1"
+      templateId={templateId}
       template={{
         id: "template-1",
         workspaceId: "workspace-1",
@@ -254,7 +255,7 @@ function Harness() {
       }}
       draft={draft}
       setDraft={setDraft}
-      disabled={false}
+      disabled={disabled}
       inDraftView
       title={title}
       setTitle={setTitle}
@@ -302,10 +303,176 @@ describe("EmailTemplateEditorV3", () => {
     root = createRoot(container);
   });
 
-  afterEach(() => {
-    act(() => root.unmount());
+  afterEach(async () => {
+    await act(async () => root.unmount());
     container.remove();
     jest.clearAllMocks();
+  });
+
+  it("undoes and redoes draft edits and disables buttons at both ends", () => {
+    act(() => root.render(<Harness />));
+    const subject = requiredElement(
+      container.querySelector<HTMLInputElement>('input[aria-label="Subject"]'),
+      "Subject",
+    );
+    expect(button(container, "Undo").disabled).toBe(true);
+    expect(button(container, "Redo").disabled).toBe(true);
+    act(() => changeInput(subject, "Edited subject"));
+    expect(button(container, "Undo").disabled).toBe(false);
+    act(() => click(button(container, "Undo")));
+    expect(subject.value).toBe("Original subject");
+    expect(button(container, "Undo").disabled).toBe(true);
+    expect(button(container, "Redo").disabled).toBe(false);
+    act(() => click(button(container, "Redo")));
+    expect(subject.value).toBe("Edited subject");
+    expect(button(container, "Redo").disabled).toBe(true);
+  });
+
+  it("coalesces rapid edits but separates edits after 400 ms and clears redo on a new edit", () => {
+    const now = jest.spyOn(Date, "now").mockReturnValue(1000);
+    act(() => root.render(<Harness />));
+    const subject = requiredElement(
+      container.querySelector<HTMLInputElement>('input[aria-label="Subject"]'),
+      "Subject",
+    );
+    act(() => changeInput(subject, "One"));
+    now.mockReturnValue(1200);
+    act(() => changeInput(subject, "Two"));
+    now.mockReturnValue(1600);
+    act(() => changeInput(subject, "Three"));
+    act(() => click(button(container, "Undo")));
+    expect(subject.value).toBe("Two");
+    act(() => click(button(container, "Undo")));
+    expect(subject.value).toBe("Original subject");
+    act(() => click(button(container, "Redo")));
+    expect(subject.value).toBe("Two");
+    act(() => changeInput(subject, "New branch"));
+    expect(button(container, "Redo").disabled).toBe(true);
+    act(() => click(button(container, "Undo")));
+    expect(subject.value).toBe("Two");
+    now.mockRestore();
+  });
+
+  it("captures sibling code edits and restores the whole draft as one snapshot", () => {
+    act(() => root.render(<Harness />));
+    const subject = requiredElement(
+      container.querySelector<HTMLInputElement>('input[aria-label="Subject"]'),
+      "Subject",
+    );
+    const code = requiredElement(
+      container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="Code body"]',
+      ),
+      "Code body",
+    );
+    act(() => changeInput(subject, "New subject"));
+    act(() => changeInput(code, "<p>Imported HTML</p>"));
+    act(() => click(button(container, "Undo")));
+    expect(subject.value).toBe("Original subject");
+    expect(code.value).toBe(initialBody);
+    act(() => click(button(container, "Redo")));
+    expect(subject.value).toBe("New subject");
+    expect(code.value).toBe("<p>Imported HTML</p>");
+  });
+
+  it.each([
+    { metaKey: true, key: "z" },
+    { ctrlKey: true, key: "z" },
+  ])(
+    "handles undo shortcuts and leaves CodeMirror shortcuts alone: %j",
+    (shortcut) => {
+      act(() => root.render(<Harness />));
+      const subject = requiredElement(
+        container.querySelector<HTMLInputElement>(
+          'input[aria-label="Subject"]',
+        ),
+        "Subject",
+      );
+      const code = requiredElement(
+        container.querySelector<HTMLTextAreaElement>(
+          'textarea[aria-label="Code body"]',
+        ),
+        "Code body",
+      );
+      act(() => changeInput(subject, "Changed"));
+      code.classList.add("cm-editor");
+      const nativeUndo = new KeyboardEvent("keydown", {
+        ...shortcut,
+        bubbles: true,
+        cancelable: true,
+      });
+      act(() => code.dispatchEvent(nativeUndo));
+      expect(nativeUndo.defaultPrevented).toBe(false);
+      expect(subject.value).toBe("Changed");
+      act(() =>
+        subject.dispatchEvent(
+          new KeyboardEvent("keydown", { ...shortcut, bubbles: true }),
+        ),
+      );
+      expect(subject.value).toBe("Original subject");
+      act(() =>
+        subject.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            ...shortcut,
+            shiftKey: true,
+            bubbles: true,
+          }),
+        ),
+      );
+      expect(subject.value).toBe("Changed");
+      act(() => click(button(container, "Undo")));
+      act(() =>
+        subject.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            ctrlKey: true,
+            key: "y",
+            bubbles: true,
+          }),
+        ),
+      );
+      expect(subject.value).toBe("Changed");
+    },
+  );
+
+  it("caps undo history at 100 entries and resets it for another template", () => {
+    const now = jest.spyOn(Date, "now");
+    act(() => root.render(<Harness />));
+    const subject = requiredElement(
+      container.querySelector<HTMLInputElement>('input[aria-label="Subject"]'),
+      "Subject",
+    );
+    for (let i = 1; i <= 101; i += 1) {
+      now.mockReturnValue(i * 500);
+      act(() => changeInput(subject, `Edit ${i}`));
+    }
+    const undoButton = button(container, "Undo");
+    for (let i = 0; i < 100; i += 1) act(() => click(undoButton));
+    expect(subject.value).toBe("Edit 1");
+    expect(button(container, "Undo").disabled).toBe(true);
+    act(() => root.render(<Harness templateId="template-2" />));
+    expect(button(container, "Redo").disabled).toBe(true);
+    now.mockRestore();
+  });
+
+  it("disables history and ignores shortcuts in read-only mode", () => {
+    act(() => root.render(<Harness />));
+    const subject = requiredElement(
+      container.querySelector<HTMLInputElement>('input[aria-label="Subject"]'),
+      "Subject",
+    );
+    act(() => changeInput(subject, "Changed"));
+    act(() => root.render(<Harness disabled />));
+    expect(button(container, "Undo").disabled).toBe(true);
+    act(() =>
+      subject.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          ctrlKey: true,
+          key: "z",
+          bubbles: true,
+        }),
+      ),
+    );
+    expect(subject.value).toBe("Changed");
   });
 
   it("preserves a code body while switching tabs", () => {

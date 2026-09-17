@@ -1,15 +1,17 @@
 import { json } from "@codemirror/lang-json";
 import { EditorView } from "@codemirror/view";
-import { ArrowUpward, AutoAwesome } from "@mui/icons-material";
+import { ArrowUpward, AutoAwesome, Redo, Undo } from "@mui/icons-material";
 import {
   Alert,
   Box,
   Button,
   CircularProgress,
   FormControlLabel,
+  IconButton,
   Stack,
   Switch,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import ReactCodeMirror from "@uiw/react-codemirror";
@@ -58,6 +60,7 @@ import {
   withPreviewText,
 } from "./amieComposerHtml";
 import ImageAssetsPanel from "./imageAssetsPanel";
+import useDraftHistory from "./useDraftHistory";
 
 const COLORS = {
   page: "#FAF8F5",
@@ -186,8 +189,14 @@ export function emailHtmlToSms(html: string): string {
     .slice(0, 1500);
 }
 
-function wrapRenderedText(value: string | null | undefined, width = 68): string {
-  const words = String(value ?? "").replace(/\s+/g, " ").trim().split(" ");
+function wrapRenderedText(
+  value: string | null | undefined,
+  width = 68,
+): string {
+  const words = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ");
   const lines: string[] = [];
   let line = "";
   words.filter(Boolean).forEach((word) => {
@@ -547,6 +556,11 @@ export default function EmailTemplateEditorV3({
   editorBody,
   settingsMenu,
 }: TemplateEditorLayoutParams) {
+  const { canUndo, canRedo, undo, redo } = useDraftHistory({
+    draft,
+    setDraft,
+    resetKey: `${templateId}:${viewDraft}`,
+  });
   const baseApiUrl = useBaseApiUrl();
   const authHeaders = useAuthHeaders();
   const { workspace } = useAppStorePick(["workspace"]);
@@ -1055,6 +1069,23 @@ export default function EmailTemplateEditorV3({
 
   return (
     <Box
+      onKeyDown={(event) => {
+        if (
+          disabled ||
+          event.nativeEvent.isComposing ||
+          event.altKey ||
+          !(event.metaKey || event.ctrlKey) ||
+          (event.target instanceof Element &&
+            event.target.closest(".cm-editor"))
+        )
+          return;
+        const key = event.key.toLowerCase();
+        if (key === "z" || (event.ctrlKey && key === "y")) {
+          event.preventDefault();
+          if (event.shiftKey || key === "y") redo();
+          else undo();
+        }
+      }}
       sx={{
         color: COLORS.text,
         bgcolor: COLORS.page,
@@ -1106,6 +1137,30 @@ export default function EmailTemplateEditorV3({
           </Typography>
         </Stack>
         <Stack direction="row" spacing={1} alignItems="center">
+          <Tooltip title="Undo (⌘/Ctrl+Z)">
+            <span>
+              <IconButton
+                aria-label="Undo"
+                disabled={disabled || !canUndo}
+                onClick={undo}
+                sx={{ color: COLORS.teal, borderRadius: "8px" }}
+              >
+                <Undo fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title="Redo (⌘/Ctrl+Shift+Z or Ctrl+Y)">
+            <span>
+              <IconButton
+                aria-label="Redo"
+                disabled={disabled || !canRedo}
+                onClick={redo}
+                sx={{ color: COLORS.teal, borderRadius: "8px" }}
+              >
+                <Redo fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
           <Box
             sx={{
               "& .MuiButton-root": {

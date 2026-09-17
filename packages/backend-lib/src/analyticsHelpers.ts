@@ -48,7 +48,7 @@ export function metrics(
     ctor: rate(c.clicked, c.opened),
     unsubRate: rate(c.unsubscribed, c.delivered),
     bounceRate: rate(c.bounced, c.sends),
-    complaintRate: rate(c.complaint, c.sends),
+    complaintRate: rate(c.complaint, c.delivered || c.sends),
     bounceComplaintRate: rate(c.bounced + c.complaint, c.sends),
     rpm: rate(c.attributedRevenueCents * 1000, c.sends),
   };

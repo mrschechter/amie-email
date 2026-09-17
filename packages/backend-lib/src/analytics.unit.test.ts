@@ -327,7 +327,7 @@ describe("analytics aggregations", () => {
       ctor: 0.2,
       unsubRate: 0.05,
       bounceRate: 0.1,
-      complaintRate: 0.02,
+      complaintRate: 0.025,
       bounceComplaintRate: 0.12,
       rpm: 100000,
     });
@@ -336,6 +336,8 @@ describe("analytics aggregations", () => {
     );
     expect(metrics({ clicked: 1 }).ctor).toBe(0);
     expect(sumMetrics([])).toEqual(metrics());
+    expect(metrics({ complaint: 1, sends: 1000 }).complaintRate).toBe(0.001);
+    expect(metrics({ complaint: 1 }).complaintRate).toBe(0);
   });
   it("computes adjacent equal-length compare windows and honest zero-baseline deltas", () => {
     const previous = previousPeriod(request.startDate, request.endDate);

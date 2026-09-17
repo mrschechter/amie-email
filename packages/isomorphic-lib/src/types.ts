@@ -6559,6 +6559,7 @@ export const SummaryMetric = Type.Object({
   opens: Type.Number(),
   clicks: Type.Number(),
   bounces: Type.Number(),
+  complaints: Type.Number(),
 });
 
 export type SummaryMetric = Static<typeof SummaryMetric>;
