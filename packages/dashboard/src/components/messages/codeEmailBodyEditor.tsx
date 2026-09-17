@@ -1,6 +1,13 @@
 import { html } from "@codemirror/lang-html";
+import { foldGutter } from "@codemirror/language";
 import { lintGutter } from "@codemirror/lint";
-import { EditorView } from "@codemirror/view";
+import { search, searchKeymap } from "@codemirror/search";
+import {
+  EditorView,
+  highlightActiveLine,
+  keymap,
+  lineNumbers,
+} from "@codemirror/view";
 import { Stack, useTheme } from "@mui/material";
 import ReactCodeMirror, { ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import {
@@ -34,10 +41,46 @@ export default React.memo(function CodeEmailBodyEditor({
       EditorView.theme({
         "&": {
           fontFamily: theme.typography.fontFamily,
+          height: "100%",
+        },
+        ".cm-scroller": {
+          overflow: "auto",
+          overflowY: "scroll",
+          scrollbarGutter: "stable",
+          scrollbarWidth: "thin",
+          scrollbarColor: "#8A8178 #F1EBE3",
+        },
+        // Let explicit scrollbar dimensions win in WebKit/Chromium, including
+        // macOS overlay-scrollbar configurations; retain thin bars in Firefox.
+        "@supports selector(::-webkit-scrollbar)": {
+          ".cm-scroller": {
+            scrollbarWidth: "auto",
+            scrollbarColor: "auto",
+          },
+        },
+        ".cm-scroller::-webkit-scrollbar": {
+          width: "10px",
+          height: "10px",
+        },
+        ".cm-scroller::-webkit-scrollbar-track": {
+          background: "#F1EBE3",
+        },
+        ".cm-scroller::-webkit-scrollbar-thumb": {
+          background: "#8A8178",
+          borderRadius: "8px",
+          border: "2px solid #F1EBE3",
+        },
+        ".cm-scroller::-webkit-scrollbar-thumb:hover": {
+          background: "#2D7A7A",
         },
       }),
       EditorView.lineWrapping,
       lintGutter(),
+      lineNumbers(),
+      highlightActiveLine(),
+      foldGutter(),
+      search(),
+      keymap.of(searchKeymap),
     ],
     [theme],
   );
@@ -89,6 +132,14 @@ export default React.memo(function CodeEmailBodyEditor({
       </Stack>
       <ReactCodeMirror
         ref={editorRef}
+        height="100%"
+        style={{ flex: 1, minHeight: 0, overflow: "hidden" }}
+        basicSetup={{
+          lineNumbers: false,
+          highlightActiveLine: false,
+          foldGutter: false,
+          searchKeymap: false,
+        }}
         value={draft.body}
         onChange={handleChange}
         readOnly={disabled}

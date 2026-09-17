@@ -129,9 +129,11 @@ export function CalculationDrawer({ windowDays }: { windowDays: number }) {
           <dt>Unsub %</dt>
           <dd>Unsubscribed / delivered.</dd>
           <dt>Bounce %</dt>
+          <dd>Bounced / sent.</dd>
+          <dt>Spam complaints</dt>
           <dd>
-            Bounced / sent. Complaint % = complaints / sent. The combined card
-            uses (bounced + complaints) / sent.
+            Complaints / delivered (or / sent when delivered is zero), from SES
+            feedback notifications. Rates of 0.1% or higher are highlighted.
           </dd>
           <dt>Attributed revenue</dt>
           <dd>

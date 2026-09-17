@@ -19,6 +19,8 @@ export function KpiCard({
   values,
   detail,
   lowerIsBetter,
+  warning,
+  tooltip,
 }: {
   label: string;
   value: string;
@@ -26,6 +28,8 @@ export function KpiCard({
   values: number[];
   detail?: string;
   lowerIsBetter?: boolean;
+  warning?: boolean;
+  tooltip?: string;
 }) {
   const min = Math.min(0, ...values);
   const max = Math.max(1, ...values);
@@ -36,9 +40,14 @@ export function KpiCard({
     )
     .join(" ");
   return (
-    <div className={styles.card}>
+    <div className={styles.card} title={tooltip}>
       <div className={styles.cardLabel}>{label}</div>
-      <div className={styles.value}>{value}</div>
+      <div
+        className={styles.value}
+        style={warning ? { color: "#B42318" } : undefined}
+      >
+        {value}
+      </div>
       {delta !== undefined && (
         <DeltaChip delta={delta} lowerIsBetter={lowerIsBetter} />
       )}
@@ -90,10 +99,17 @@ export function KpiStrip({ data }: { data: AnalyticsResponse }) {
       lowerIsBetter: true,
     },
     {
-      key: "bounceComplaintRate",
-      label: "Bounce + complaint rate",
+      key: "bounceRate",
+      label: "Bounce rate",
       percent: true,
       lowerIsBetter: true,
+    },
+    {
+      key: "complaintRate",
+      label: "SPAM COMPLAINTS",
+      percent: true,
+      lowerIsBetter: true,
+      detail: `${(data.summary.complaintRate * 100).toFixed(2)}%`,
     },
     {
       key: "attributedRevenueCents",
@@ -110,21 +126,35 @@ export function KpiStrip({ data }: { data: AnalyticsResponse }) {
     currency ? money(value) : value.toLocaleString();
   return (
     <div className={styles.cards}>
-      {cards.map((card) => (
-        <KpiCard
-          key={card.key}
-          label={card.label}
-          value={
-            card.percent
-              ? `${(data.summary[card.key] * 100).toFixed(1)}%`
-              : formatValue(data.summary[card.key], card.currency)
-          }
-          delta={data.previous ? data.deltas[card.key] : undefined}
-          values={data.daily.map((day) => day[card.key])}
-          detail={card.detail}
-          lowerIsBetter={card.lowerIsBetter}
-        />
-      ))}
+      {cards.map((card) => {
+        let value = formatValue(data.summary[card.key], card.currency);
+        if (card.key === "complaintRate") {
+          value = data.summary.complaint.toLocaleString();
+        } else if (card.percent) {
+          value = `${(data.summary[card.key] * 100).toFixed(1)}%`;
+        }
+        const trendKey = card.key === "complaintRate" ? "complaint" : card.key;
+        return (
+          <KpiCard
+            key={card.key}
+            label={card.label}
+            value={value}
+            delta={data.previous ? data.deltas[trendKey] : undefined}
+            values={data.daily.map((day) => day[trendKey])}
+            detail={card.detail}
+            lowerIsBetter={card.lowerIsBetter}
+            warning={
+              card.key === "complaintRate" &&
+              data.summary.complaintRate >= 0.001
+            }
+            tooltip={
+              card.key === "complaintRate"
+                ? "Complaints ÷ delivered, from SES feedback notifications"
+                : undefined
+            }
+          />
+        );
+      })}
     </div>
   );
 }

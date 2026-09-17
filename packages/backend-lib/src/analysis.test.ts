@@ -32,6 +32,99 @@ describe("analysis", () => {
     workspaceId = workspace.id;
   });
 
+  it("counts complaint aliases once per sent message, separately from bounces, in summaries and charts", async () => {
+    const journeyId = randomUUID();
+    const nodeId = randomUUID();
+    const messageIds = [randomUUID(), randomUUID(), randomUUID()];
+    const processingTime = Date.now() - 60000;
+    const batch: BatchItem[] = [];
+    messageIds.forEach((messageId) => {
+      batch.push({
+        type: EventType.Track,
+        userId: messageId,
+        messageId,
+        event: InternalEventType.MessageSent,
+        properties: {
+          journeyId,
+          nodeId,
+          messageId,
+          variant: {
+            type: ChannelType.Email,
+            from: "test@example.com",
+            to: "recipient@example.com",
+            subject: "Test",
+            body: "Test",
+            provider: { type: EmailProviderType.AmazonSes },
+          },
+        },
+      });
+    });
+    const addStatus = (messageId: string, event: string) => {
+      batch.push({
+        type: EventType.Track,
+        userId: messageId,
+        messageId: randomUUID(),
+        event,
+        properties: { messageId, journeyId, nodeId },
+      });
+    };
+    const [first, second, bounced] = messageIds;
+    if (!first || !second || !bounced) throw new Error("Missing message IDs");
+    addStatus(first, InternalEventType.EmailDelivered);
+    addStatus(first, InternalEventType.EmailMarkedSpam);
+    addStatus(first, "DFEmailComplaint");
+    addStatus(first, "DFEmailComplaint");
+    addStatus(second, "DFEmailComplaint");
+    addStatus(bounced, InternalEventType.EmailBounced);
+    // Feedback for a message outside the sent cohort must not inflate counts.
+    addStatus(randomUUID(), "DFEmailComplaint");
+    await submitBatch({ workspaceId, data: { batch } }, { processingTime });
+    const range = {
+      workspaceId,
+      startDate: new Date(processingTime - 60000).toISOString(),
+      endDate: new Date().toISOString(),
+    };
+    const result = await getSummarizedData({
+      ...range,
+      filters: { channel: ChannelType.Email },
+    });
+    expect(result.summary).toMatchObject({
+      sent: 3,
+      deliveries: 1,
+      bounces: 1,
+      complaints: 2,
+    });
+    const chart = await getChartData({
+      ...range,
+      groupBy: "messageState",
+      granularity: "1hour",
+    });
+    expect(
+      chart.data
+        .filter((point) => point.groupKey === "complained")
+        .reduce((total, point) => total + point.count, 0),
+    ).toBe(2);
+    const stats = await getJourneyEditorStats({ ...range, journeyId });
+    // Journey stats include all feedback in the time range, including uncohorted feedback.
+    expect(stats.nodeStats[nodeId]?.complained).toBe(3);
+    expect(
+      (
+        await getSummarizedData({
+          ...range,
+          filters: { channel: ChannelType.Sms },
+        })
+      ).summary.complaints,
+    ).toBe(0);
+    expect(
+      (
+        await getSummarizedData({
+          ...range,
+          filters: { channel: ChannelType.Email, journeyIds: [randomUUID()] },
+        })
+      ).summary.complaints,
+    ).toBe(0);
+  });
+
   describe("getChartData", () => {
     let journeyId: string;
     let templateId: string;

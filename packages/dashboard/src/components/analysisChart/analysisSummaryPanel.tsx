@@ -4,6 +4,7 @@ import {
   CardContent,
   Skeleton,
   Stack,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { keepPreviousData } from "@tanstack/react-query";
@@ -34,6 +35,8 @@ interface MetricCardProps {
   isLoading?: boolean;
   isPercentage?: boolean;
   subtitle?: string;
+  warning?: boolean;
+  tooltip?: string;
 }
 
 function formatMetricValue(value: number | string, isPercentage: boolean) {
@@ -52,45 +55,49 @@ function MetricCard({
   isLoading = false,
   isPercentage = false,
   subtitle,
+  warning = false,
+  tooltip,
 }: MetricCardProps) {
   return (
-    <Card
-      variant="outlined"
-      sx={{
-        minWidth: 140,
-        flex: 1,
-        boxShadow: 2,
-        textAlign: "left",
-      }}
-    >
-      <CardContent sx={{ p: 2, "&:last-child": { pb: 2 } }}>
-        <Typography variant="overline" display="block">
-          {title}
-        </Typography>
-        {isLoading ? (
-          <Skeleton variant="text" width={72} height={36} />
-        ) : (
-          <Typography
-            component="div"
-            sx={{
-              color: "secondary.800",
-              fontSize: "25px",
-              fontVariantNumeric: "tabular-nums",
-              fontWeight: 600,
-              lineHeight: 1.2,
-              mt: 0.75,
-            }}
-          >
-            {formatMetricValue(value, isPercentage)}
+    <Tooltip title={tooltip ?? ""}>
+      <Card
+        variant="outlined"
+        sx={{
+          minWidth: 140,
+          flex: 1,
+          boxShadow: 2,
+          textAlign: "left",
+        }}
+      >
+        <CardContent sx={{ p: 2, "&:last-child": { pb: 2 } }}>
+          <Typography variant="overline" display="block">
+            {title}
           </Typography>
-        )}
-        {subtitle && !isLoading && (
-          <Typography variant="caption" color="text.secondary">
-            {subtitle}
-          </Typography>
-        )}
-      </CardContent>
-    </Card>
+          {isLoading ? (
+            <Skeleton variant="text" width={72} height={36} />
+          ) : (
+            <Typography
+              component="div"
+              sx={{
+                color: warning ? "error.main" : "secondary.800",
+                fontSize: "25px",
+                fontVariantNumeric: "tabular-nums",
+                fontWeight: 600,
+                lineHeight: 1.2,
+                mt: 0.75,
+              }}
+            >
+              {formatMetricValue(value, isPercentage)}
+            </Typography>
+          )}
+          {subtitle && !isLoading && (
+            <Typography variant="caption" color="text.secondary">
+              {subtitle}
+            </Typography>
+          )}
+        </CardContent>
+      </Card>
+    </Tooltip>
   );
 }
 
@@ -233,6 +240,7 @@ export function AnalysisSummaryPanel({
       opens: 0,
       clicks: 0,
       bounces: 0,
+      complaints: 0,
     };
 
     if (displayMode === "percentage" && rawSummary.sent > 0) {
@@ -247,9 +255,15 @@ export function AnalysisSummaryPanel({
     return rawSummary;
   }, [summaryQuery.data?.summary, displayMode]);
 
+  const complaints = summaryQuery.data?.summary.complaints ?? 0;
+  const delivered = summaryQuery.data?.summary.deliveries ?? 0;
+  const denominator =
+    delivered > 0 ? delivered : summaryQuery.data?.summary.sent ?? 0;
+  const complaintRate = denominator > 0 ? complaints / denominator : 0;
+
   return (
     <Box sx={{ py: 1, width: "100%" }}>
-      <Stack direction="row" spacing={1.75} justifyContent="center">
+      <Stack direction="row" gap={1.75} flexWrap="wrap" justifyContent="center">
         <MetricCard
           title="SENT"
           value={summary.sent}
@@ -284,6 +298,16 @@ export function AnalysisSummaryPanel({
           isLoading={summaryQuery.isLoading}
           isPercentage={displayMode === "percentage"}
         />
+        {selectedChannel === ChannelType.Email && (
+          <MetricCard
+            title="SPAM COMPLAINTS"
+            value={complaints}
+            subtitle={`${(complaintRate * 100).toFixed(2)}%`}
+            warning={complaintRate >= 0.001}
+            tooltip="Complaints ÷ delivered, from SES feedback notifications"
+            isLoading={summaryQuery.isLoading}
+          />
+        )}
         {revenueCards}
       </Stack>
       {unattributedLine}

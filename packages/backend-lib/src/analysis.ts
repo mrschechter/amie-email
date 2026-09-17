@@ -23,7 +23,7 @@ function selectAutoGranularity({
 }: {
   startDate: string;
   endDate: string;
-}): string {
+}): ResolvedChartGranularity {
   const start = new Date(startDate);
   const end = new Date(endDate);
   const diffMs = end.getTime() - start.getTime();
@@ -206,10 +206,7 @@ export async function getChartData({
   // Resolve the actual granularity used
   const resolvedGranularity: ResolvedChartGranularity =
     granularity === "auto"
-      ? (selectAutoGranularity({
-          startDate,
-          endDate,
-        }) as ResolvedChartGranularity)
+      ? selectAutoGranularity({ startDate, endDate })
       : granularity;
 
   const timeFunction = getClickHouseTimeFunction({
@@ -265,6 +262,8 @@ export async function getChartData({
           '${InternalEventType.EmailOpened}',
           '${InternalEventType.EmailClicked}',
           '${InternalEventType.EmailBounced}',
+          '${InternalEventType.EmailMarkedSpam}',
+          'DFEmailComplaint',
           '${InternalEventType.SmsFailed}'
         )
         AND ie.origin_message_id IN (SELECT origin_message_id FROM sent_messages)
@@ -275,7 +274,8 @@ export async function getChartData({
         max(event IN ('${InternalEventType.EmailDelivered}', '${InternalEventType.SmsDelivered}')) AS has_delivered,
         max(event = '${InternalEventType.EmailOpened}') AS has_opened,
         max(event = '${InternalEventType.EmailClicked}') AS has_clicked,
-        max(event IN ('${InternalEventType.EmailBounced}', '${InternalEventType.SmsFailed}')) AS has_bounced
+        max(event IN ('${InternalEventType.EmailBounced}', '${InternalEventType.SmsFailed}')) AS has_bounced,
+        max(event IN ('${InternalEventType.EmailMarkedSpam}', 'DFEmailComplaint')) AS has_complained
       FROM status_events
       WHERE origin_message_id != ''
       GROUP BY origin_message_id
@@ -289,7 +289,8 @@ export async function getChartData({
         toUInt8(coalesce(mf.has_delivered, 0)) AS has_delivered,
         toUInt8(coalesce(mf.has_opened, 0)) AS has_opened,
         toUInt8(coalesce(mf.has_clicked, 0)) AS has_clicked,
-        toUInt8(coalesce(mf.has_bounced, 0)) AS has_bounced
+        toUInt8(coalesce(mf.has_bounced, 0)) AS has_bounced,
+        toUInt8(coalesce(mf.has_complained, 0)) AS has_complained
       FROM sent_messages sm
       LEFT JOIN message_flags mf USING (origin_message_id)
     )
@@ -332,6 +333,13 @@ export async function getChartData({
       SELECT timestamp, 'bounced' as event_type, sum(toUInt64(has_bounced)) as count
       FROM message_states_per_message
       WHERE has_bounced = 1
+      GROUP BY timestamp
+
+      UNION ALL
+
+      SELECT timestamp, 'complained' as event_type, sum(toUInt64(has_complained)) as count
+      FROM message_states_per_message
+      WHERE has_complained = 1
       GROUP BY timestamp
     ) all_states
     GROUP BY timestamp, event_type
@@ -467,6 +475,7 @@ export async function getSummarizedData({
           InternalEventType.EmailClicked,
           InternalEventType.EmailBounced,
           InternalEventType.EmailMarkedSpam,
+          "DFEmailComplaint",
           InternalEventType.EmailDropped,
         ];
         break;
@@ -495,21 +504,24 @@ export async function getSummarizedData({
       0 as deliveries,
       0 as opens,
       0 as clicks,
-      0 as bounces`;
+      0 as bounces,
+      0 as complaints`;
   } else if (channel === ChannelType.Email) {
     summaryFields = `
       sum(toUInt64(has_delivered OR has_opened OR has_clicked)) as deliveries,
       sum(toUInt64(has_sent)) as sent,
       sum(toUInt64(has_opened OR has_clicked)) as opens,
       sum(toUInt64(has_clicked)) as clicks,
-      sum(toUInt64(has_bounced)) as bounces`;
+      sum(toUInt64(has_bounced)) as bounces,
+      sum(toUInt64(has_complained)) as complaints`;
   } else if (channel === ChannelType.Sms) {
     summaryFields = `
       sum(toUInt64(has_delivered)) as deliveries,
       sum(toUInt64(has_sent)) as sent,
       0 as opens,
       0 as clicks,
-      sum(toUInt64(has_bounced)) as bounces`;
+      sum(toUInt64(has_bounced)) as bounces,
+      0 as complaints`;
   } else {
     // Other channels: only sent messages
     summaryFields = `
@@ -517,7 +529,8 @@ export async function getSummarizedData({
       0 as deliveries,
       0 as opens,
       0 as clicks,
-      0 as bounces`;
+      0 as bounces,
+      0 as complaints`;
   }
 
   const query = `
@@ -546,6 +559,8 @@ export async function getSummarizedData({
           '${InternalEventType.EmailOpened}',
           '${InternalEventType.EmailClicked}',
           '${InternalEventType.EmailBounced}',
+          '${InternalEventType.EmailMarkedSpam}',
+          'DFEmailComplaint',
           '${InternalEventType.SmsFailed}'
         )
         AND ie.origin_message_id IN (SELECT origin_message_id FROM sent_messages)
@@ -557,7 +572,8 @@ export async function getSummarizedData({
         max(se.event IN ('${InternalEventType.EmailDelivered}', '${InternalEventType.SmsDelivered}')) as has_delivered,
         max(se.event = '${InternalEventType.EmailOpened}') as has_opened,
         max(se.event = '${InternalEventType.EmailClicked}') as has_clicked,
-        max(se.event IN ('${InternalEventType.EmailBounced}', '${InternalEventType.SmsFailed}')) as has_bounced
+        max(se.event IN ('${InternalEventType.EmailBounced}', '${InternalEventType.SmsFailed}')) as has_bounced,
+        max(se.event IN ('${InternalEventType.EmailMarkedSpam}', 'DFEmailComplaint')) as has_complained
       FROM sent_messages sm
       LEFT JOIN status_events se USING (origin_message_id)
       GROUP BY sm.origin_message_id
@@ -596,6 +612,7 @@ export async function getSummarizedData({
     opens: string | number;
     clicks: string | number;
     bounces: string | number;
+    complaints: string | number;
   }>();
 
   const rawSummary = rows[0] || {
@@ -604,6 +621,7 @@ export async function getSummarizedData({
     opens: "0",
     clicks: "0",
     bounces: "0",
+    complaints: "0",
   };
 
   const summary = {
@@ -623,6 +641,10 @@ export async function getSummarizedData({
       typeof rawSummary.clicks === "string"
         ? parseInt(rawSummary.clicks, 10)
         : rawSummary.clicks,
+    complaints:
+      typeof rawSummary.complaints === "string"
+        ? parseInt(rawSummary.complaints, 10)
+        : rawSummary.complaints,
     bounces:
       typeof rawSummary.bounces === "string"
         ? parseInt(rawSummary.bounces, 10)
@@ -670,6 +692,8 @@ export async function getJourneyEditorStats({
           '${InternalEventType.EmailOpened}',
           '${InternalEventType.EmailClicked}',
           '${InternalEventType.EmailBounced}',
+          '${InternalEventType.EmailMarkedSpam}',
+          'DFEmailComplaint',
           '${InternalEventType.SmsFailed}'
         )
         AND JSON_VALUE(properties, '$.nodeId') != ''
@@ -683,7 +707,8 @@ export async function getJourneyEditorStats({
         countIf(event IN ('${InternalEventType.EmailDelivered}', '${InternalEventType.SmsDelivered}')) > 0 as has_delivered,
         countIf(event = '${InternalEventType.EmailOpened}') > 0 as has_opened,
         countIf(event = '${InternalEventType.EmailClicked}') > 0 as has_clicked,
-        countIf(event IN ('${InternalEventType.EmailBounced}', '${InternalEventType.SmsFailed}')) > 0 as has_bounced
+        countIf(event IN ('${InternalEventType.EmailBounced}', '${InternalEventType.SmsFailed}')) > 0 as has_bounced,
+        countIf(event IN ('${InternalEventType.EmailMarkedSpam}', 'DFEmailComplaint')) > 0 as has_complained
       FROM message_events
       WHERE origin_message_id != '' AND node_id != ''
       GROUP BY origin_message_id, node_id
@@ -735,6 +760,16 @@ export async function getJourneyEditorStats({
         sum(toUInt64(has_bounced)) as count
       FROM message_states_per_node
       WHERE has_bounced = 1
+      GROUP BY node_id
+
+      UNION ALL
+
+      SELECT
+        node_id,
+        'complained' as state,
+        sum(toUInt64(has_complained)) as count
+      FROM message_states_per_node
+      WHERE has_complained = 1
       GROUP BY node_id
     )
     SELECT
@@ -789,6 +824,7 @@ export async function getJourneyEditorStats({
       opened: 0,
       clicked: 0,
       bounced: 0,
+      complained: 0,
     };
   }
 
