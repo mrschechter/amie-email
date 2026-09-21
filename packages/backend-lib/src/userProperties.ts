@@ -852,10 +852,12 @@ export async function findUserIdsByUserPropertyValue({
   workspaceId,
   userPropertyName,
   value,
+  caseInsensitive = false,
 }: {
   workspaceId: string;
   userPropertyName: string;
   value: string;
+  caseInsensitive?: boolean;
 }): Promise<string[] | null> {
   const userProperties = await db()
     .select()
@@ -881,7 +883,7 @@ export async function findUserIdsByUserPropertyValue({
       and type = 'user_property'
       and computed_property_id = ${qb.addQueryValue(userProperty.id, "String")}
     group by user_id
-    having latest_user_property_value = ${qb.addQueryValue(value, "String")}
+    having ${caseInsensitive ? "lowerUTF8(latest_user_property_value)" : "latest_user_property_value"} = ${caseInsensitive ? `lowerUTF8(${qb.addQueryValue(value, "String")})` : qb.addQueryValue(value, "String")}
   `;
   const result = await chQuery({
     query,

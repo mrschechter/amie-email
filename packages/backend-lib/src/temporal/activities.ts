@@ -1,6 +1,7 @@
 export * from "../broadcasts/activities";
 export * from "../computedProperties/computePropertiesWorkflow/activities";
 export { getFeature } from "../features";
+export { processScheduledInboundUnsubscribes } from "../inboundUnsubscribe";
 export * from "../integrations/hubspot/activities";
 export * from "../journeys/bootstrap/activities";
 export * from "../journeys/userWorkflow/activities";

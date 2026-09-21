@@ -12,7 +12,9 @@ import {
   WorkspaceWideEmailProviders,
 } from "isomorphic-lib/src/types";
 import { err, ok, Result } from "neverthrow";
+import addressparser from "nodemailer/lib/addressparser";
 
+import backendConfig from "../config";
 import { db, upsert } from "../db";
 import {
   defaultEmailProvider as dbDefaultEmailProvider,
@@ -67,9 +69,14 @@ export function constructUnsubscribeHeaders({
     changedSubscription: subscriptionGroupId,
     subscriptionChange: SubscriptionChange.Unsubscribe,
   });
+  const mailtoDomain = backendConfig().unsubscribeMailtoEnabled
+    ? addressparser(from, { flatten: true })[0]?.address.split("@")[1]
+    : undefined;
   return ok({
     "List-Unsubscribe-Post": LIST_UNSUBSCRIBE_POST,
-    "List-Unsubscribe": `<${url}>`,
+    "List-Unsubscribe": mailtoDomain
+      ? `<mailto:unsubscribe@${mailtoDomain}?subject=unsubscribe>, <${url}>`
+      : `<${url}>`,
     "List-ID": `${subscriptionGroupName} <${subscriptionGroupId}.${domain}>`,
   });
 }
