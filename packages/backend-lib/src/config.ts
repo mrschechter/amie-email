@@ -40,6 +40,12 @@ const BaseRawConfigProps = {
   defaultUserJourneyMaxAttempts: Type.Optional(
     Type.String({ format: "naturalNumber" }),
   ),
+  journeyEntryBreakerMaxPerWindow: Type.Optional(
+    Type.String({ format: "naturalNumber" }),
+  ),
+  journeyEntryBreakerWindowSeconds: Type.Optional(
+    Type.String({ format: "naturalNumber" }),
+  ),
   kafkaBrokers: Type.Optional(Type.String()),
   kafkaUsername: Type.Optional(Type.String()),
   kafkaPassword: Type.Optional(Type.String()),
@@ -325,6 +331,8 @@ export type Config = Overwrite<
     computePropertiesSchedulerQueueRestartDelay: number;
     computePropertiesWorkflowTaskTimeout: number;
     defaultUserJourneyMaxAttempts?: number;
+    journeyEntryBreakerMaxPerWindow: number;
+    journeyEntryBreakerWindowSeconds: number;
     dashboardUrl: string;
     databaseParams: Record<string, string>;
     databaseUrl: string;
@@ -853,6 +861,12 @@ function parseRawConfig(rawConfig: RawConfig): Config {
       5,
     ),
     defaultUserJourneyMaxAttempts,
+    journeyEntryBreakerMaxPerWindow: parseInt(
+      rawConfig.journeyEntryBreakerMaxPerWindow ?? "500",
+    ),
+    journeyEntryBreakerWindowSeconds: parseInt(
+      rawConfig.journeyEntryBreakerWindowSeconds ?? "3600",
+    ),
     defaultGetSegmentAndEventDetailsMaxAttempts: parseMaxAttempts(
       rawConfig.defaultGetSegmentAndEventDetailsMaxAttempts,
       nodeEnv === NodeEnvEnum.Test ? 1 : 10,
