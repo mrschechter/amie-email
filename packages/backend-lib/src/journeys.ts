@@ -31,6 +31,7 @@ import { enqueueRecompute } from "./computedProperties/computePropertiesWorkflow
 import { QUEUE_ITEM_PRIORITIES } from "./constants";
 import { Db, db, insert, QueryError, queryResult } from "./db";
 import * as schema from "./db/schema";
+import { journeyEntryBreakerFactory } from "./journeys/entryBreaker";
 import {
   segmentUpdateSignal,
   userJourneyWorkflow,
@@ -705,6 +706,15 @@ const EVENT_TRIGGER_JOURNEY_CACHE = new NodeCache({
   checkperiod: 120,
 });
 
+let ENTRY_BREAKER: ReturnType<typeof journeyEntryBreakerFactory> | null = null;
+
+const admitJourneyEntry: ReturnType<typeof journeyEntryBreakerFactory> = (
+  params,
+) => {
+  ENTRY_BREAKER ??= journeyEntryBreakerFactory();
+  return ENTRY_BREAKER(params);
+};
+
 let JOURNEY_TRIGGER_COUNTER: Counter | null = null;
 
 function journeyTriggerCounter() {
@@ -740,9 +750,11 @@ export type TriggerEventEntryJourneysOptions = Omit<
 export function triggerEventEntryJourneysFactory({
   startKeyedJourneyImpl,
   journeyCache,
+  entryBreakerImpl = admitJourneyEntry,
 }: {
   journeyCache: NodeCache;
   startKeyedJourneyImpl: typeof startKeyedUserJourney;
+  entryBreakerImpl?: ReturnType<typeof journeyEntryBreakerFactory>;
 }) {
   return async function builtTriggerEventEntryJourneys({
     workspaceId,
@@ -785,18 +797,17 @@ export function triggerEventEntryJourneysFactory({
       journeyCache.set(workspaceId, journeyDetails);
     }
 
-    const starts: Promise<unknown>[] = journeyDetails.flatMap(
-      ({ journeyId, journeyName, event: journeyEvent, definition }) => {
+    const starts: Promise<unknown>[] = journeyDetails.map(
+      async ({ journeyId, journeyName, event: journeyEvent, definition }) => {
         const isMatch = doesEventNameMatch({
           pattern: journeyEvent,
           event: triggerEvent.event,
         });
 
         if (!isMatch) {
-          return [];
+          return;
         }
 
-        const counter = journeyTriggerCounter();
         if (definition.entryNode.type !== JourneyNodeType.EventEntryNode) {
           logger().error(
             {
@@ -805,15 +816,29 @@ export function triggerEventEntryJourneysFactory({
             },
             "can't trigger non-event entry journeys using event trigger",
           );
-          return [];
+          return;
         }
 
+        if (
+          !(await entryBreakerImpl({
+            workspaceId,
+            journeyId,
+            journeyName,
+            userId,
+          }))
+        ) {
+          // Refused entries are not queued or retried. Operators can deliberately
+          // re-feed users identified by the breaker's rate-limited error log.
+          return;
+        }
+
+        const counter = journeyTriggerCounter();
         counter.add(1, {
           workspaceId,
           journeyName,
           entryType: definition.entryNode.type,
         });
-        return startKeyedJourneyImpl({
+        await startKeyedJourneyImpl({
           workspaceId,
           userId,
           journeyId,
@@ -880,6 +905,17 @@ export async function triggerSegmentEntryJourney({
   });
 
   const userId = segmentAssignment.user_id;
+  if (
+    !(await admitJourneyEntry({
+      workspaceId,
+      journeyId,
+      journeyName: journey.name,
+      userId,
+    }))
+  ) {
+    // Refused entries are not queued or retried; an operator must re-feed them.
+    return;
+  }
   const counter = journeyTriggerCounter();
   counter.add(1, {
     workspaceId,
