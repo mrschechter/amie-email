@@ -19,6 +19,11 @@ import {
 
 const BaseRawConfigProps = {
   useGlobalComputedProperties: Type.Optional(BoolStr),
+  unsubscribeMailtoEnabled: Type.Optional(BoolStr),
+  unsubscribeMailtoProcessorEnabled: Type.Optional(BoolStr),
+  unsubscribeMailboxDomains: Type.Optional(Type.String()),
+  unsubscribeInboundBucket: Type.Optional(Type.String()),
+  unsubscribeInboundPrefix: Type.Optional(Type.String()),
   databaseUrl: Type.Optional(Type.String()),
   databaseUser: Type.Optional(Type.String()),
   databasePassword: Type.Optional(Type.String()),
@@ -297,6 +302,11 @@ type RawConfig = Static<typeof RawConfig>;
 export type Config = Overwrite<
   RawConfig,
   {
+    unsubscribeMailtoEnabled: boolean;
+    unsubscribeMailtoProcessorEnabled: boolean;
+    unsubscribeMailboxDomains: string[];
+    unsubscribeInboundBucket: string;
+    unsubscribeInboundPrefix: string;
     allowedOrigins: string[];
     assignmentSequentialConsistency: boolean;
     authMode: AuthMode;
@@ -700,6 +710,19 @@ function parseRawConfig(rawConfig: RawConfig): Config {
     // deprecated
     defaultUserEventsTableVersion:
       rawConfig.defaultUserEventsTableVersion ?? "",
+    unsubscribeMailtoEnabled: rawConfig.unsubscribeMailtoEnabled === "true",
+    unsubscribeMailtoProcessorEnabled:
+      rawConfig.unsubscribeMailtoProcessorEnabled === "true",
+    unsubscribeMailboxDomains: (
+      rawConfig.unsubscribeMailboxDomains ??
+      "send.tryamie.com,mail.tryamie.com,em.tryamie.com"
+    )
+      .split(",")
+      .map((domain) => domain.trim().toLowerCase())
+      .filter(Boolean),
+    unsubscribeInboundBucket:
+      rawConfig.unsubscribeInboundBucket ?? "amie-inbound-email-402589123885",
+    unsubscribeInboundPrefix: rawConfig.unsubscribeInboundPrefix ?? "inbound/",
     logConfig: rawConfig.logConfig === "true",
     bootstrapEvents: rawConfig.bootstrapEvents === "true",
     bootstrapWorker:
