@@ -19,6 +19,7 @@ import AnalyticsLayout, {
 import { KpiStrip, money } from "./kpiCard";
 import MetricTimeSeries from "./metricTimeSeries";
 import PerformanceTable from "./performanceTable";
+import useMetricSelection from "./useMetricSelection";
 
 export function QueryState({
   loading,
@@ -47,15 +48,17 @@ export function QueryState({
 function RevenueScreen({
   data,
   params,
+  updatedAt,
 }: {
   data: AnalyticsResponse;
   params: AnalyticsParams;
+  updatedAt: number;
 }) {
   const [group, setGroup] = useState<"flows" | "broadcasts" | "templates">(
     "flows",
   );
   const [offset, setOffset] = useState(0);
-  const orders = useRevenueOrders(params, offset);
+  const orders = useRevenueOrders(params, offset, data, updatedAt);
   const download = useDownloadRevenueAttributionMutation();
   const totals = data.revenue;
   if (!totals) return null;
@@ -241,6 +244,7 @@ function RevenueScreen({
 }
 export default function AnalyticsPage({ tab }: { tab: (typeof tabs)[number] }) {
   const range = useAnalyticsRange();
+  const selection = useMetricSelection();
   const [windowDays, setWindowDays] = useState<5 | 7 | 14 | undefined>();
   const params = { ...range.params, ...(windowDays && { windowDays }) };
   const query = useAnalytics(
@@ -285,8 +289,8 @@ export default function AnalyticsPage({ tab }: { tab: (typeof tabs)[number] }) {
         <>
           {tab === "overview" && (
             <>
-              <KpiStrip data={data} />
-              <MetricTimeSeries rows={data.daily} />
+              <KpiStrip data={data} {...selection} />
+              <MetricTimeSeries rows={data.daily} {...selection} />
               <div className={styles.split}>
                 <div>
                   <h2>
@@ -352,6 +356,7 @@ export default function AnalyticsPage({ tab }: { tab: (typeof tabs)[number] }) {
               key={JSON.stringify(params)}
               data={data}
               params={params}
+              updatedAt={query.dataUpdatedAt}
             />
           )}
           {tab === "deliverability" && (

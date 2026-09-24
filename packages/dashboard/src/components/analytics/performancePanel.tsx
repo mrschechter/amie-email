@@ -10,9 +10,11 @@ import {
 import styles from "./analytics.module.css";
 import { CalculationDrawer, RangeControls } from "./analyticsLayout";
 import { QueryState } from "./analyticsPage";
+import DeferredTable from "./deferredTable";
 import { KpiStrip } from "./kpiCard";
 import MetricTimeSeries from "./metricTimeSeries";
 import PerformanceTable, { StatusPill } from "./performanceTable";
+import useMetricSelection from "./useMetricSelection";
 
 export default function PerformancePanel({
   kind,
@@ -22,6 +24,7 @@ export default function PerformancePanel({
   id: string;
 }) {
   const range = useAnalyticsRange();
+  const selection = useMetricSelection();
   const query = useAnalytics(`${kind}/${id}`, range.params);
   const { data } = query;
   const resource = (kind === "flows" ? data?.flows : data?.broadcasts)?.find(
@@ -39,7 +42,7 @@ export default function PerformancePanel({
       <QueryState loading={query.isLoading} error={query.error} />
       {data && (
         <>
-          <KpiStrip data={data} />
+          <KpiStrip data={data} {...selection} />
           <h2>{kind === "flows" ? "Message steps" : "Templates"}</h2>
           <PerformanceTable
             rows={data.rows}
@@ -77,18 +80,20 @@ export default function PerformancePanel({
             </>
           )}
           <h2>Daily performance</h2>
-          <MetricTimeSeries rows={data.daily} />
+          <MetricTimeSeries rows={data.daily} {...selection} />
           <h2>Recent deliveries</h2>
-          <DeliveriesTableV2
-            {...DEFAULT_DELIVERIES_TABLE_V2_PROPS}
-            key={`${range.params.startDate}:${range.params.endDate}`}
-            journeyId={kind === "flows" ? id : undefined}
-            broadcastId={kind === "broadcasts" ? id : undefined}
-            initialDateRange={{
-              startDate: range.params.startDate,
-              endDate: range.params.endDate,
-            }}
-          />
+          <DeferredTable>
+            <DeliveriesTableV2
+              {...DEFAULT_DELIVERIES_TABLE_V2_PROPS}
+              key={`${range.params.startDate}:${range.params.endDate}`}
+              journeyId={kind === "flows" ? id : undefined}
+              broadcastId={kind === "broadcasts" ? id : undefined}
+              initialDateRange={{
+                startDate: range.params.startDate,
+                endDate: range.params.endDate,
+              }}
+            />
+          </DeferredTable>
         </>
       )}
       {!data && !query.isLoading && !query.error && (
