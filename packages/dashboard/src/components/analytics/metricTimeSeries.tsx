@@ -1,7 +1,7 @@
 import { AnalyticsMetrics, AnalyticsRow } from "isomorphic-lib/src/analytics";
-import { useState } from "react";
 import {
   CartesianGrid,
+  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -11,41 +11,59 @@ import {
 } from "recharts";
 
 import styles from "./analytics.module.css";
+import { chartMetric, chartMetrics } from "./chartMetrics";
 
-const metrics: { key: keyof AnalyticsMetrics; label: string; scale: number }[] =
-  [
-    { key: "sends", label: "Sends", scale: 1 },
-    { key: "deliveredRate", label: "Delivered %", scale: 100 },
-    { key: "openRate", label: "Open %", scale: 100 },
-    { key: "clickRate", label: "Click % (CTR)", scale: 100 },
-    { key: "ctor", label: "CTOR %", scale: 100 },
-    { key: "unsubRate", label: "Unsubscribe %", scale: 100 },
-    { key: "bounceRate", label: "Bounce %", scale: 100 },
-    { key: "complaintRate", label: "Complaint %", scale: 100 },
-    {
-      key: "attributedRevenueCents",
-      label: "Attributed revenue (USD)",
-      scale: 0.01,
-    },
-    { key: "attributedOrders", label: "Attributed orders", scale: 1 },
-    { key: "rpm", label: "RPM (USD)", scale: 0.01 },
-  ];
+const colors = [
+  "#2D7A7A",
+  "#5F7350",
+  "#966239",
+  "#7564A0",
+  "#B76E79",
+  "#426B9A",
+  "#B42318",
+  "#896B25",
+  "#58636D",
+  "#A04A76",
+  "#467D65",
+];
+const unit = (scale: number) => {
+  if (scale === 100) return "rate";
+  return scale === 0.01 ? "currency" : "count";
+};
+const format = (scale: number, value: number) => {
+  if (scale === 100) return `${value.toLocaleString()}%`;
+  if (scale === 0.01) return `$${value.toLocaleString()}`;
+  return Math.round(value).toLocaleString();
+};
 export default function MetricTimeSeries({
   rows,
   deliverability = false,
+  selectedMetric,
+  onSelectMetric,
 }: {
   rows: AnalyticsRow[];
   deliverability?: boolean;
+  selectedMetric?: keyof AnalyticsMetrics;
+  onSelectMetric?: (metric?: keyof AnalyticsMetrics) => void;
 }) {
-  const [selected, setSelected] = useState("sends");
-  const metric = metrics.find((m) => m.key === selected) ?? metrics[0];
-  if (!metric) return null;
+  const selected = chartMetric(selectedMetric);
+  let visible = selected ? [selected] : chartMetrics;
+  if (deliverability)
+    visible = [
+      { key: "bounced" as const, label: "Bounces", scale: 1 },
+      { key: "complaint" as const, label: "Complaints", scale: 1 },
+      { key: "unsubscribed" as const, label: "Unsubscribes", scale: 1 },
+    ];
+  const axes = [
+    ...new Map(
+      visible.map((metric) => [unit(metric.scale), metric.scale]),
+    ).entries(),
+  ];
   const data = rows.map((row) => ({
     day: row.day,
-    value: row[metric.key] * metric.scale,
-    bounced: row.bounced,
-    complaint: row.complaint,
-    unsubscribed: row.unsubscribed,
+    ...Object.fromEntries(
+      visible.map((metric) => [metric.key, row[metric.key] * metric.scale]),
+    ),
   }));
   return (
     <section className={styles.card} aria-label="Daily performance chart">
@@ -53,21 +71,31 @@ export default function MetricTimeSeries({
         <h3>
           {deliverability ? "Deliverability by day" : "Daily performance"}
         </h3>
-        {!deliverability && (
-          <label htmlFor="analytics-metric">
-            Metric{" "}
-            <select
-              id="analytics-metric"
-              value={selected}
-              onChange={(e) => setSelected(e.target.value)}
-            >
-              {metrics.map((m) => (
-                <option key={m.key} value={m.key}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </label>
+        {!deliverability && onSelectMetric && (
+          <>
+            <label htmlFor="analytics-metric">
+              Metric{" "}
+              <select
+                id="analytics-metric"
+                value={selected?.key ?? ""}
+                onChange={(e) =>
+                  onSelectMetric(chartMetric(e.target.value)?.key)
+                }
+              >
+                <option value="">All metrics</option>
+                {chartMetrics.map((metric) => (
+                  <option key={metric.key} value={metric.key}>
+                    {metric.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selected && (
+              <button type="button" onClick={() => onSelectMetric(undefined)}>
+                Show all
+              </button>
+            )}
+          </>
         )}
         <span className={styles.muted}>UTC · activity on each day</span>
       </div>
@@ -75,38 +103,33 @@ export default function MetricTimeSeries({
         <LineChart data={data}>
           <CartesianGrid stroke="#F0E9E0" vertical={false} />
           <XAxis dataKey="day" tick={{ fill: "#8A8178", fontSize: 11 }} />
-          <YAxis tick={{ fill: "#8A8178", fontSize: 11 }} />
+          {axes.map(([axis, scale], index) => (
+            <YAxis
+              key={axis}
+              yAxisId={axis}
+              orientation={index === 0 ? "left" : "right"}
+              domain={[0, "auto"]}
+              allowDecimals={axis !== "count"}
+              tickFormatter={(value: number) => format(scale, value)}
+              tick={{ fill: "#8A8178", fontSize: 11 }}
+            />
+          ))}
           <Tooltip contentStyle={{ borderColor: "#E3DAD1", borderRadius: 8 }} />
-          {deliverability ? (
-            <>
-              <Line
-                dataKey="bounced"
-                name="Bounces"
-                stroke="#B76E79"
-                dot={false}
-              />
-              <Line
-                dataKey="complaint"
-                name="Complaints"
-                stroke="#8A8178"
-                dot={false}
-              />
-              <Line
-                dataKey="unsubscribed"
-                name="Unsubscribes"
-                stroke="#2D7A7A"
-                dot={false}
-              />
-            </>
-          ) : (
+          <Legend />
+          {visible.map((metric, index) => (
             <Line
-              dataKey="value"
+              key={metric.key}
+              dataKey={metric.key}
+              yAxisId={unit(metric.scale)}
               name={metric.label}
-              stroke="#2D7A7A"
+              stroke={
+                colors[chartMetrics.findIndex((m) => m.key === metric.key)] ??
+                colors[index]
+              }
               dot={false}
               strokeWidth={2}
             />
-          )}
+          ))}
         </LineChart>
       </ResponsiveContainer>
     </section>

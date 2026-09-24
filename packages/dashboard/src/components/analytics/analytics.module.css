@@ -325,3 +325,19 @@
     animation: none;
   }
 }
+
+.card > .cardLabel,
+.card > .value,
+.card > .muted {
+  display: block;
+}
+.root .kpiButton {
+  text-align: left;
+  padding: 16px;
+  border-radius: 12px;
+}
+.root .kpiButton[aria-pressed="true"] {
+  border-color: #2d7a7a;
+  background: #eaf2f1;
+  box-shadow: inset 0 0 0 1px #2d7a7a;
+}

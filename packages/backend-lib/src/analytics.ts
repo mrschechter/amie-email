@@ -207,6 +207,11 @@ async function loadAnalytics(
   if (windowDays !== 5 && windowDays !== 7 && windowDays !== 14)
     throw new Error("Configured attribution window must be 5, 7, or 14 days.");
   const resolved: AnalyticsRequest = { ...request, windowDays };
+  const before = {
+    ...resolved,
+    ...previousPeriod(request.startDate, request.endDate),
+    compare: false,
+  };
   const [
     rawRows,
     rawDaily,
@@ -215,6 +220,11 @@ async function loadAnalytics(
     broadcasts,
     templates,
     audience,
+    previousRows,
+    previousFacts,
+    orders,
+    domains,
+    addresses,
   ] = await Promise.all([
     queryRows(resolved, "message"),
     queryRows(resolved, "day"),
@@ -239,6 +249,22 @@ async function loadAnalytics(
         ),
       )
       .groupBy(schema.segmentAssignment.segmentId),
+    request.compare !== false
+      ? queryRows(before, "message")
+      : Promise.resolve<AnalyticsRow[]>([]),
+    request.compare !== false
+      ? getRevenueFacts(before)
+      : Promise.resolve<RevenueFact[]>([]),
+    view === "revenue" ? getRevenueOrders(resolved, 101) : [],
+    view === "deliverability" ? queryRows(resolved, "domain") : [],
+    view === "deliverability"
+      ? chQuery({
+          ...buildDeliverabilityAddressesQuery(resolved),
+          format: "JSONEachRow",
+        }).then((result) =>
+          result.json<AnalyticsResponse["addresses"][number]>(),
+        )
+      : [],
   ]);
   if (
     id &&
@@ -491,18 +517,10 @@ async function loadAnalytics(
   }
   if (view === "revenue") {
     response.revenue = revenueTotals(facts);
-    const orders = await getRevenueOrders(resolved, 101);
     response.orders = orders.slice(0, 100);
     response.ordersHasMore = orders.length > 100;
   }
   if (view === "deliverability") {
-    const [domains, addresses] = await Promise.all([
-      queryRows(resolved, "domain"),
-      chQuery({
-        ...buildDeliverabilityAddressesQuery(resolved),
-        format: "JSONEachRow",
-      }),
-    ]);
     response.rows = [
       "gmail.com",
       "yahoo.com",
@@ -516,19 +534,9 @@ async function loadAnalytics(
         name: domain,
       }),
     );
-    response.addresses =
-      await addresses.json<AnalyticsResponse["addresses"][number]>();
+    response.addresses = addresses;
   }
   if (request.compare !== false) {
-    const before = {
-      ...resolved,
-      ...previousPeriod(request.startDate, request.endDate),
-      compare: false,
-    };
-    const [previousRows, previousFacts] = await Promise.all([
-      queryRows(before, "message"),
-      getRevenueFacts(before),
-    ]);
     response.previous = sumMetrics(
       mergeRevenue(
         previousRows.map(normalize).filter(accepts),
