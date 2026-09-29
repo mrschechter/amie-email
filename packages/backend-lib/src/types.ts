@@ -295,6 +295,9 @@ export enum AmazonSesBounceSubType {
   NoEmail = "NoEmail",
   Suppressed = "Suppressed",
   OnAccountSuppressionList = "OnAccountSuppressionList",
+  OnTenantSuppressionList = "OnTenantSuppressionList",
+  EmailValidationSuppressed = "EmailValidationSuppressed",
+  CustomTimeoutExceeded = "CustomTimeoutExceeded",
   MailboxFull = "MailboxFull",
   MessageTooLarge = "MessageTooLarge",
   ContentRejected = "ContentRejected",
@@ -302,6 +305,9 @@ export enum AmazonSesBounceSubType {
 }
 
 export enum AmazonSesComplaintSubType {
+  OnAccountSuppressionList = "OnAccountSuppressionList",
+  OnTenantSuppressionList = "OnTenantSuppressionList",
+  // Legacy values: these are feedback types, retained for compatibility.
   Abuse = "abuse",
   AuthFailure = "auth-failure",
   Fraud = "fraud",
@@ -455,9 +461,11 @@ export const AmazonSesComplaintEvent = Type.Object({
       Type.Object({
         complainedRecipients: NullableAndOptional(
           Type.Array(
-            Type.Object({
-              email: Type.String(),
-            }),
+            Type.Union([
+              Type.Object({ emailAddress: Type.String() }),
+              // Accept the previously supported recipient shape as well.
+              Type.Object({ email: Type.String() }),
+            ]),
           ),
         ),
         feedbackId: NullableAndOptional(Type.String()),
@@ -889,11 +897,11 @@ export type WorkspaceQueueItem =
 
 export interface SubscriptionManagementChannel {
   name: string;
-  subscriptions: Array<{
+  subscriptions: {
     id: string;
     name: string;
     isSubscribed: boolean;
-  }>;
+  }[];
 }
 
 export interface SubscriptionManagementTemplateContext {
