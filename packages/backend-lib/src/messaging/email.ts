@@ -52,7 +52,11 @@ export function constructUnsubscribeHeaders({
   workspaceId: string;
   subscriptionGroupId: string;
 }): Result<UnsubscribeHeaders, MessageTemplateRenderError> {
-  const domain = from.split("@")[1];
+  // `from` may be a display-name address ("Name <user@domain>"); parse it so
+  // the List-ID domain never carries the closing ">".
+  const domain = addressparser(from, { flatten: true })[0]?.address?.split(
+    "@",
+  )[1];
   if (!domain) {
     return err({
       type: BadWorkspaceConfigurationType.MessageTemplateRenderError,
