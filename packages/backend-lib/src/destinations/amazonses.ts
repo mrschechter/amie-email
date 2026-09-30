@@ -32,6 +32,7 @@ import logger from "../logger";
 import { withSpan } from "../openTelemetry";
 import { buildSubscriptionChangeEventInner } from "../subscriptionGroups";
 import {
+  AmazonSesBounceType,
   AmazonSesComplaintSubType,
   AmazonSesConfig,
   AmazonSesEventPayload,
@@ -279,7 +280,13 @@ export async function submitAmazonSesEvents(
           }),
         },
       });
-      if (event.eventType === AmazonSesNotificationType.Complaint) {
+      // Spam complaints and hard (permanent) bounces suppress the address:
+      // neither should receive journey or broadcast email again.
+      const suppress =
+        event.eventType === AmazonSesNotificationType.Complaint ||
+        (event.eventType === AmazonSesNotificationType.Bounce &&
+          event.bounce.bounceType === AmazonSesBounceType.Permanent);
+      if (suppress) {
         // Group names are editable. Suppress across this workspace's email
         // groups, including both opt-in and opt-out groups.
         const emailGroups = await db().query.subscriptionGroup.findMany({

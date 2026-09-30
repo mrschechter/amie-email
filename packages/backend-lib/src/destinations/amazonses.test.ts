@@ -226,19 +226,6 @@ describe("handleSesNotification", () => {
 
   it.each([
     [AmazonSesBounceType.Transient, AmazonSesBounceSubType.MailboxFull],
-    [AmazonSesBounceType.Permanent, AmazonSesBounceSubType.General],
-    [
-      AmazonSesBounceType.Permanent,
-      AmazonSesBounceSubType.OnAccountSuppressionList,
-    ],
-    [
-      AmazonSesBounceType.Permanent,
-      AmazonSesBounceSubType.OnTenantSuppressionList,
-    ],
-    [
-      AmazonSesBounceType.Permanent,
-      AmazonSesBounceSubType.EmailValidationSuppressed,
-    ],
     [
       AmazonSesBounceType.Transient,
       AmazonSesBounceSubType.CustomTimeoutExceeded,
@@ -258,6 +245,43 @@ describe("handleSesNotification", () => {
         },
       ]);
       expect(findGroups).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [AmazonSesBounceType.Permanent, AmazonSesBounceSubType.General],
+    [
+      AmazonSesBounceType.Permanent,
+      AmazonSesBounceSubType.OnAccountSuppressionList,
+    ],
+    [
+      AmazonSesBounceType.Permanent,
+      AmazonSesBounceSubType.OnTenantSuppressionList,
+    ],
+    [
+      AmazonSesBounceType.Permanent,
+      AmazonSesBounceSubType.EmailValidationSuppressed,
+    ],
+  ])(
+    "records %s/%s hard bounce and unsubscribes from email groups",
+    async (type, subtype) => {
+      bounce.bounce.bounceType = type;
+      bounce.bounce.bounceSubType = subtype;
+      unwrap(await handleSesNotification(notification(bounce)));
+      const batch = jest.mocked(submitBatch).mock.calls[0]?.[0].data.batch;
+      expect(batch?.[0]).toMatchObject({
+        event: InternalEventType.EmailBounced,
+        properties: { bounceType: type, bounceSubType: subtype },
+      });
+      expect(findGroups).toHaveBeenCalledTimes(1);
+      const unsubscribes = (batch ?? []).slice(1);
+      expect(unsubscribes.length).toBeGreaterThan(0);
+      for (const item of unsubscribes) {
+        expect(item).toMatchObject({
+          event: InternalEventType.SubscriptionChange,
+          properties: { action: SubscriptionChange.Unsubscribe },
+        });
+      }
     },
   );
 
