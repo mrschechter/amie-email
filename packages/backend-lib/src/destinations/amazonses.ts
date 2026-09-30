@@ -9,6 +9,7 @@ import {
   SESv2ServiceException,
 } from "@aws-sdk/client-sesv2";
 import { SpanStatusCode } from "@opentelemetry/api";
+import { and, eq } from "drizzle-orm";
 import { SourceType } from "isomorphic-lib/src/constants";
 import {
   jsonParseSafe,
@@ -25,9 +26,14 @@ import { v5 as uuidv5 } from "uuid";
 import { submitBatch } from "../apps/batch";
 import { canWorkspaceReceiveEventsById } from "../auth";
 import { MESSAGE_METADATA_FIELDS } from "../constants";
+import { db } from "../db";
+import { subscriptionGroup } from "../db/schema";
 import logger from "../logger";
 import { withSpan } from "../openTelemetry";
+import { buildSubscriptionChangeEventInner } from "../subscriptionGroups";
 import {
+  AmazonSesBounceType,
+  AmazonSesComplaintSubType,
   AmazonSesConfig,
   AmazonSesEventPayload,
   AmazonSesMailFields,
@@ -37,9 +43,11 @@ import {
   AmazonSNSSubscriptionEvent,
   AmazonSNSUnsubscribeEvent,
   BatchTrackData,
+  ChannelType,
   EmailProviderType,
   EventType,
   InternalEventType,
+  SubscriptionChange,
 } from "../types";
 
 export type SesMailData = Overwrite<
@@ -219,6 +227,15 @@ export async function submitAmazonSesEvents(
         timestamp = event.bounce.timestamp;
         break;
       case AmazonSesNotificationType.Complaint:
+        // SES did not send these messages; this is not a new spam report.
+        if (
+          event.complaint.complaintSubType ===
+            AmazonSesComplaintSubType.OnAccountSuppressionList ||
+          event.complaint.complaintSubType ===
+            AmazonSesComplaintSubType.OnTenantSuppressionList
+        ) {
+          return ok(undefined);
+        }
         eventName = InternalEventType.EmailMarkedSpam;
         timestamp = event.complaint.timestamp;
         break;
@@ -257,8 +274,45 @@ export async function submitAmazonSesEvents(
         properties: {
           email: event.mail.destination?.[0],
           ...metadataTags,
+          ...(event.eventType === AmazonSesNotificationType.Bounce && {
+            bounceType: event.bounce.bounceType,
+            bounceSubType: event.bounce.bounceSubType,
+          }),
         },
       });
+      // Spam complaints and hard (permanent) bounces suppress the address:
+      // neither should receive journey or broadcast email again.
+      const suppress =
+        event.eventType === AmazonSesNotificationType.Complaint ||
+        (event.eventType === AmazonSesNotificationType.Bounce &&
+          event.bounce.bounceType === AmazonSesBounceType.Permanent);
+      if (suppress) {
+        // Group names are editable. Suppress across this workspace's email
+        // groups, including both opt-in and opt-out groups.
+        const emailGroups = await db().query.subscriptionGroup.findMany({
+          where: and(
+            eq(subscriptionGroup.workspaceId, workspaceId),
+            eq(subscriptionGroup.channel, ChannelType.Email),
+          ),
+          columns: { id: true },
+        });
+        for (const group of emailGroups) {
+          items.push(
+            buildSubscriptionChangeEventInner({
+              userId,
+              subscriptionGroupId: group.id,
+              action: SubscriptionChange.Unsubscribe,
+              timestamp,
+              // Stable per complaint/user/group, distinct from the analytics
+              // event ID, so webhook retries reuse the existing deduplication.
+              messageId: uuidv5(
+                `${messageId}:${userId}:${group.id}:unsubscribe`,
+                workspaceId,
+              ),
+            }),
+          );
+        }
+      }
     }
     return ResultAsync.fromPromise(
       submitBatch({
@@ -272,7 +326,7 @@ export async function submitAmazonSesEvents(
           ...metadataTags,
         },
       }),
-      (e) => (e instanceof Error ? e : Error(e as string)),
+      (e) => (e instanceof Error ? e : Error(String(e))),
     );
   });
 }
