@@ -18,6 +18,7 @@ import { getEmailProvider } from "./messaging";
 import { getMeter } from "./openTelemetry";
 
 jest.mock("./config", () => ({ __esModule: true, default: jest.fn() }));
+jest.mock("dotenv", () => ({ config: jest.fn() }));
 jest.mock("./db", () => ({
   db: jest.fn(() => ({
     query: {
@@ -131,6 +132,44 @@ function fixture(messages: Record<string, string>, failedCopy?: string) {
 }
 const request =
   'To: unsubscribe@send.tryamie.com\r\nFrom: "Doe, Jane" <Jane@Example.COM>\r\nMessage-ID: <message-1>\r\nSubject: unsubscribe\r\n\r\nbody';
+
+it("resolves the user and subscriptions for an automatically included override domain", async () => {
+  const originalEnv = process.env;
+  process.env = {
+    NODE_ENV: "test",
+    UNSUBSCRIBE_MAILTO_DOMAIN: "REPLIES.EXAMPLE.COM",
+    UNSUBSCRIBE_MAILBOX_DOMAINS: "send.tryamie.com",
+    UNSUBSCRIBE_INBOUND_BUCKET: "inbound-bucket",
+  };
+  try {
+    jest.isolateModules(() => {
+      const actualConfig =
+        jest.requireActual<typeof import("./config")>("./config").default;
+      jest.mocked(config).mockReturnValue(actualConfig());
+    });
+  } finally {
+    process.env = originalEnv;
+  }
+  const f = fixture({
+    "inbound/override": request.replace(
+      "send.tryamie.com",
+      "replies.example.com",
+    ),
+  });
+  expect((await processInboundUnsubscribes(f.params)).unsubscribed).toBe(1);
+  expect(f.lookupImpl).toHaveBeenCalledWith({
+    workspaceId: "workspace-1",
+    userPropertyName: "email",
+    value: "jane@example.com",
+    caseInsensitive: true,
+  });
+  expect(f.updateImpl).toHaveBeenCalledWith({
+    workspaceId: "workspace-1",
+    userUpdates: [
+      { userId: "user-1", changes: { marketing: false, news: false } },
+    ],
+  });
+});
 
 function expectResult(result: string) {
   expect(createCounter).toHaveBeenCalledWith("mailto_unsubscribe_processed");

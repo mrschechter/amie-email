@@ -20,6 +20,7 @@ import {
 const BaseRawConfigProps = {
   useGlobalComputedProperties: Type.Optional(BoolStr),
   unsubscribeMailtoEnabled: Type.Optional(BoolStr),
+  unsubscribeMailtoDomain: Type.Optional(Type.String()),
   unsubscribeMailtoProcessorEnabled: Type.Optional(BoolStr),
   unsubscribeMailboxDomains: Type.Optional(Type.String()),
   unsubscribeInboundBucket: Type.Optional(Type.String()),
@@ -573,7 +574,42 @@ function buildDashboardUrl({
     : "https://app.dittofeed.com";
 }
 
+function parseUnsubscribeMailtoDomain(value?: string): string | undefined {
+  if (value === undefined) return undefined;
+  // Accept DNS hostnames only, never URLs, mailboxes, or header delimiters.
+  if (
+    value.length <= 253 &&
+    !/\s/.test(value) &&
+    value
+      .split(".")
+      .every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))
+  ) {
+    return value.toLowerCase();
+  }
+  // eslint-disable-next-line no-console -- The application logger depends on config(), which is still initializing.
+  console.warn(
+    "Ignoring invalid UNSUBSCRIBE_MAILTO_DOMAIN: expected a hostname",
+  );
+  return undefined;
+}
+
 function parseRawConfig(rawConfig: RawConfig): Config {
+  const unsubscribeMailtoDomain = parseUnsubscribeMailtoDomain(
+    rawConfig.unsubscribeMailtoDomain,
+  );
+  const unsubscribeMailboxDomains = (
+    rawConfig.unsubscribeMailboxDomains ??
+    "send.tryamie.com,mail.tryamie.com,em.tryamie.com"
+  )
+    .split(",")
+    .map((domain) => domain.trim().toLowerCase())
+    .filter(Boolean);
+  if (
+    unsubscribeMailtoDomain &&
+    !unsubscribeMailboxDomains.includes(unsubscribeMailtoDomain)
+  ) {
+    unsubscribeMailboxDomains.push(unsubscribeMailtoDomain);
+  }
   const suffix = rawConfig.databaseNameSuffix
     ? `_${rawConfig.databaseNameSuffix.replace(/-/g, "_")}`
     : "";
@@ -711,15 +747,10 @@ function parseRawConfig(rawConfig: RawConfig): Config {
     defaultUserEventsTableVersion:
       rawConfig.defaultUserEventsTableVersion ?? "",
     unsubscribeMailtoEnabled: rawConfig.unsubscribeMailtoEnabled === "true",
+    unsubscribeMailtoDomain,
     unsubscribeMailtoProcessorEnabled:
       rawConfig.unsubscribeMailtoProcessorEnabled === "true",
-    unsubscribeMailboxDomains: (
-      rawConfig.unsubscribeMailboxDomains ??
-      "send.tryamie.com,mail.tryamie.com,em.tryamie.com"
-    )
-      .split(",")
-      .map((domain) => domain.trim().toLowerCase())
-      .filter(Boolean),
+    unsubscribeMailboxDomains,
     unsubscribeInboundBucket:
       rawConfig.unsubscribeInboundBucket ?? "amie-inbound-email-402589123885",
     unsubscribeInboundPrefix: rawConfig.unsubscribeInboundPrefix ?? "inbound/",
