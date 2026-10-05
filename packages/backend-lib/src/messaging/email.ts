@@ -73,8 +73,9 @@ export function constructUnsubscribeHeaders({
     changedSubscription: subscriptionGroupId,
     subscriptionChange: SubscriptionChange.Unsubscribe,
   });
-  const mailtoDomain = backendConfig().unsubscribeMailtoEnabled
-    ? addressparser(from, { flatten: true })[0]?.address.split("@")[1]
+  const { unsubscribeMailtoEnabled, unsubscribeMailtoDomain } = backendConfig();
+  const mailtoDomain = unsubscribeMailtoEnabled
+    ? unsubscribeMailtoDomain ?? domain
     : undefined;
   return ok({
     "List-Unsubscribe-Post": LIST_UNSUBSCRIBE_POST,
