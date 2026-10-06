@@ -81,6 +81,7 @@ export function useAnalyticsRange() {
   };
 }
 export function useAnalytics(view: string, params: AnalyticsParams) {
+  const router = useRouter();
   const { workspace } = useAppStorePick(["workspace"]);
   const headers = useAuthHeaders();
   const base = useBaseApiUrl();
@@ -90,8 +91,9 @@ export function useAnalytics(view: string, params: AnalyticsParams) {
       : undefined;
   return useQuery({
     queryKey: ["analyticsV1", view, workspaceId, params],
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && router.isReady,
     staleTime: 60000,
+    refetchOnWindowFocus: false,
     queryFn: async () => {
       const response = await axios.get(`${base}/analysis/${view}`, {
         headers,
@@ -101,7 +103,12 @@ export function useAnalytics(view: string, params: AnalyticsParams) {
     },
   });
 }
-export function useRevenueOrders(params: AnalyticsParams, offset: number) {
+export function useRevenueOrders(
+  params: AnalyticsParams,
+  offset: number,
+  report?: AnalyticsResponse,
+  reportUpdatedAt?: number,
+) {
   const { workspace } = useAppStorePick(["workspace"]);
   const headers = useAuthHeaders();
   const base = useBaseApiUrl();
@@ -112,6 +119,13 @@ export function useRevenueOrders(params: AnalyticsParams, offset: number) {
   return useQuery({
     queryKey: ["analyticsOrders", workspaceId, params, offset],
     enabled: !!workspaceId,
+    staleTime: 60000,
+    refetchOnWindowFocus: false,
+    initialData:
+      offset === 0 && report?.orders
+        ? { orders: report.orders, hasMore: report.ordersHasMore ?? false }
+        : undefined,
+    initialDataUpdatedAt: reportUpdatedAt,
     queryFn: async () =>
       (
         await axios.get<{ orders: RevenueOrder[]; hasMore: boolean }>(

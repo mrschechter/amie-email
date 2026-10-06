@@ -4,6 +4,7 @@ import {
 } from "isomorphic-lib/src/analytics";
 
 import styles from "./analytics.module.css";
+import { chartMetric } from "./chartMetrics";
 import DeltaChip from "./deltaChip";
 
 export const money = (cents: number) =>
@@ -21,6 +22,8 @@ export function KpiCard({
   lowerIsBetter,
   warning,
   tooltip,
+  selected = false,
+  onClick,
 }: {
   label: string;
   value: string;
@@ -30,6 +33,8 @@ export function KpiCard({
   lowerIsBetter?: boolean;
   warning?: boolean;
   tooltip?: string;
+  selected?: boolean;
+  onClick?: () => void;
 }) {
   const min = Math.min(0, ...values);
   const max = Math.max(1, ...values);
@@ -39,19 +44,26 @@ export function KpiCard({
         `${(i * 240) / Math.max(1, values.length - 1)},${30 - ((v - min) / (max - min)) * 28}`,
     )
     .join(" ");
+  const Container = onClick ? "button" : "div";
   return (
-    <div className={styles.card} title={tooltip}>
-      <div className={styles.cardLabel}>{label}</div>
-      <div
+    <Container
+      className={`${styles.card} ${onClick ? styles.kpiButton : ""}`}
+      title={tooltip}
+      type={onClick ? "button" : undefined}
+      aria-pressed={onClick ? selected : undefined}
+      onClick={onClick}
+    >
+      <span className={styles.cardLabel}>{label}</span>
+      <span
         className={styles.value}
         style={warning ? { color: "#B42318" } : undefined}
       >
         {value}
-      </div>
+      </span>
       {delta !== undefined && (
         <DeltaChip delta={delta} lowerIsBetter={lowerIsBetter} />
       )}
-      {detail && <div className={styles.muted}>{detail}</div>}
+      {detail && <span className={styles.muted}>{detail}</span>}
       <svg
         className={styles.spark}
         viewBox="0 0 240 32"
@@ -66,10 +78,18 @@ export function KpiCard({
           strokeWidth="2"
         />
       </svg>
-    </div>
+    </Container>
   );
 }
-export function KpiStrip({ data }: { data: AnalyticsResponse }) {
+export function KpiStrip({
+  data,
+  selectedMetric,
+  onSelectMetric,
+}: {
+  data: AnalyticsResponse;
+  selectedMetric?: keyof AnalyticsMetrics;
+  onSelectMetric?: (metric?: keyof AnalyticsMetrics) => void;
+}) {
   const cards: {
     key: keyof AnalyticsMetrics;
     label: string;
@@ -137,6 +157,15 @@ export function KpiStrip({ data }: { data: AnalyticsResponse }) {
         return (
           <KpiCard
             key={card.key}
+            selected={selectedMetric === card.key}
+            onClick={
+              onSelectMetric && chartMetric(card.key)
+                ? () =>
+                    onSelectMetric(
+                      selectedMetric === card.key ? undefined : card.key,
+                    )
+                : undefined
+            }
             label={card.label}
             value={value}
             delta={data.previous ? data.deltas[trendKey] : undefined}

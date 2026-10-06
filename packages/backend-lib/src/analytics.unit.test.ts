@@ -499,6 +499,80 @@ describe("analytics report assembly", () => {
     );
     expect(jest.mocked(query).mock.calls.length - beforeCalls).toBe(8);
   });
+  it("starts comparisons alongside current-period queries before current data resolves", async () => {
+    const original = jest.mocked(query).getMockImplementation();
+    if (!original) throw new Error("Missing query mock");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    jest.mocked(query).mockImplementationOnce(async (...args) => {
+      await gate;
+      return original(...args);
+    });
+    const report = getAnalytics(
+      { ...request, workspaceId: "parallel-comparison" },
+      "overview",
+    );
+    try {
+      expect(query).toHaveBeenCalledTimes(5);
+      const previous = previousPeriod(request.startDate, request.endDate);
+      expect(jest.mocked(query).mock.calls[3]?.[0].query_params).toMatchObject({
+        v1: previous.startDate,
+        v2: previous.endDate,
+      });
+      expect(jest.mocked(query).mock.calls[4]?.[0].query_params).toMatchObject({
+        v1: previous.startDate,
+        v2: previous.endDate,
+      });
+    } finally {
+      release();
+      await report;
+    }
+  });
+  it.each([
+    ["revenue", 4],
+    ["deliverability", 5],
+    ["emails", 3],
+  ] as const)(
+    "starts %s supplemental queries in the first batch without comparison work",
+    async (view, count) => {
+      const original = jest.mocked(query).getMockImplementation();
+      if (!original) throw new Error("Missing query mock");
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      jest.mocked(query).mockImplementationOnce(async (...args) => {
+        await gate;
+        return original(...args);
+      });
+      const report = getAnalytics(
+        { ...request, workspaceId: `parallel-${view}`, compare: false },
+        view,
+      );
+      try {
+        expect(query).toHaveBeenCalledTimes(count);
+      } finally {
+        release();
+        const result = await report;
+        expect(result.previous).toBeUndefined();
+        if (view === "revenue") expect(result.orders).toEqual([]);
+        if (view === "deliverability") expect(result.addresses).toEqual([]);
+      }
+    },
+  );
+  it("retries a failed parallel load without caching the failure", async () => {
+    jest.mocked(query).mockRejectedValueOnce(new Error("query failed"));
+    const failedRequest = { ...request, workspaceId: "retry-after-failure" };
+    await expect(getAnalytics(failedRequest, "emails")).rejects.toThrow(
+      "query failed",
+    );
+    await expect(getAnalytics(failedRequest, "emails")).resolves.toHaveProperty(
+      "summary",
+    );
+    expect(query).toHaveBeenCalledTimes(10);
+  });
   it("scopes a detail response to the selected source and returns 404 for absent resources", async () => {
     mockQueryRows.push(
       [
