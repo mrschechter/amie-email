@@ -19,6 +19,7 @@ import {
   SubscriptionManagement,
   SubscriptionManagementProps,
 } from "../../components/subscriptionManagement";
+import { applySubscriptionChanges } from "../../lib/subscriptionManagementState";
 
 type SSP = Omit<SubscriptionManagementProps, "onSubscriptionUpdate"> & {
   apiBase: string;
@@ -106,6 +107,7 @@ export const getServerSideProps: GetServerSideProps<SSP> = async (ctx) => {
 
   let subscriptionChange: SubscriptionChange | undefined;
   let changedSubscriptionChannel: string | undefined;
+  let appliedChanges: Record<string, boolean> | undefined;
   if (s) {
     // Get the subscription group to determine its channel
     const targetSubscriptionGroup =
@@ -148,36 +150,30 @@ export const getServerSideProps: GetServerSideProps<SSP> = async (ctx) => {
             channelChanges[sg.id] = false;
           });
 
-          await updateUserSubscriptions({
-            workspaceId: w,
-            userUpdates: [
-              {
-                userId,
-                changes: channelChanges,
-              },
-            ],
-          });
+          appliedChanges = channelChanges;
         } else {
-          await updateUserSubscriptions({
-            workspaceId: w,
-            userUpdates: [
-              {
-                userId,
-                changes: {
-                  [s]: sub === "1",
-                },
-              },
-            ],
-          });
+          appliedChanges = { [s]: sub === "1" };
         }
+        await updateUserSubscriptions({
+          workspaceId: w,
+          userUpdates: [
+            {
+              userId,
+              changes: appliedChanges,
+            },
+          ],
+        });
       }
     }
   }
 
-  const subscriptions = await getUserSubscriptions({
-    userId,
-    workspaceId: w,
-  });
+  const subscriptions = applySubscriptionChanges(
+    await getUserSubscriptions({
+      userId,
+      workspaceId: w,
+    }),
+    appliedChanges,
+  );
 
   const props: SSP = {
     apiBase: backendConfig().apiBase,

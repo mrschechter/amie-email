@@ -16,6 +16,7 @@ import React, { useMemo } from "react";
 import { useImmer } from "use-immer";
 
 import { noticeAnchorOrigin } from "../lib/notices";
+import { changedSubscriptions } from "../lib/subscriptionManagementState";
 import { useUpdateSubscriptionsMutation } from "../lib/useUpdateSubscriptionsMutation";
 
 export type SubscriptionState = Record<string, boolean>;
@@ -217,12 +218,24 @@ export function SubscriptionManagement({
         anchorOrigin: noticeAnchorOrigin,
       });
     } else {
+      const changes = changedSubscriptions(
+        initialSubscriptionManagementState,
+        state,
+      );
+      if (Object.keys(changes).length === 0) {
+        enqueueSnackbar("Your preferences are already saved.", {
+          variant: "success",
+          autoHideDuration: 3000,
+          anchorOrigin: noticeAnchorOrigin,
+        });
+        return;
+      }
       updateSubscriptionsMutation.mutate({
         workspaceId,
         hash,
         identifier,
         identifierKey,
-        changes: state,
+        changes,
       });
     }
   };
@@ -251,7 +264,10 @@ export function SubscriptionManagement({
             textAlign: "center",
           }}
         >
-          Amie<Box component="span" sx={{ color: "error.main" }}>.</Box>
+          Amie
+          <Box component="span" sx={{ color: "error.main" }}>
+            .
+          </Box>
         </Typography>
 
         <Box
@@ -337,7 +353,8 @@ export function SubscriptionManagement({
                           {channel} messages
                         </Typography>
                         <Typography variant="caption">
-                          Turn every {channel.toLowerCase()} preference on or off
+                          Turn every {channel.toLowerCase()} preference on or
+                          off
                         </Typography>
                       </Box>
                     }
