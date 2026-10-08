@@ -48,6 +48,10 @@ liquid.registerTag("subscription_hidden_fields", {
     <input type="hidden" name="i" value="${escapeHtml(identifier)}">
     <input type="hidden" name="ik" value="${escapeHtml(identifierKey)}">`;
 
+    const attribution = ctx.get(["attribution"]) as string | undefined;
+    if (attribution)
+      html += `<input type="hidden" name="attribution" value="${escapeHtml(attribution)}">`;
+
     if (isPreview) {
       html += `\n    <input type="hidden" name="isPreview" value="true">`;
     }

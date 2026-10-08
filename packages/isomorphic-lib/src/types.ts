@@ -7,6 +7,7 @@ import {
   SEGMENT_ID_HEADER,
   WORKSPACE_ID_HEADER,
 } from "./constants/headers";
+import { SubscriptionMessageMetadata } from "./subscriptionMessageMetadata";
 
 export type Present<T> = T extends undefined | null ? never : T;
 
@@ -2984,6 +2985,7 @@ export type UserSubscriptionResource = Static<typeof UserSubscriptionResource>;
 
 export const SubscriptionParams = Type.Object(
   {
+    attribution: Type.Optional(Type.String({ maxLength: 8192 })),
     w: Type.String({ description: "Workspace Id." }),
     i: Type.String({
       description: 'Identifier value for channel e.g. "name@email.com".',
@@ -3046,6 +3048,7 @@ export const SubscriptionParams = Type.Object(
 export type SubscriptionParams = Static<typeof SubscriptionParams>;
 
 export const UserSubscriptionLookup = Type.Object({
+  attribution: Type.Optional(Type.String({ maxLength: 8192 })),
   workspaceId: Type.String({ description: "Workspace Id." }),
   hash: Type.String({
     description:
@@ -4899,7 +4902,7 @@ export interface SubscriptionChangeEvent {
   properties: {
     subscriptionId: string;
     action: SubscriptionChange;
-  };
+  } & Partial<SubscriptionMessageMetadata>;
 }
 
 export interface SecretAvailabilityResource {
@@ -6815,6 +6818,7 @@ export type SubscriptionManagementPageRequest = Static<
 
 export const SubscriptionManagementPageSubmissionRequest = Type.Intersect([
   Type.Object({
+    attribution: Type.Optional(Type.String({ maxLength: 8192 })),
     w: Type.String({ description: "Workspace ID" }),
     h: Type.String({ description: "Hash for user verification" }),
     i: Type.String({ description: "User identifier" }),

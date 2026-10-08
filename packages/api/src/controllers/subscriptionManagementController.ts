@@ -79,14 +79,21 @@ export default async function subscriptionManagementController(
       },
     },
     async (request, reply) => {
-      const { workspaceId, identifier, identifierKey, hash, changes } =
-        request.body;
+      const {
+        workspaceId,
+        identifier,
+        identifierKey,
+        hash,
+        changes,
+        attribution,
+      } = request.body;
 
       const userLookupResult = await lookupUserForSubscriptions({
         workspaceId,
         identifier,
         identifierKey,
         hash,
+        attribution,
       });
 
       if (userLookupResult.isErr()) {
@@ -102,6 +109,7 @@ export default async function subscriptionManagementController(
         userUpdates: [
           {
             userId,
+            messageMetadata: userLookupResult.value.messageMetadata,
             changes,
           },
         ],
@@ -133,6 +141,7 @@ export default async function subscriptionManagementController(
         i: identifier,
         ik: identifierKey,
         h: hash,
+        attribution,
         s: subscriptionGroupId,
         sub,
         isPreview: isPreviewParam,
@@ -155,6 +164,7 @@ export default async function subscriptionManagementController(
               identifier,
               identifierKey,
               hash,
+              attribution,
             }),
         db().query.workspace.findFirst({
           where: eq(schema.workspace.id, workspaceId),
@@ -233,6 +243,9 @@ export default async function subscriptionManagementController(
                 userUpdates: [
                   {
                     userId,
+                    messageMetadata: userLookupResult?.isOk()
+                      ? userLookupResult.value.messageMetadata
+                      : undefined,
                     changes: channelChanges,
                   },
                 ],
@@ -243,6 +256,9 @@ export default async function subscriptionManagementController(
                 userUpdates: [
                   {
                     userId,
+                    messageMetadata: userLookupResult?.isOk()
+                      ? userLookupResult.value.messageMetadata
+                      : undefined,
                     changes: {
                       [subscriptionGroupId]: true,
                     },
@@ -266,6 +282,7 @@ export default async function subscriptionManagementController(
         workspaceName: workspace.name,
         subscriptions,
         hash,
+        attribution,
         identifier,
         identifierKey,
         isPreview,
@@ -312,6 +329,7 @@ export default async function subscriptionManagementController(
           i: identifier,
           ik: identifierKey,
           h: hash,
+          attribution,
           s: subscriptionGroupId,
           isPreview: isPreviewParam,
         } = request.query;
@@ -342,6 +360,7 @@ export default async function subscriptionManagementController(
           identifier,
           identifierKey,
           hash,
+          attribution,
         });
 
         if (userLookupResult.isErr()) {
@@ -383,6 +402,7 @@ export default async function subscriptionManagementController(
             userUpdates: [
               {
                 userId: userLookupResult.value.userId,
+                messageMetadata: userLookupResult.value.messageMetadata,
                 changes,
               },
             ],
@@ -411,6 +431,8 @@ export default async function subscriptionManagementController(
         ik: identifierKey,
         isPreview: isPreviewParam,
       } = typedBody;
+      // Custom forms may post back to the original URL without the hidden field.
+      const attribution = typedBody.attribution ?? request.query.attribution;
 
       const isPreview = isPreviewParam === "true";
 
@@ -421,6 +443,7 @@ export default async function subscriptionManagementController(
         i: identifier,
         ik: identifierKey,
       });
+      if (attribution) redirectParams.set("attribution", attribution);
       if (isPreview) {
         redirectParams.set("isPreview", "true");
       }
@@ -440,6 +463,7 @@ export default async function subscriptionManagementController(
         identifier,
         identifierKey,
         hash,
+        attribution,
       });
 
       if (userLookupResult.isErr()) {
@@ -475,6 +499,7 @@ export default async function subscriptionManagementController(
           userUpdates: [
             {
               userId,
+              messageMetadata: userLookupResult.value.messageMetadata,
               changes,
             },
           ],

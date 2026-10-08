@@ -1,6 +1,7 @@
 import { db } from "backend-lib/src/db";
 import logger from "backend-lib/src/logger";
 import {
+  getUserSubscriptions,
   lookupUserForSubscriptions,
   updateUserSubscriptions,
 } from "backend-lib/src/subscriptionGroups";
@@ -43,8 +44,15 @@ describe("subscriptionManagementController", () => {
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
     mockedDb.mockReturnValue({
       query: {
+        workspace: { findFirst: jest.fn().mockResolvedValue({ name: "Test" }) },
+        subscriptionManagementTemplate: {
+          findFirst: jest.fn().mockResolvedValue(null),
+        },
         subscriptionGroup: {
           findMany: subscriptionGroupFindMany,
+          findFirst: jest
+            .fn()
+            .mockResolvedValue({ id: "group-1", channel: "Email" }),
         },
       },
     } as unknown as ReturnType<typeof db>);
@@ -59,6 +67,7 @@ describe("subscriptionManagementController", () => {
     );
     mockedUpdateUserSubscriptions.mockResolvedValue(undefined);
     subscriptionGroupFindMany.mockResolvedValue([]);
+    jest.mocked(getUserSubscriptions).mockResolvedValue([]);
   });
 
   it("unsubscribes the requested group and returns an empty 200 response", async () => {
@@ -268,5 +277,103 @@ describe("subscriptionManagementController", () => {
     expect(response.json()).toEqual({ message: "Invalid request" });
     expect(mockedLookupUserForSubscriptions).not.toHaveBeenCalled();
     expect(mockedUpdateUserSubscriptions).not.toHaveBeenCalled();
+  });
+
+  it.each(["one-click", "form", "form-query-only", "put"])(
+    "passes verified metadata through the %s subscription route",
+    async (route) => {
+      const messageMetadata = {
+        messageId: "send",
+        journeyId: "flow",
+        broadcastId: "broadcast",
+        templateId: "template",
+        nodeId: "node",
+      };
+      mockedLookupUserForSubscriptions.mockResolvedValue(
+        ok({ userId: "user-1", messageMetadata }),
+      );
+      subscriptionGroupFindMany.mockResolvedValue([{ id: "group-1" }]);
+      const app = fastify();
+      await app.register(subscriptionManagementController);
+      const attribution = "signed-token";
+      const response = await app.inject(
+        route === "put"
+          ? {
+              method: "PUT",
+              url: "/user-subscriptions",
+              payload: {
+                workspaceId: baseQuery.w,
+                identifier: baseQuery.i,
+                identifierKey: baseQuery.ik,
+                hash: baseQuery.h,
+                attribution,
+                changes: { "group-1": false },
+              },
+            }
+          : {
+              method: "POST",
+              url: pageUrl({ ...baseQuery, s: "group-1", attribution }),
+              headers: { "content-type": "application/x-www-form-urlencoded" },
+              payload:
+                route === "one-click"
+                  ? "List-Unsubscribe=One-Click"
+                  : new URLSearchParams({
+                      ...baseQuery,
+                      attribution,
+                    }).toString(),
+            },
+      );
+      expect(response.statusCode).toBe(
+        { "one-click": 200, form: 302, "form-query-only": 302, put: 204 }[
+          route
+        ],
+      );
+      expect(mockedLookupUserForSubscriptions).toHaveBeenLastCalledWith({
+        workspaceId: baseQuery.w,
+        identifier: baseQuery.i,
+        identifierKey: baseQuery.ik,
+        hash: baseQuery.h,
+        attribution,
+      });
+      expect(mockedUpdateUserSubscriptions).toHaveBeenLastCalledWith({
+        workspaceId: baseQuery.w,
+        userUpdates: [
+          { userId: "user-1", changes: { "group-1": false }, messageMetadata },
+        ],
+      });
+      if (route === "form")
+        expect(response.headers.location).toContain("attribution=signed-token");
+      await app.close();
+    },
+  );
+  it("retains attribution in the rendered page and immediate GET unsubscribe", async () => {
+    const messageMetadata = { messageId: "send", journeyId: "flow" };
+    mockedLookupUserForSubscriptions.mockResolvedValue(
+      ok({ userId: "user-1", messageMetadata }),
+    );
+    subscriptionGroupFindMany.mockResolvedValue([{ id: "group-1" }]);
+    const app = fastify();
+    await app.register(subscriptionManagementController);
+    const response = await app.inject({
+      method: "GET",
+      url: pageUrl({
+        ...baseQuery,
+        s: "group-1",
+        sub: "0",
+        attribution: "signed-token",
+      }),
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('name="attribution" value="signed-token"');
+    expect(mockedLookupUserForSubscriptions).toHaveBeenLastCalledWith(
+      expect.objectContaining({ attribution: "signed-token" }),
+    );
+    expect(mockedUpdateUserSubscriptions).toHaveBeenLastCalledWith({
+      workspaceId: baseQuery.w,
+      userUpdates: [
+        { userId: "user-1", changes: { "group-1": false }, messageMetadata },
+      ],
+    });
+    await app.close();
   });
 });

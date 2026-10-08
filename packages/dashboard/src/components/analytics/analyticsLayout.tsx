@@ -173,12 +173,13 @@ export function CalculationDrawer({ windowDays }: { windowDays: number }) {
             audience snapshot is not available. Sent at is the recorded trigger
             time when available.
           </dd>
-          <dt>Unsubscribes and recipient domains</dt>
+          <dt>Unsubscribes and providers</dt>
           <dd>
-            Unsubscribe events without message metadata remain in overall counts
-            and cannot be assigned to a flow or template. Domains come from the
-            recorded recipient address; unrecognized or missing email domains
-            appear as “other”. SMS failures are retained as counts and are not
+            Message unsubscribe attribution is available for new links and
+            automatic suppressions after the October 8, 2026 update is deployed.
+            Older links and events without message metadata remain in overall
+            counts only. Providers are grouped from recorded recipient domains;
+            custom domains appear under Other. SMS failures are counts, not
             email bounces.
           </dd>
           <dt>Hard-bounce addresses</dt>

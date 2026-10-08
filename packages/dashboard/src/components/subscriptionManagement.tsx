@@ -27,6 +27,7 @@ export interface SubscriptionManagementProps {
   subscriptionChange?: SubscriptionChange;
   changedSubscriptionChannel?: string;
   hash: string;
+  attribution?: string;
   identifier: string;
   identifierKey: string;
   workspaceId: string;
@@ -43,6 +44,7 @@ export function SubscriptionManagement({
   changedSubscriptionChannel,
   workspaceId,
   hash,
+  attribution,
   identifier,
   identifierKey,
   workspaceName,
@@ -233,6 +235,7 @@ export function SubscriptionManagement({
       updateSubscriptionsMutation.mutate({
         workspaceId,
         hash,
+        attribution,
         identifier,
         identifierKey,
         changes,

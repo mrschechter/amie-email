@@ -21,6 +21,7 @@ export interface GenerateSubscriptionPageParams {
     channel: string;
   }[];
   hash: string;
+  attribution?: string;
   identifier: string;
   identifierKey: string;
   isPreview: boolean;
@@ -48,6 +49,7 @@ export async function generateSubscriptionManagementPage(
     workspaceName,
     subscriptions,
     hash,
+    attribution,
     identifier,
     identifierKey,
     isPreview,
@@ -99,6 +101,7 @@ export async function generateSubscriptionManagementPage(
     workspaceId,
     channels,
     hash,
+    attribution,
     identifier,
     identifierKey,
     isPreview,

@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { EMAIL_PROVIDER_TYPE_TO_SECRET_NAME } from "isomorphic-lib/src/constants";
 import { unwrap } from "isomorphic-lib/src/resultHandling/resultUtils";
 import { schemaValidateWithErr } from "isomorphic-lib/src/resultHandling/schemaValidation";
+import { SubscriptionMessageMetadata } from "isomorphic-lib/src/subscriptionMessageMetadata";
 import {
   BadWorkspaceConfigurationType,
   EmailProviderType,
@@ -42,7 +43,9 @@ export function constructUnsubscribeHeaders({
   subscriptionGroupName,
   workspaceId,
   subscriptionGroupId,
+  messageMetadata,
 }: {
+  messageMetadata?: SubscriptionMessageMetadata;
   to: string;
   from: string;
   userId: string;
@@ -70,6 +73,7 @@ export function constructUnsubscribeHeaders({
     identifierKey,
     subscriptionSecret: subscriptionGroupSecret,
     userId,
+    messageMetadata,
     changedSubscription: subscriptionGroupId,
     subscriptionChange: SubscriptionChange.Unsubscribe,
   });
@@ -192,8 +196,7 @@ export async function getOrCreateEmailProviders({
   });
 
   const upsertPromises: Promise<unknown>[] = [];
-  for (const typeKey in EmailProviderType) {
-    const type = EmailProviderType[typeKey as keyof typeof EmailProviderType];
+  for (const type of Object.values(EmailProviderType)) {
     // Impossible, but TypeScript doesn't know that.
     if (type === EmailProviderType.Gmail) {
       continue;

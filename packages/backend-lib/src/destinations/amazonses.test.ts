@@ -156,6 +156,11 @@ describe("handleSesNotification", () => {
         userId: "user-123",
         timestamp: complaint.complaint.timestamp,
         properties: {
+          messageId: complaint.mail.tags?.messageId?.[0],
+          journeyId: complaint.mail.tags?.journeyId?.[0],
+          broadcastId: complaint.mail.tags?.broadcastId?.[0],
+          templateId: complaint.mail.tags?.templateId?.[0],
+          nodeId: "email-node",
           subscriptionId: id,
           action: SubscriptionChange.Unsubscribe,
         },
@@ -279,7 +284,14 @@ describe("handleSesNotification", () => {
       for (const item of unsubscribes) {
         expect(item).toMatchObject({
           event: InternalEventType.SubscriptionChange,
-          properties: { action: SubscriptionChange.Unsubscribe },
+          properties: {
+            action: SubscriptionChange.Unsubscribe,
+            messageId: bounce.mail.tags?.messageId?.[0],
+            journeyId: bounce.mail.tags?.journeyId?.[0],
+            broadcastId: bounce.mail.tags?.broadcastId?.[0],
+            templateId: bounce.mail.tags?.templateId?.[0],
+            nodeId: "email-node",
+          },
         });
       }
     },
