@@ -3,8 +3,8 @@ import { and, eq, inArray, SQL } from "drizzle-orm";
 import { SecretNames } from "isomorphic-lib/src/constants";
 import { unwrap } from "isomorphic-lib/src/resultHandling/resultUtils";
 import { schemaValidate } from "isomorphic-lib/src/resultHandling/schemaValidation";
+import { SubscriptionMessageMetadata } from "isomorphic-lib/src/subscriptionMessageMetadata";
 import { err, ok, Result } from "neverthrow";
-import path from "path";
 import { PostgresError } from "pg-error-enum";
 import * as R from "remeda";
 import { Readable } from "stream";
@@ -33,6 +33,11 @@ import {
   insertSegmentAssignments,
   SegmentBulkUpsertItem,
 } from "./segments";
+import {
+  signSubscriptionAttribution,
+  subscriptionMessageMetadata,
+  verifySubscriptionAttribution,
+} from "./subscriptionAttribution";
 import {
   BatchItem,
   EventType,
@@ -460,6 +465,7 @@ export function generateSubscriptionChangeUrl({
   subscriptionChange,
   isPreview,
   showAllChannels,
+  messageMetadata,
 }: {
   workspaceId: string;
   userId: string;
@@ -470,6 +476,7 @@ export function generateSubscriptionChangeUrl({
   subscriptionChange?: SubscriptionChange;
   isPreview?: boolean;
   showAllChannels?: boolean;
+  messageMetadata?: Partial<SubscriptionMessageMetadata>;
 }): string {
   const hash = generateSubscriptionHash({
     workspaceId,
@@ -485,6 +492,17 @@ export function generateSubscriptionChangeUrl({
     ik: identifierKey,
     h: hash,
   };
+  const metadata = subscriptionMessageMetadata(messageMetadata);
+  if (metadata) {
+    params.attribution = signSubscriptionAttribution(
+      {
+        ...metadata,
+        ...(identifierKey === "email" ? { email: identifier } : {}),
+      },
+      hash,
+      subscriptionSecret,
+    );
+  }
   if (changedSubscription) {
     params.s = changedSubscription;
     params.sub =
@@ -515,7 +533,9 @@ export function buildSubscriptionChangeEventInner({
   action,
   subscriptionGroupId,
   timestamp,
+  messageMetadata,
 }: {
+  messageMetadata?: Partial<SubscriptionMessageMetadata>;
   userId: string;
   messageId: string;
   subscriptionGroupId: string;
@@ -533,6 +553,7 @@ export function buildSubscriptionChangeEventInner({
     type: EventType.Track,
     event: InternalEventType.SubscriptionChange,
     properties: {
+      ...subscriptionMessageMetadata(messageMetadata),
       subscriptionId: subscriptionGroupId,
       action,
     },
@@ -545,7 +566,9 @@ export function buildSubscriptionChangeEvent({
   action,
   subscriptionGroupId,
   currentTime = new Date(),
+  messageMetadata,
 }: {
+  messageMetadata?: Partial<SubscriptionMessageMetadata>;
   userId: string;
   messageId?: string;
   subscriptionGroupId: string;
@@ -562,6 +585,7 @@ export function buildSubscriptionChangeEvent({
         subscriptionGroupId,
         timestamp,
         messageId,
+        messageMetadata,
       }),
     ),
   };
@@ -599,7 +623,13 @@ export async function lookupUserForSubscriptions({
   identifier,
   identifierKey,
   hash,
-}: UserSubscriptionLookup): Promise<Result<{ userId: string }, Error>> {
+  attribution,
+}: UserSubscriptionLookup): Promise<
+  Result<
+    { userId: string; messageMetadata?: SubscriptionMessageMetadata },
+    Error
+  >
+> {
   const [subscriptionSecret, matchingUserIds] = await Promise.all([
     db().query.secret.findFirst({
       where: and(
@@ -655,7 +685,12 @@ export async function lookupUserForSubscriptions({
     );
     return err(new Error("Invalid hash"));
   }
-  return ok({ userId });
+  const messageMetadata = verifySubscriptionAttribution(
+    attribution,
+    hash,
+    secretValue,
+  );
+  return ok({ userId, ...(messageMetadata ? { messageMetadata } : {}) });
 }
 
 /**
@@ -673,6 +708,7 @@ export async function updateUserSubscriptions({
   userUpdates: {
     userId: string;
     changes: UserSubscriptionsUpdate["changes"];
+    messageMetadata?: SubscriptionMessageMetadata;
   }[];
 }) {
   const subscriptionGroupIds = userUpdates.flatMap((u) =>
@@ -727,20 +763,23 @@ export async function updateUserSubscriptions({
     return acc;
   }, {});
 
-  const allUserEvents = userUpdates.flatMap(({ userId, changes }) => {
-    const userChangePairs = R.entries(changes);
-    const userEvents = userChangePairs.flatMap(
-      ([subscriptionGroupId, isSubscribed]) =>
-        buildSubscriptionChangeEvent({
-          action: isSubscribed
-            ? SubscriptionChange.Subscribe
-            : SubscriptionChange.Unsubscribe,
-          subscriptionGroupId,
-          userId,
-        }),
-    );
-    return userEvents;
-  });
+  const allUserEvents = userUpdates.flatMap(
+    ({ userId, changes, messageMetadata }) => {
+      const userChangePairs = R.entries(changes);
+      const userEvents = userChangePairs.flatMap(
+        ([subscriptionGroupId, isSubscribed]) =>
+          buildSubscriptionChangeEvent({
+            action: isSubscribed
+              ? SubscriptionChange.Subscribe
+              : SubscriptionChange.Unsubscribe,
+            subscriptionGroupId,
+            userId,
+            messageMetadata,
+          }),
+      );
+      return userEvents;
+    },
+  );
   const segmentAssignmentUpdates: SegmentBulkUpsertItem[] = userUpdates.flatMap(
     ({ userId, changes }) => {
       const changePairs = R.entries(changes);

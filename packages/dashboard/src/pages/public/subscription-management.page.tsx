@@ -50,6 +50,7 @@ export const getServerSideProps: GetServerSideProps<SSP> = async (ctx) => {
     sub,
     s,
     ik,
+    attribution,
     isPreview: isPreviewParam,
     showAllChannels: showAllChannelsParam,
   } = params.value;
@@ -64,6 +65,7 @@ export const getServerSideProps: GetServerSideProps<SSP> = async (ctx) => {
           identifier: i,
           identifierKey: ik,
           hash: h,
+          attribution,
         }),
     db().query.workspace.findFirst({
       where: eq(schema.workspace.id, w),
@@ -159,6 +161,9 @@ export const getServerSideProps: GetServerSideProps<SSP> = async (ctx) => {
           userUpdates: [
             {
               userId,
+              messageMetadata: userLookupResult?.isOk()
+                ? userLookupResult.value.messageMetadata
+                : undefined,
               changes: appliedChanges,
             },
           ],
@@ -178,6 +183,7 @@ export const getServerSideProps: GetServerSideProps<SSP> = async (ctx) => {
   const props: SSP = {
     apiBase: backendConfig().apiBase,
     subscriptions,
+    ...(attribution ? { attribution } : {}),
     hash: h,
     identifier: i,
     identifierKey: ik,
@@ -209,6 +215,7 @@ const SubscriptionManagementPage: NextPage<SSP> =
       changedSubscription,
       changedSubscriptionChannel,
       hash,
+      attribution,
       identifier,
       identifierKey,
       workspaceName,
@@ -223,6 +230,7 @@ const SubscriptionManagementPage: NextPage<SSP> =
         changedSubscription={changedSubscription}
         changedSubscriptionChannel={changedSubscriptionChannel}
         hash={hash}
+        attribution={attribution}
         identifier={identifier}
         identifierKey={identifierKey}
         workspaceName={workspaceName}

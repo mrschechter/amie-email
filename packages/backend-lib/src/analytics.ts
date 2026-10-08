@@ -16,6 +16,7 @@ import {
   aggregateByJourney,
   compareDeltas,
   countKeys,
+  domainBreakdowns,
   emptyRow,
   metrics,
   revenueTotals,
@@ -27,6 +28,7 @@ import config from "./config";
 import { db } from "./db";
 import * as schema from "./db/schema";
 import { getJourneysStats } from "./journeys";
+import { buildProviderExpression } from "./recipientProviders";
 import {
   getRevenueFacts,
   getRevenueOrders,
@@ -54,6 +56,10 @@ const eventConditions = {
   opened: "event = 'DFEmailOpened'",
   clicked: "event IN ('DFEmailClicked', 'DFSmsClicked')",
   bounced: "event = 'DFEmailBounced'",
+  hardBounced: "event = 'DFEmailBounced' AND bounce_type = 'Permanent'",
+  softBounced: "event = 'DFEmailBounced' AND bounce_type = 'Transient'",
+  unknownBounced:
+    "event = 'DFEmailBounced' AND bounce_type NOT IN ('Permanent', 'Transient')",
   complaint: "event IN ('DFEmailMarkedSpam', 'DFEmailComplaint')",
   unsubscribed:
     "(event = 'DFEmailUnsubscribed' OR (event = 'DFSubscriptionChange' AND action = 'Unsubscribe'))",
@@ -73,7 +79,7 @@ export function buildAnalyticsQuery(
   // The slim table is sorted by workspace and event time, including late arrivals.
   const query = `WITH events AS (
     SELECT event, event_time, resolved_id, journey_id, node_id, template_id,
-      broadcast_id, address, channel, action
+      broadcast_id, address, channel, action, bounce_type
     FROM dittofeed.message_events_slim
     PREWHERE workspace_id = ${workspace}
       AND event_time >= parseDateTime64BestEffort(${start}, 3, 'UTC')
@@ -98,7 +104,7 @@ export function buildAnalyticsQuery(
   ), messages AS (
     SELECT e.resolved_id, ${groupBy === "day" ? "toString(toDate(e.event_time, 'UTC'))" : "''"} AS day,
       d.journeyId AS journeyId, d.nodeId AS nodeId, d.templateId AS templateId, d.broadcastId AS broadcastId,
-      if(lowerUTF8(arrayElement(splitByChar('@', d.address), -1)) IN ('gmail.com', 'yahoo.com', 'icloud.com', 'outlook.com'), lowerUTF8(arrayElement(splitByChar('@', d.address), -1)), 'other') AS domain,
+      if(position(d.address, '@') > 0 AND arrayElement(splitByChar('@', d.address), -1) != '', lowerUTF8(arrayElement(splitByChar('@', d.address), -1)), 'other') AS domain,
       ${Object.entries(eventConditions)
         .map(
           ([key, condition]) => `toUInt64(countIf(${condition}) > 0) AS ${key}`,
@@ -111,9 +117,9 @@ export function buildAnalyticsQuery(
     ${groupBy === "domain" ? "WHERE d.channel NOT IN ('Sms', 'MobilePush', 'Webhook') AND NOT startsWith(e.event, 'DFSms')" : ""}
     GROUP BY e.resolved_id, day, journeyId, nodeId, templateId, broadcastId, domain
   )
-  SELECT ${groupBy === "domain" ? "domain AS id, '' AS journeyId, '' AS nodeId, '' AS templateId, '' AS broadcastId, '' AS day" : "journeyId, nodeId, templateId, broadcastId, day"},
+  SELECT ${groupBy === "domain" ? `domain AS id, ${buildProviderExpression()} AS provider, journeyId, nodeId, templateId, broadcastId, day` : "journeyId, nodeId, templateId, broadcastId, day"},
     ${[...Object.keys(eventConditions), "rawOpened", "rawClicked"].map((key) => `sum(${key}) AS ${key}`).join(", ")}, max(lastSend) AS lastSend, minIf(sentAt, sentAt != '') AS sentAt
-  FROM messages GROUP BY ${groupBy === "domain" ? "domain" : "journeyId, nodeId, templateId, broadcastId, day"}`;
+  FROM messages GROUP BY ${groupBy === "domain" ? "domain, journeyId, nodeId, templateId, broadcastId, day" : "journeyId, nodeId, templateId, broadcastId, day"}`;
   return { query, query_params: qb.getQueries() };
 }
 
@@ -408,6 +414,8 @@ async function loadAnalytics(
       );
       return { ...row, templateId: original?.templateId ?? "" };
     }),
+    providers: [],
+    domains: [],
     funnel: [],
     addresses: [],
   };
@@ -495,27 +503,18 @@ async function loadAnalytics(
     response.orders = orders.slice(0, 100);
     response.ordersHasMore = orders.length > 100;
   }
-  if (view === "deliverability") {
-    const [domains, addresses] = await Promise.all([
-      queryRows(resolved, "domain"),
-      chQuery({
-        ...buildDeliverabilityAddressesQuery(resolved),
-        format: "JSONEachRow",
-      }),
-    ]);
-    response.rows = [
-      "gmail.com",
-      "yahoo.com",
-      "icloud.com",
-      "outlook.com",
-      "other",
-    ].map((domain) =>
-      emptyRow({
-        ...domains.find((d) => d.id === domain),
-        id: domain,
-        name: domain,
-      }),
+  if (view === "deliverability" || id) {
+    const domains = await queryRows(resolved, "domain");
+    Object.assign(
+      response,
+      domainBreakdowns(domains.map(normalize).filter(accepts)),
     );
+  }
+  if (view === "deliverability") {
+    const addresses = await chQuery({
+      ...buildDeliverabilityAddressesQuery(resolved),
+      format: "JSONEachRow",
+    });
     response.addresses =
       await addresses.json<AnalyticsResponse["addresses"][number]>();
   }

@@ -12,6 +12,7 @@ type Mode =
   | "broadcasts"
   | "emails"
   | "messages"
+  | "provider"
   | "domain"
   | "mini"
   | "sources";
@@ -55,7 +56,9 @@ export default function PerformanceTable({
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [sort, setSort] = useState<keyof AnalyticsRow>(
-    "attributedRevenueCents",
+    mode === "domain" || mode === "provider"
+      ? "sends"
+      : "attributedRevenueCents",
   );
   const [ascending, setAscending] = useState(false);
   const [page, setPage] = useState(0);
@@ -73,6 +76,7 @@ export default function PerformanceTable({
     {
       key: "name",
       label: {
+        provider: "Provider",
         domain: "Recipient domain",
         messages: "Step name",
         flows: "Name",
@@ -138,9 +142,17 @@ export default function PerformanceTable({
       rateColumn("clickRate", "Click %", "clicked", "delivered"),
       rateColumn("unsubRate", "Unsub %", "unsubscribed", "delivered"),
     );
-  if (mode === "domain")
+  if (mode === "domain" || mode === "provider")
     columns.push(
       rateColumn("bounceRate", "Bounce %", "bounced", "sends"),
+      rateColumn("hardBounced", "Hard bounce %", "hardBounced", "sends"),
+      rateColumn("softBounced", "Soft bounce %", "softBounced", "sends"),
+      rateColumn(
+        "unknownBounced",
+        "Unknown bounce %",
+        "unknownBounced",
+        "sends",
+      ),
       rateColumn("complaintRate", "Complaint %", "complaint", "sends"),
     );
   else

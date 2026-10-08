@@ -13,6 +13,7 @@ import { QueryState } from "./analyticsPage";
 import { KpiStrip } from "./kpiCard";
 import MetricTimeSeries from "./metricTimeSeries";
 import PerformanceTable, { StatusPill } from "./performanceTable";
+import ProviderTables from "./providerTables";
 
 export default function PerformancePanel({
   kind,
@@ -76,6 +77,7 @@ export default function PerformancePanel({
               </div>
             </>
           )}
+          <ProviderTables data={data} />
           <h2>Daily performance</h2>
           <MetricTimeSeries rows={data.daily} />
           <h2>Recent deliveries</h2>

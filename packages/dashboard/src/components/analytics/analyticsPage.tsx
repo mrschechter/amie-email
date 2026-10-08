@@ -19,6 +19,7 @@ import AnalyticsLayout, {
 import { KpiStrip, money } from "./kpiCard";
 import MetricTimeSeries from "./metricTimeSeries";
 import PerformanceTable from "./performanceTable";
+import ProviderTables from "./providerTables";
 
 export function QueryState({
   loading,
@@ -357,8 +358,7 @@ export default function AnalyticsPage({ tab }: { tab: (typeof tabs)[number] }) {
           {tab === "deliverability" && (
             <>
               <MetricTimeSeries rows={data.daily} deliverability />
-              <h2>By recipient domain</h2>
-              <PerformanceTable rows={data.rows} mode="domain" />
+              <ProviderTables data={data} />
               <h2>Hard bounces and complaints</h2>
               <p className={styles.muted}>
                 Only explicitly classified hard bounces are listed. Older events

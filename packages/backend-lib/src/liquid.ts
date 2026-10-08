@@ -1,6 +1,6 @@
 /* eslint-disable no-underscore-dangle */
 import { SecretNames } from "isomorphic-lib/src/constants";
-import { Liquid } from "liquidjs";
+import { Context, Liquid } from "liquidjs";
 import MarkdownIt from "markdown-it";
 import mjml2html from "mjml";
 
@@ -73,20 +73,34 @@ export const liquidEngine = new Liquid({
   },
 });
 
-liquidEngine.registerFilter("markdown", (value) => md.render(value as string));
+liquidEngine.registerFilter("markdown", (value) => md.render(String(value)));
 
 type Secrets = Record<string, string>;
 
-function generateUnsubscribeUrl(scope: any): string {
-  const allScope = scope.getAll() as Record<string, unknown>;
-  const secrets = allScope.secrets as Secrets | undefined;
-  const workspaceId = allScope.workspace_id as string;
-  const subscriptionGroupId = allScope.subscription_group_id as
-    | string
-    | undefined;
-  const userProperties = allScope.user as UserPropertyAssignments;
-  const identifierKey = allScope.identifier_key as string | undefined;
-  const isPreview = allScope.is_preview as boolean | undefined;
+// renderLiquid owns this context. Liquid's untyped boundary is narrowed once.
+interface MessageLiquidScope {
+  secrets?: Secrets;
+  workspace_id: string;
+  subscription_group_id?: string;
+  user: UserPropertyAssignments;
+  identifier_key?: string;
+  is_preview?: boolean;
+  tags?: MessageTags;
+  message_id?: string;
+}
+function messageScope(scope: Context): MessageLiquidScope {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  return scope.getAll() as MessageLiquidScope;
+}
+
+function generateUnsubscribeUrl(scope: Context): string {
+  const allScope = messageScope(scope);
+  const { secrets } = allScope;
+  const workspaceId = allScope.workspace_id;
+  const subscriptionGroupId = allScope.subscription_group_id;
+  const userProperties = allScope.user;
+  const identifierKey = allScope.identifier_key;
+  const isPreview = allScope.is_preview;
 
   const identifier = identifierKey
     ? assignmentAsString(userProperties, identifierKey)
@@ -100,6 +114,10 @@ function generateUnsubscribeUrl(scope: any): string {
       identifier,
       identifierKey,
       subscriptionSecret,
+      messageMetadata: {
+        ...allScope.tags,
+        messageId: allScope.message_id ?? allScope.tags?.messageId,
+      },
       userId,
       changedSubscription: subscriptionGroupId,
       subscriptionChange: SubscriptionChange.Unsubscribe,
@@ -119,13 +137,13 @@ function generateUnsubscribeUrl(scope: any): string {
   return "";
 }
 
-function generateSubscriptionManagementUrl(scope: any): string {
-  const allScope = scope.getAll() as Record<string, unknown>;
-  const secrets = allScope.secrets as Secrets | undefined;
-  const workspaceId = allScope.workspace_id as string;
-  const userProperties = allScope.user as UserPropertyAssignments;
-  const identifierKey = allScope.identifier_key as string | undefined;
-  const isPreview = allScope.is_preview as boolean | undefined;
+function generateSubscriptionManagementUrl(scope: Context): string {
+  const allScope = messageScope(scope);
+  const { secrets } = allScope;
+  const workspaceId = allScope.workspace_id;
+  const userProperties = allScope.user;
+  const identifierKey = allScope.identifier_key;
+  const isPreview = allScope.is_preview;
 
   const identifier = identifierKey
     ? assignmentAsString(userProperties, identifierKey)
@@ -139,6 +157,10 @@ function generateSubscriptionManagementUrl(scope: any): string {
       identifier,
       identifierKey,
       subscriptionSecret,
+      messageMetadata: {
+        ...allScope.tags,
+        messageId: allScope.message_id ?? allScope.tags?.messageId,
+      },
       userId,
       isPreview,
       showAllChannels: true,
@@ -162,7 +184,7 @@ liquidEngine.registerTag("unsubscribe_link", {
     this.contents = tagToken.args;
   },
   render(scope) {
-    const linkText: string = (this.contents as string) || "unsubscribe";
+    const linkText: string = String(this.contents ?? "") || "unsubscribe";
     const url = generateUnsubscribeUrl(scope);
     const href = url ? `href="${url}"` : "";
 
@@ -184,7 +206,7 @@ liquidEngine.registerTag("subscription_management_link", {
   },
   render(scope) {
     const linkText: string =
-      (this.contents as string) || "manage subscriptions";
+      String(this.contents ?? "") || "manage subscriptions";
     const url = generateSubscriptionManagementUrl(scope);
     const href = url ? `href="${url}"` : "";
 
@@ -199,10 +221,10 @@ liquidEngine.registerTag("subscription_management_url", {
   },
 });
 
-function generateViewInBrowserUrl(scope: any): string {
-  const allScope = scope.getAll() as Record<string, unknown>;
-  const workspaceId = allScope.workspace_id as string;
-  const messageId = allScope.message_id as string | undefined;
+function generateViewInBrowserUrl(scope: Context): string {
+  const allScope = messageScope(scope);
+  const workspaceId = allScope.workspace_id;
+  const messageId = allScope.message_id;
 
   const { secretKey } = config();
   if (!messageId || !secretKey) {
@@ -271,24 +293,26 @@ export function renderLiquid({
     return "";
   }
 
-  const liquidRendered = liquidEngine.parseAndRenderSync(template, {
-    user: userProperties,
-    workspace_id: workspaceId,
-    subscription_group_id: subscriptionGroupId,
-    secrets,
-    identifier_key: identifierKey,
-    // TODO [DF-471] remove default
-    tags: tags ?? {},
-    is_preview: isPreview,
-    message_id: messageId,
-  }) as string;
+  const liquidRendered = String(
+    liquidEngine.parseAndRenderSync(template, {
+      user: userProperties,
+      workspace_id: workspaceId,
+      subscription_group_id: subscriptionGroupId,
+      secrets,
+      identifier_key: identifierKey,
+      // TODO [DF-471] remove default
+      tags: tags ?? {},
+      is_preview: isPreview,
+      message_id: messageId,
+    }),
+  );
   if (!mjml) {
     return liquidRendered;
   }
   try {
     return mjml2html(liquidRendered).html;
   } catch (e) {
-    const error = e as Error;
+    const error = e instanceof Error ? e : new Error(String(e));
     if (error.message.includes(MJML_NOT_PRESENT_ERROR)) {
       return liquidRendered;
     }

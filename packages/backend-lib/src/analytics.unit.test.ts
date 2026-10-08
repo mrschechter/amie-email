@@ -14,6 +14,7 @@ import {
 import {
   aggregateByJourney,
   compareDeltas,
+  domainBreakdowns,
   emptyRow,
   metrics,
   revenueTotals,
@@ -24,6 +25,10 @@ import {
   buildMessageEventsSlimBackfillQuery,
   messageEventsSlimBackfillChunks,
 } from "./messageEventsSlimBackfill";
+import {
+  buildProviderExpression,
+  PROVIDER_DOMAINS,
+} from "./recipientProviders";
 import {
   buildRevenueAttributionFile,
   buildRevenueFactsQuery,
@@ -641,4 +646,178 @@ describe("message events slim migration", () => {
       }),
     ).toThrow();
   });
+});
+
+describe("recipient breakdowns", () => {
+  it("builds anchored provider SQL with every configured domain and suffix", () => {
+    const expression = buildProviderExpression();
+    for (const [provider, domains] of Object.entries(PROVIDER_DOMAINS)) {
+      expect(expression).toContain(`'${provider}'`);
+      for (const domain of domains) {
+        if (domain.endsWith(".*")) {
+          const pattern = `^${domain.slice(0, -2)}[.][a-z]+([.][a-z]+)*$`;
+          expect(expression).toContain(`match(domain, '${pattern}')`);
+          const regex = new RegExp(pattern);
+          expect(regex.test(domain.replace("*", "co.uk"))).toBe(true);
+          expect(regex.test(domain.replace("*", "com"))).toBe(true);
+          expect(regex.test(`fake.${domain.replace("*", "com")}`)).toBe(false);
+          expect(regex.test(domain.replace("*", ""))).toBe(false);
+        } else expect(expression).toContain(`domain = '${domain}'`);
+      }
+    }
+    expect(expression).toContain("'Other'");
+    const sql = buildAnalyticsQuery(request, "domain").query;
+    expect(sql).toContain(expression);
+    expect(sql).toContain(
+      "GROUP BY domain, journeyId, nodeId, templateId, broadcastId, day",
+    );
+    expect(sql).toContain("d.channel NOT IN ('Sms', 'MobilePush', 'Webhook')");
+    expect(sql).toContain("bounce_type = 'Permanent'");
+    expect(sql).toContain("bounce_type = 'Transient'");
+    expect(sql).toContain("bounce_type NOT IN ('Permanent', 'Transient')");
+  });
+
+  it.each([
+    ["Google", "gmail.com", "googlemail.com"],
+    [
+      "Microsoft",
+      "hotmail.co.uk",
+      "outlook.de",
+      "live.com.au",
+      "msn.com",
+      "windowslive.com",
+      "passport.com",
+    ],
+    ["Yahoo", "yahoo.co.jp", "ymail.com", "rocketmail.com"],
+    ["AOL", "aol.com", "aim.com", "love.com", "verizon.net"],
+    ["Apple", "icloud.com", "me.com", "mac.com"],
+    [
+      "AT&T",
+      "att.net",
+      "sbcglobal.net",
+      "bellsouth.net",
+      "pacbell.net",
+      "swbell.net",
+      "flash.net",
+      "prodigy.net",
+      "ameritech.net",
+      "nvbell.net",
+      "wans.net",
+      "snet.net",
+    ],
+    ["Comcast", "comcast.net"],
+    [
+      "Other",
+      "gmail.org",
+      "notgmail.com",
+      "example.com",
+      "hotmail.",
+      "fake.outlook.com",
+      "icloud.com.example",
+      "other",
+      "",
+    ],
+  ])(
+    "classifies the requested %s domains using the generated expression",
+    (expected, ...domains) => {
+      // Interpret the builder's fixed equality/match predicates without ClickHouse.
+      const branches = [
+        ...buildProviderExpression()
+          .slice("multiIf(".length)
+          .matchAll(/\((.*?)\), '([^']+)'/g),
+      ];
+      for (const domain of domains) {
+        const matched = branches.find((branch) =>
+          branch[1]?.split(" OR ").some((condition) => {
+            const literal = /^domain = '([^']+)'$/.exec(condition)?.[1];
+            const pattern = /^match\(domain, '([^']+)'\)$/.exec(condition)?.[1];
+            return literal
+              ? domain === literal
+              : !!pattern && new RegExp(pattern).test(domain);
+          }),
+        );
+        expect(matched?.[2] ?? "Other").toBe(expected);
+      }
+    },
+  );
+  it("ranks literal domains by sends and combines the remainder with missing domains", () => {
+    const rows = Array.from({ length: 17 }, (_, index) =>
+      emptyRow({
+        id: `domain${index}.com`,
+        sends: index + 1,
+        provider: "Other",
+        bounced: 1,
+        unknownBounced: 1,
+      }),
+    );
+    rows.push(emptyRow({ id: "other", sends: 3, provider: "Other" }));
+    const breakdown = domainBreakdowns(rows);
+    expect(breakdown.domains).toHaveLength(16);
+    expect(breakdown.domains.find((row) => row.id === "other")?.sends).toBe(6);
+    expect(breakdown.domains[0]?.id).toBe("domain16.com");
+    expect(sumMetrics(breakdown.domains)).toEqual(sumMetrics(rows));
+    expect(sumMetrics(breakdown.providers)).toEqual(sumMetrics(rows));
+  });
+  it.each(["flows", "broadcasts"] as const)(
+    "filters %s domains after broadcast journey normalization",
+    async (view) => {
+      mockQueryRows.push(
+        [],
+        [],
+        [],
+        [
+          emptyRow({
+            id: "gmail.com",
+            provider: "Google",
+            journeyId: "flow",
+            sends: 10,
+            unsubscribed: 1,
+          }),
+          emptyRow({
+            id: "hotmail.co.uk",
+            provider: "Microsoft",
+            journeyId: "broadcast-flow",
+            sends: 20,
+            hardBounced: 2,
+          }),
+          emptyRow({
+            id: "yahoo.com",
+            provider: "Yahoo",
+            broadcastId: "broadcast",
+            sends: 30,
+            softBounced: 3,
+          }),
+          emptyRow({
+            id: "gmail.com",
+            provider: "Google",
+            journeyId: "unrelated",
+            sends: 999,
+          }),
+          emptyRow({
+            id: "gmail.com",
+            provider: "Google",
+            journeyId: "flow",
+            broadcastId: "unrelated",
+            sends: 888,
+          }),
+        ],
+      );
+      const report = await getAnalytics(
+        { ...request, workspaceId: `breakdown-${view}`, compare: false },
+        view,
+        view === "flows" ? "flow" : "broadcast",
+      );
+      expect(sumMetrics(report.providers).sends).toBe(
+        view === "flows" ? 10 : 50,
+      );
+      expect(sumMetrics(report.domains).sends).toBe(view === "flows" ? 10 : 50);
+      expect(report.rows).not.toEqual(report.domains);
+      if (view === "flows") expect(report.domains[0]?.unsubscribed).toBe(1);
+      else
+        expect(sumMetrics(report.providers)).toMatchObject({
+          hardBounced: 2,
+          softBounced: 3,
+        });
+    },
+  );
 });

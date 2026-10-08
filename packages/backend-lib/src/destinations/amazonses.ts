@@ -302,6 +302,10 @@ export async function submitAmazonSesEvents(
               userId,
               subscriptionGroupId: group.id,
               action: SubscriptionChange.Unsubscribe,
+              messageMetadata: {
+                ...metadataTags,
+                email: event.mail.destination?.[0],
+              },
               timestamp,
               // Stable per complaint/user/group, distinct from the analytics
               // event ID, so webhook retries reuse the existing deduplication.

@@ -582,6 +582,8 @@ function renderValues<T extends TemplateDictionary<T>>({
           mjml,
         });
       } catch (e) {
+        // Existing provider/render boundary narrows the external value here.
+        // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
         const error = e as Error;
         return err({
           field: key,
@@ -591,6 +593,8 @@ function renderValues<T extends TemplateDictionary<T>>({
     }
   }
 
+  // Existing provider/render boundary narrows the external value here.
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   const coercedResult = result as { [K in keyof T]: string };
   return ok(coercedResult);
 }
@@ -1057,6 +1061,7 @@ export async function sendEmail({
           subscriptionGroupName: subscriptionGroupDetails.name,
           workspaceId,
           subscriptionGroupId: subscriptionGroupDetails.id,
+          messageMetadata: messageTags,
         })
       : null;
 
@@ -1067,6 +1072,8 @@ export async function sendEmail({
       variant: unsubscribeHeadersResult.error,
     });
   }
+  // Existing provider/render boundary narrows the external value here.
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   const unsubscribeHeaders = unsubscribeHeadersResult?.value as
     | Record<string, string>
     | undefined;
@@ -2353,15 +2360,21 @@ export async function sendWebhook({
         } satisfies WebhookConfig,
         response: {
           status: response.status,
+          // Existing provider/render boundary narrows the external value here.
+          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
           headers: axiosHeaders as WebhookResponse["headers"] | undefined,
           body: response.data,
         } satisfies WebhookResponse,
       } satisfies MessageWebhookSuccess,
     });
   } catch (e) {
+    // Existing provider/render boundary narrows the external value here.
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
     const { response: axiosResponse, code } = e as AxiosError;
     let response: WebhookResponse | undefined;
     if (axiosResponse && Object.keys(axiosResponse).length > 0) {
+      // Existing provider/render boundary narrows the external value here.
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
       const responseHeaders = axiosResponse.headers as
         | Record<string, string>
         | undefined;

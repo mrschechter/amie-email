@@ -905,6 +905,7 @@ export interface SubscriptionManagementChannel {
 }
 
 export interface SubscriptionManagementTemplateContext {
+  attribution?: string;
   workspaceName: string;
   workspaceId: string;
   channels: SubscriptionManagementChannel[];

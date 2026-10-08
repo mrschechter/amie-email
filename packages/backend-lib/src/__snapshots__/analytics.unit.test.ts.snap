@@ -292,7 +292,7 @@ exports[`analytics SQL builders (DB-free) snapshots day SQL and binds workspace/
 {
   "query": "WITH events AS (
     SELECT event, event_time, resolved_id, journey_id, node_id, template_id,
-      broadcast_id, address, channel, action
+      broadcast_id, address, channel, action, bounce_type
     FROM dittofeed.message_events_slim
     PREWHERE workspace_id = {v0:String}
       AND event_time >= parseDateTime64BestEffort({v1:String}, 3, 'UTC')
@@ -310,12 +310,15 @@ exports[`analytics SQL builders (DB-free) snapshots day SQL and binds workspace/
   ), messages AS (
     SELECT e.resolved_id, toString(toDate(e.event_time, 'UTC')) AS day,
       d.journeyId AS journeyId, d.nodeId AS nodeId, d.templateId AS templateId, d.broadcastId AS broadcastId,
-      if(lowerUTF8(arrayElement(splitByChar('@', d.address), -1)) IN ('gmail.com', 'yahoo.com', 'icloud.com', 'outlook.com'), lowerUTF8(arrayElement(splitByChar('@', d.address), -1)), 'other') AS domain,
+      if(position(d.address, '@') > 0 AND arrayElement(splitByChar('@', d.address), -1) != '', lowerUTF8(arrayElement(splitByChar('@', d.address), -1)), 'other') AS domain,
       toUInt64(countIf(event IN ('DFInternalMessageSent', 'DFEmailSent', 'DFSmsSent')) > 0) AS sends,
       toUInt64(countIf(event IN ('DFEmailDelivered', 'DFSmsDelivered')) > 0) AS delivered,
       toUInt64(countIf(event = 'DFEmailOpened') > 0) AS opened,
       toUInt64(countIf(event IN ('DFEmailClicked', 'DFSmsClicked')) > 0) AS clicked,
       toUInt64(countIf(event = 'DFEmailBounced') > 0) AS bounced,
+      toUInt64(countIf(event = 'DFEmailBounced' AND bounce_type = 'Permanent') > 0) AS hardBounced,
+      toUInt64(countIf(event = 'DFEmailBounced' AND bounce_type = 'Transient') > 0) AS softBounced,
+      toUInt64(countIf(event = 'DFEmailBounced' AND bounce_type NOT IN ('Permanent', 'Transient')) > 0) AS unknownBounced,
       toUInt64(countIf(event IN ('DFEmailMarkedSpam', 'DFEmailComplaint')) > 0) AS complaint,
       toUInt64(countIf((event = 'DFEmailUnsubscribed' OR (event = 'DFSubscriptionChange' AND action = 'Unsubscribe'))) > 0) AS unsubscribed,
       toUInt64(countIf(event = 'DFSmsFailed') > 0) AS smsFailed,
@@ -327,7 +330,7 @@ exports[`analytics SQL builders (DB-free) snapshots day SQL and binds workspace/
     GROUP BY e.resolved_id, day, journeyId, nodeId, templateId, broadcastId, domain
   )
   SELECT journeyId, nodeId, templateId, broadcastId, day,
-    sum(sends) AS sends, sum(delivered) AS delivered, sum(opened) AS opened, sum(clicked) AS clicked, sum(bounced) AS bounced, sum(complaint) AS complaint, sum(unsubscribed) AS unsubscribed, sum(smsFailed) AS smsFailed, sum(rawOpened) AS rawOpened, sum(rawClicked) AS rawClicked, max(lastSend) AS lastSend, minIf(sentAt, sentAt != '') AS sentAt
+    sum(sends) AS sends, sum(delivered) AS delivered, sum(opened) AS opened, sum(clicked) AS clicked, sum(bounced) AS bounced, sum(hardBounced) AS hardBounced, sum(softBounced) AS softBounced, sum(unknownBounced) AS unknownBounced, sum(complaint) AS complaint, sum(unsubscribed) AS unsubscribed, sum(smsFailed) AS smsFailed, sum(rawOpened) AS rawOpened, sum(rawClicked) AS rawClicked, max(lastSend) AS lastSend, minIf(sentAt, sentAt != '') AS sentAt
   FROM messages GROUP BY journeyId, nodeId, templateId, broadcastId, day",
   "query_params": {
     "v0": "workspace-' OR 1=1 --",
@@ -341,7 +344,7 @@ exports[`analytics SQL builders (DB-free) snapshots domain SQL and binds workspa
 {
   "query": "WITH events AS (
     SELECT event, event_time, resolved_id, journey_id, node_id, template_id,
-      broadcast_id, address, channel, action
+      broadcast_id, address, channel, action, bounce_type
     FROM dittofeed.message_events_slim
     PREWHERE workspace_id = {v0:String}
       AND event_time >= parseDateTime64BestEffort({v1:String}, 3, 'UTC')
@@ -359,12 +362,15 @@ exports[`analytics SQL builders (DB-free) snapshots domain SQL and binds workspa
   ), messages AS (
     SELECT e.resolved_id, '' AS day,
       d.journeyId AS journeyId, d.nodeId AS nodeId, d.templateId AS templateId, d.broadcastId AS broadcastId,
-      if(lowerUTF8(arrayElement(splitByChar('@', d.address), -1)) IN ('gmail.com', 'yahoo.com', 'icloud.com', 'outlook.com'), lowerUTF8(arrayElement(splitByChar('@', d.address), -1)), 'other') AS domain,
+      if(position(d.address, '@') > 0 AND arrayElement(splitByChar('@', d.address), -1) != '', lowerUTF8(arrayElement(splitByChar('@', d.address), -1)), 'other') AS domain,
       toUInt64(countIf(event IN ('DFInternalMessageSent', 'DFEmailSent', 'DFSmsSent')) > 0) AS sends,
       toUInt64(countIf(event IN ('DFEmailDelivered', 'DFSmsDelivered')) > 0) AS delivered,
       toUInt64(countIf(event = 'DFEmailOpened') > 0) AS opened,
       toUInt64(countIf(event IN ('DFEmailClicked', 'DFSmsClicked')) > 0) AS clicked,
       toUInt64(countIf(event = 'DFEmailBounced') > 0) AS bounced,
+      toUInt64(countIf(event = 'DFEmailBounced' AND bounce_type = 'Permanent') > 0) AS hardBounced,
+      toUInt64(countIf(event = 'DFEmailBounced' AND bounce_type = 'Transient') > 0) AS softBounced,
+      toUInt64(countIf(event = 'DFEmailBounced' AND bounce_type NOT IN ('Permanent', 'Transient')) > 0) AS unknownBounced,
       toUInt64(countIf(event IN ('DFEmailMarkedSpam', 'DFEmailComplaint')) > 0) AS complaint,
       toUInt64(countIf((event = 'DFEmailUnsubscribed' OR (event = 'DFSubscriptionChange' AND action = 'Unsubscribe'))) > 0) AS unsubscribed,
       toUInt64(countIf(event = 'DFSmsFailed') > 0) AS smsFailed,
@@ -375,9 +381,9 @@ exports[`analytics SQL builders (DB-free) snapshots domain SQL and binds workspa
     WHERE d.channel NOT IN ('Sms', 'MobilePush', 'Webhook') AND NOT startsWith(e.event, 'DFSms')
     GROUP BY e.resolved_id, day, journeyId, nodeId, templateId, broadcastId, domain
   )
-  SELECT domain AS id, '' AS journeyId, '' AS nodeId, '' AS templateId, '' AS broadcastId, '' AS day,
-    sum(sends) AS sends, sum(delivered) AS delivered, sum(opened) AS opened, sum(clicked) AS clicked, sum(bounced) AS bounced, sum(complaint) AS complaint, sum(unsubscribed) AS unsubscribed, sum(smsFailed) AS smsFailed, sum(rawOpened) AS rawOpened, sum(rawClicked) AS rawClicked, max(lastSend) AS lastSend, minIf(sentAt, sentAt != '') AS sentAt
-  FROM messages GROUP BY domain",
+  SELECT domain AS id, multiIf((domain = 'gmail.com' OR domain = 'googlemail.com'), 'Google', (match(domain, '^hotmail[.][a-z]+([.][a-z]+)*$') OR match(domain, '^outlook[.][a-z]+([.][a-z]+)*$') OR match(domain, '^live[.][a-z]+([.][a-z]+)*$') OR domain = 'msn.com' OR domain = 'windowslive.com' OR domain = 'passport.com'), 'Microsoft', (match(domain, '^yahoo[.][a-z]+([.][a-z]+)*$') OR domain = 'ymail.com' OR domain = 'rocketmail.com'), 'Yahoo', (domain = 'aol.com' OR domain = 'aim.com' OR domain = 'love.com' OR domain = 'verizon.net'), 'AOL', (domain = 'icloud.com' OR domain = 'me.com' OR domain = 'mac.com'), 'Apple', (domain = 'att.net' OR domain = 'sbcglobal.net' OR domain = 'bellsouth.net' OR domain = 'pacbell.net' OR domain = 'swbell.net' OR domain = 'flash.net' OR domain = 'prodigy.net' OR domain = 'ameritech.net' OR domain = 'nvbell.net' OR domain = 'wans.net' OR domain = 'snet.net'), 'AT&T', (domain = 'comcast.net'), 'Comcast', 'Other') AS provider, journeyId, nodeId, templateId, broadcastId, day,
+    sum(sends) AS sends, sum(delivered) AS delivered, sum(opened) AS opened, sum(clicked) AS clicked, sum(bounced) AS bounced, sum(hardBounced) AS hardBounced, sum(softBounced) AS softBounced, sum(unknownBounced) AS unknownBounced, sum(complaint) AS complaint, sum(unsubscribed) AS unsubscribed, sum(smsFailed) AS smsFailed, sum(rawOpened) AS rawOpened, sum(rawClicked) AS rawClicked, max(lastSend) AS lastSend, minIf(sentAt, sentAt != '') AS sentAt
+  FROM messages GROUP BY domain, journeyId, nodeId, templateId, broadcastId, day",
   "query_params": {
     "v0": "workspace-' OR 1=1 --",
     "v1": "2026-08-01T00:00:00.000Z",
@@ -390,7 +396,7 @@ exports[`analytics SQL builders (DB-free) snapshots message SQL and binds worksp
 {
   "query": "WITH events AS (
     SELECT event, event_time, resolved_id, journey_id, node_id, template_id,
-      broadcast_id, address, channel, action
+      broadcast_id, address, channel, action, bounce_type
     FROM dittofeed.message_events_slim
     PREWHERE workspace_id = {v0:String}
       AND event_time >= parseDateTime64BestEffort({v1:String}, 3, 'UTC')
@@ -408,12 +414,15 @@ exports[`analytics SQL builders (DB-free) snapshots message SQL and binds worksp
   ), messages AS (
     SELECT e.resolved_id, '' AS day,
       d.journeyId AS journeyId, d.nodeId AS nodeId, d.templateId AS templateId, d.broadcastId AS broadcastId,
-      if(lowerUTF8(arrayElement(splitByChar('@', d.address), -1)) IN ('gmail.com', 'yahoo.com', 'icloud.com', 'outlook.com'), lowerUTF8(arrayElement(splitByChar('@', d.address), -1)), 'other') AS domain,
+      if(position(d.address, '@') > 0 AND arrayElement(splitByChar('@', d.address), -1) != '', lowerUTF8(arrayElement(splitByChar('@', d.address), -1)), 'other') AS domain,
       toUInt64(countIf(event IN ('DFInternalMessageSent', 'DFEmailSent', 'DFSmsSent')) > 0) AS sends,
       toUInt64(countIf(event IN ('DFEmailDelivered', 'DFSmsDelivered')) > 0) AS delivered,
       toUInt64(countIf(event = 'DFEmailOpened') > 0) AS opened,
       toUInt64(countIf(event IN ('DFEmailClicked', 'DFSmsClicked')) > 0) AS clicked,
       toUInt64(countIf(event = 'DFEmailBounced') > 0) AS bounced,
+      toUInt64(countIf(event = 'DFEmailBounced' AND bounce_type = 'Permanent') > 0) AS hardBounced,
+      toUInt64(countIf(event = 'DFEmailBounced' AND bounce_type = 'Transient') > 0) AS softBounced,
+      toUInt64(countIf(event = 'DFEmailBounced' AND bounce_type NOT IN ('Permanent', 'Transient')) > 0) AS unknownBounced,
       toUInt64(countIf(event IN ('DFEmailMarkedSpam', 'DFEmailComplaint')) > 0) AS complaint,
       toUInt64(countIf((event = 'DFEmailUnsubscribed' OR (event = 'DFSubscriptionChange' AND action = 'Unsubscribe'))) > 0) AS unsubscribed,
       toUInt64(countIf(event = 'DFSmsFailed') > 0) AS smsFailed,
@@ -425,7 +434,7 @@ exports[`analytics SQL builders (DB-free) snapshots message SQL and binds worksp
     GROUP BY e.resolved_id, day, journeyId, nodeId, templateId, broadcastId, domain
   )
   SELECT journeyId, nodeId, templateId, broadcastId, day,
-    sum(sends) AS sends, sum(delivered) AS delivered, sum(opened) AS opened, sum(clicked) AS clicked, sum(bounced) AS bounced, sum(complaint) AS complaint, sum(unsubscribed) AS unsubscribed, sum(smsFailed) AS smsFailed, sum(rawOpened) AS rawOpened, sum(rawClicked) AS rawClicked, max(lastSend) AS lastSend, minIf(sentAt, sentAt != '') AS sentAt
+    sum(sends) AS sends, sum(delivered) AS delivered, sum(opened) AS opened, sum(clicked) AS clicked, sum(bounced) AS bounced, sum(hardBounced) AS hardBounced, sum(softBounced) AS softBounced, sum(unknownBounced) AS unknownBounced, sum(complaint) AS complaint, sum(unsubscribed) AS unsubscribed, sum(smsFailed) AS smsFailed, sum(rawOpened) AS rawOpened, sum(rawClicked) AS rawClicked, max(lastSend) AS lastSend, minIf(sentAt, sentAt != '') AS sentAt
   FROM messages GROUP BY journeyId, nodeId, templateId, broadcastId, day",
   "query_params": {
     "v0": "workspace-' OR 1=1 --",

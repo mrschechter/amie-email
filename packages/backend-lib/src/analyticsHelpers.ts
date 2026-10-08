@@ -4,6 +4,7 @@ import {
   RevenueTotals,
 } from "isomorphic-lib/src/analytics";
 
+import { PROVIDER_NAMES } from "./recipientProviders";
 import type { RevenueFact } from "./revenueAttribution";
 
 export const countKeys = [
@@ -12,6 +13,9 @@ export const countKeys = [
   "opened",
   "clicked",
   "bounced",
+  "hardBounced",
+  "softBounced",
+  "unknownBounced",
   "complaint",
   "unsubscribed",
   "rawOpened",
@@ -31,6 +35,9 @@ export function metrics(
     opened: 0,
     clicked: 0,
     bounced: 0,
+    hardBounced: 0,
+    softBounced: 0,
+    unknownBounced: 0,
     complaint: 0,
     unsubscribed: 0,
     rawOpened: 0,
@@ -156,4 +163,23 @@ export function revenueTotals(facts: RevenueFact[]): RevenueTotals {
     result[`${kind}RevenueCents`] += fact.revenueCents;
   });
   return result;
+}
+
+/** Rank literal domains after attribution filtering; retain every remaining count. */
+export function domainBreakdowns(rows: AnalyticsRow[]) {
+  const providers = PROVIDER_NAMES.map((name) =>
+    emptyRow({
+      ...sumMetrics(rows.filter((row) => row.provider === name)),
+      id: name,
+      name,
+    }),
+  );
+  const ranked = rollup(rows, (row) => row.id)
+    .filter((row) => row.id !== "other")
+    .sort((a, b) => b.sends - a.sends || a.id.localeCompare(b.id));
+  const top = new Set(ranked.slice(0, 15).map((row) => row.id));
+  const domains = rollup(rows, (row) => (top.has(row.id) ? row.id : "other"))
+    .map((row) => ({ ...row, name: row.id }))
+    .sort((a, b) => b.sends - a.sends || a.id.localeCompare(b.id));
+  return { providers, domains };
 }
