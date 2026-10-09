@@ -1,4 +1,8 @@
 import { AmieBlockSpec } from "isomorphic-lib/src/amieComposer";
+import {
+  AMIE_HOME_URL,
+  AMIE_PLACEHOLDER_IMAGE_URL,
+} from "isomorphic-lib/src/amieLinks";
 
 export type AddableBlockType = Exclude<AmieBlockSpec["type"], "rawHtml">;
 
@@ -151,7 +155,7 @@ export function createBlock(type: AddableBlockType): AmieBlockSpec {
     case "ctaButton":
       return {
         type,
-        params: { label: "Learn more", url: "https://tryamie.com" },
+        params: { label: "Learn more", url: AMIE_HOME_URL },
       };
     case "productCard":
       return {
@@ -160,14 +164,14 @@ export function createBlock(type: AddableBlockType): AmieBlockSpec {
           title: "Featured product",
           description: "Describe why it belongs in her routine.",
           ctaLabel: "See details",
-          ctaUrl: "https://tryamie.com",
+          ctaUrl: AMIE_HOME_URL,
         },
       };
     case "image":
       return {
         type,
         params: {
-          src: "https://tryamie.com/placeholder.png",
+          src: AMIE_PLACEHOLDER_IMAGE_URL,
           alt: "Choose an image",
         },
       };
@@ -175,7 +179,7 @@ export function createBlock(type: AddableBlockType): AmieBlockSpec {
       return {
         type,
         params: {
-          src: "https://tryamie.com/placeholder.png",
+          src: AMIE_PLACEHOLDER_IMAGE_URL,
           alt: "Choose a large image",
         },
         style: { width: "full" },
@@ -184,7 +188,7 @@ export function createBlock(type: AddableBlockType): AmieBlockSpec {
       return {
         type,
         params: {
-          src: "https://tryamie.com/placeholder.png",
+          src: AMIE_PLACEHOLDER_IMAGE_URL,
           alt: "Choose a hero image",
           headline: "A more thoughtful way forward",
         },
@@ -212,13 +216,13 @@ export function createBlock(type: AddableBlockType): AmieBlockSpec {
         type,
         params: {
           image: {
-            src: "https://tryamie.com/placeholder.png",
+            src: AMIE_PLACEHOLDER_IMAGE_URL,
             alt: "Choose an image",
           },
           imageSide: "left",
           heading: "A useful detail",
           body: "Pair a concise message with a brand image.",
-          cta: { label: "Learn more", url: "https://tryamie.com" },
+          cta: { label: "Learn more", url: AMIE_HOME_URL },
         },
       };
     case "imageText":
@@ -226,7 +230,7 @@ export function createBlock(type: AddableBlockType): AmieBlockSpec {
         type,
         params: {
           image: {
-            src: "https://tryamie.com/placeholder.png",
+            src: AMIE_PLACEHOLDER_IMAGE_URL,
             alt: "Choose an image",
           },
           imageSide: "left",

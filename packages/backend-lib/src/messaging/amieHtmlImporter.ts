@@ -4,6 +4,7 @@ import {
   AmieImportHtmlResponse,
   sanitizeAmieHtml,
 } from "isomorphic-lib/src/amieComposer";
+import { AMIE_HOME_URL } from "isomorphic-lib/src/amieLinks";
 
 interface HtmlElement {
   kind: "element";
@@ -558,7 +559,7 @@ function mapElement(
       type: "ctaButton",
       params: {
         label: text || "Learn more",
-        url: node.attributes.href ?? "https://tryamie.com",
+        url: node.attributes.href ?? AMIE_HOME_URL,
       },
     });
     return;

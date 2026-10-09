@@ -58,6 +58,10 @@ import {
   AmieSanitizeHtmlResponse,
   sanitizeAmieHtml,
 } from "isomorphic-lib/src/amieComposer";
+import {
+  AMIE_HOME_URL,
+  AMIE_PLACEHOLDER_IMAGE_URL,
+} from "isomorphic-lib/src/amieLinks";
 import { schemaValidate } from "isomorphic-lib/src/resultHandling/schemaValidation";
 
 import config from "../config";
@@ -69,7 +73,7 @@ const RAW_MODEL_OUTPUT_LOG_LENGTH = 300;
 const CORRECTIVE_INSTRUCTION =
   "Return ONLY the JSON object, no fences, matching the schema";
 const PENDING_GENERATED_IMAGE_URL = "https://generated.amie.invalid/pending";
-const PLACEHOLDER_IMAGE_URL = "https://tryamie.com/placeholder.png";
+const PLACEHOLDER_IMAGE_URL = AMIE_PLACEHOLDER_IMAGE_URL;
 
 type AmieComposeRequestWithFallback = AmieComposeRequest & {
   currentSubject?: string;
@@ -1124,7 +1128,7 @@ function semanticAudit(
       type: "ctaButton",
       params: {
         label: nonEmpty(request.designBrief?.ctaText, "Learn more"),
-        url: nonEmpty(request.designBrief?.ctaUrl, "https://tryamie.com"),
+        url: nonEmpty(request.designBrief?.ctaUrl, AMIE_HOME_URL),
       },
       style: { align: "center", buttonVariant: "primary" },
     };
