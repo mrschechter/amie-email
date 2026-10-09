@@ -66,7 +66,7 @@ This sentence stays exactly as written.
       {
         type: "heroImage",
         params: {
-          src: "https://tryamie.com/placeholder.png",
+          src: "https://start.tryamie.com/start/assets/shop/placeholder.png",
           alt: "bedside product shot",
           placeholder: true,
           sourceDescription: "bedside product shot",

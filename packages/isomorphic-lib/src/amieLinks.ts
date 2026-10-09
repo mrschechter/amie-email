@@ -4,4 +4,5 @@
 // placeholder image must not depend on the Shopify-hosted apex (/cdn, /placeholder).
 export const AMIE_HOME_URL = "https://tryamie.com";
 export const AMIE_STORE_URL = "https://tryamie.com";
-export const AMIE_PLACEHOLDER_IMAGE_URL = "https://tryamie.com/placeholder.png";
+export const AMIE_PLACEHOLDER_IMAGE_URL =
+  "https://start.tryamie.com/start/assets/shop/placeholder.png";
