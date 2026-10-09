@@ -1,4 +1,5 @@
 import { AmieBlockSpec } from "isomorphic-lib/src/amieComposer";
+import { AMIE_HOME_URL, AMIE_STORE_URL } from "isomorphic-lib/src/amieLinks";
 
 export interface AmieRecipe {
   id: "winback" | "launch" | "newsletter" | "promo" | "welcome";
@@ -37,7 +38,7 @@ export const AMIE_RECIPES: AmieRecipe[] = [
       },
       {
         type: "ctaButton",
-        params: { label: "Come back to Amie", url: "https://tryamie.com" },
+        params: { label: "Come back to Amie", url: AMIE_HOME_URL },
       },
       footer,
     ],
@@ -69,7 +70,7 @@ export const AMIE_RECIPES: AmieRecipe[] = [
       },
       {
         type: "ctaButton",
-        params: { label: "Meet the new arrival", url: "https://tryamie.com" },
+        params: { label: "Meet the new arrival", url: AMIE_HOME_URL },
       },
       footer,
     ],
@@ -120,7 +121,7 @@ export const AMIE_RECIPES: AmieRecipe[] = [
       },
       {
         type: "ctaButton",
-        params: { label: "Shop the offer", url: "https://tryamie.com" },
+        params: { label: "Shop the offer", url: AMIE_STORE_URL },
       },
       { type: "spacer", params: { height: 24 } },
       footer,
@@ -154,7 +155,7 @@ export const AMIE_RECIPES: AmieRecipe[] = [
       },
       {
         type: "ctaButton",
-        params: { label: "Get started", url: "https://tryamie.com" },
+        params: { label: "Get started", url: AMIE_HOME_URL },
       },
       footer,
     ],

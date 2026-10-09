@@ -3,8 +3,12 @@ import {
   AmieBlockSpec,
   AmieComposeRequest,
 } from "isomorphic-lib/src/amieComposer";
+import {
+  AMIE_HOME_URL,
+  AMIE_PLACEHOLDER_IMAGE_URL,
+} from "isomorphic-lib/src/amieLinks";
 
-const PLACEHOLDER_IMAGE_URL = "https://tryamie.com/placeholder.png";
+const PLACEHOLDER_IMAGE_URL = AMIE_PLACEHOLDER_IMAGE_URL;
 
 type SourceImage = NonNullable<AmieComposeRequest["images"]>[number];
 
@@ -214,7 +218,7 @@ export function parseSourceCopy(
           type: "ctaButton",
           params: {
             label: (button?.[1] ?? cta?.[1] ?? "").trim(),
-            url: button?.[2] ?? cta?.[2] ?? "https://tryamie.com",
+            url: button?.[2] ?? cta?.[2] ?? AMIE_HOME_URL,
           },
         }),
       );
