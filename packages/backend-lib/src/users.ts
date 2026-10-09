@@ -72,6 +72,15 @@ function serializeUserCursor(cursor: Cursor): string {
   return serializeCursor(cursor);
 }
 
+// ClickHouse returns Bool columns as JSON booleans (or 0/1 in some formats).
+// Trait segments also store explicit `false` rows for every user who has the
+// trait but does not match, so anything other than an affirmative value must
+// be treated as "not a member".
+export type SegmentAssignmentValue = string | boolean | number | null;
+export function isSegmentMember(value: SegmentAssignmentValue): boolean {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
 export async function buildGetUsersQueriesForDebug(
   request: GetUsersRequest,
 ): Promise<string[]> {
@@ -909,7 +918,7 @@ export async function getUsers(
 
     interface UserRow {
       user_id: string;
-      segments: [string, string][];
+      segments: [string, SegmentAssignmentValue][];
       user_properties: [string, string][];
     }
 
@@ -1333,7 +1342,7 @@ export async function getUsers(
             );
             return [];
           }
-          if (value === "false") {
+          if (!isSegmentMember(value)) {
             logger().debug(
               {
                 id,
