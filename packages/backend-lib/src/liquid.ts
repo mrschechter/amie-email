@@ -85,6 +85,7 @@ interface MessageLiquidScope {
   user: UserPropertyAssignments;
   identifier_key?: string;
   is_preview?: boolean;
+  is_public_preview?: boolean;
   tags?: MessageTags;
   message_id?: string;
 }
@@ -95,6 +96,7 @@ function messageScope(scope: Context): MessageLiquidScope {
 
 function generateUnsubscribeUrl(scope: Context): string {
   const allScope = messageScope(scope);
+  if (allScope.is_public_preview) return "#";
   const { secrets } = allScope;
   const workspaceId = allScope.workspace_id;
   const subscriptionGroupId = allScope.subscription_group_id;
@@ -139,6 +141,7 @@ function generateUnsubscribeUrl(scope: Context): string {
 
 function generateSubscriptionManagementUrl(scope: Context): string {
   const allScope = messageScope(scope);
+  if (allScope.is_public_preview) return "#";
   const { secrets } = allScope;
   const workspaceId = allScope.workspace_id;
   const userProperties = allScope.user;
@@ -223,6 +226,7 @@ liquidEngine.registerTag("subscription_management_url", {
 
 function generateViewInBrowserUrl(scope: Context): string {
   const allScope = messageScope(scope);
+  if (allScope.is_public_preview) return "#";
   const workspaceId = allScope.workspace_id;
   const messageId = allScope.message_id;
 
@@ -274,6 +278,8 @@ export interface RenderLiquidOptions {
   tags?: MessageTags;
   isPreview?: boolean;
   showAllChannels?: boolean;
+  /** Empty sample data and inert message links for a public template preview. */
+  isPublicPreview?: boolean;
   messageId?: string;
 }
 
@@ -287,6 +293,7 @@ export function renderLiquid({
   mjml = false,
   tags,
   isPreview = false,
+  isPublicPreview = false,
   messageId,
 }: RenderLiquidOptions): string {
   if (!template?.length) {
@@ -294,17 +301,22 @@ export function renderLiquid({
   }
 
   const liquidRendered = String(
-    liquidEngine.parseAndRenderSync(template, {
-      user: userProperties,
-      workspace_id: workspaceId,
-      subscription_group_id: subscriptionGroupId,
-      secrets,
-      identifier_key: identifierKey,
-      // TODO [DF-471] remove default
-      tags: tags ?? {},
-      is_preview: isPreview,
-      message_id: messageId,
-    }),
+    liquidEngine.parseAndRenderSync(
+      template,
+      {
+        user: userProperties,
+        workspace_id: workspaceId,
+        subscription_group_id: subscriptionGroupId,
+        secrets,
+        identifier_key: identifierKey,
+        // TODO [DF-471] remove default
+        tags: tags ?? {},
+        is_preview: isPreview,
+        is_public_preview: isPublicPreview,
+        message_id: messageId,
+      },
+      { strictVariables: !isPublicPreview },
+    ),
   );
   if (!mjml) {
     return liquidRendered;

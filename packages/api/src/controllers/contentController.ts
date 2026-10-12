@@ -1,4 +1,5 @@
 import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
+import { Type } from "@sinclair/typebox";
 import { db } from "backend-lib/src/db";
 import * as schema from "backend-lib/src/db/schema";
 import { deleteMessageTemplate } from "backend-lib/src/journeys";
@@ -10,6 +11,7 @@ import {
   testTemplate,
   upsertMessageTemplate,
 } from "backend-lib/src/messaging";
+import { signTemplatePreviewToken } from "backend-lib/src/templatePreviewToken";
 import { Secret } from "backend-lib/src/types";
 import { randomUUID } from "crypto";
 import { and, eq, inArray, SQL } from "drizzle-orm";
@@ -32,6 +34,7 @@ import {
   DeleteMessageTemplateRequest,
   EmailContentsType,
   EmailProviderType,
+  EmailTemplateResource,
   EmptyResponse,
   GetMessageTemplatesRequest,
   GetMessageTemplatesResponse,
@@ -60,6 +63,59 @@ import * as R from "remeda";
 
 // eslint-disable-next-line @typescript-eslint/require-await
 export default async function contentController(fastify: FastifyInstance) {
+  fastify.withTypeProvider<TypeBoxTypeProvider>().get(
+    "/templates/preview-link",
+    {
+      schema: {
+        querystring: Type.Object({
+          workspaceId: Type.String({ format: "uuid" }),
+          templateId: Type.String({ format: "uuid" }),
+        }),
+        response: {
+          200: Type.Object({ path: Type.String() }),
+          404: BaseMessageResponse,
+          503: BaseMessageResponse,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { workspaceId, templateId } = request.query;
+      const template = await db().query.messageTemplate.findFirst({
+        where: and(
+          eq(schema.messageTemplate.workspaceId, workspaceId),
+          eq(schema.messageTemplate.id, templateId),
+        ),
+      });
+      if (
+        !template ||
+        schemaValidateWithErr(
+          template.definition ?? template.draft,
+          EmailTemplateResource,
+        ).isErr()
+      ) {
+        return reply.status(404).send({ message: "Email template not found" });
+      }
+      const secret = await db().query.secret.findFirst({
+        where: and(
+          eq(schema.secret.workspaceId, workspaceId),
+          eq(schema.secret.name, SecretNames.Subscription),
+        ),
+      });
+      if (!secret?.value) {
+        return reply
+          .status(503)
+          .send({ message: "Preview signing secret unavailable" });
+      }
+      const token = signTemplatePreviewToken(
+        { workspaceId, templateId },
+        secret.value,
+      );
+      return reply
+        .header("Cache-Control", "no-store")
+        .send({ path: `/public/template-preview/${token}` });
+    },
+  );
+
   fastify.withTypeProvider<TypeBoxTypeProvider>().post(
     "/templates/render",
     {
