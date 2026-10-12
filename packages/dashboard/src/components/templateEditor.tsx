@@ -28,6 +28,7 @@ import {
 } from "@mui/material";
 import { TransitionProps } from "@mui/material/transitions";
 import ReactCodeMirror from "@uiw/react-codemirror";
+import axios from "axios";
 import hash from "fnv1a";
 import { CHANNEL_IDENTIFIERS } from "isomorphic-lib/src/channels";
 import {
@@ -72,6 +73,7 @@ import { useDebounce } from "use-debounce";
 import { useImmer } from "use-immer";
 
 import { useAppStorePick } from "../lib/appStore";
+import { useAuthHeaders, useBaseApiUrl } from "../lib/authModeProvider";
 import { copyToClipboard } from "../lib/copyToClipboard";
 import {
   noticeAnchorOrigin as anchorOrigin,
@@ -418,6 +420,8 @@ export default function TemplateEditor({
   const { mutate: updateTemplate, isPending: isUpdating } =
     useMessageTemplateUpdateMutation();
   const testTemplateMutation = useTestTemplateMutation();
+  const authHeaders = useAuthHeaders();
+  const baseApiUrl = useBaseApiUrl();
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
 
   const duplicateMessageTemplateMutation = useDuplicateResourceMutation({
@@ -911,8 +915,41 @@ export default function TemplateEditor({
     });
   }, [template, duplicateMessageTemplateMutation]);
 
+  const handleCopyWebPreview = useCallback(async () => {
+    if (workspaceResult.type !== CompletionStatus.Successful) return;
+    try {
+      const { data } = await axios.get<{ path: string }>(
+        `${baseApiUrl}/content/templates/preview-link`,
+        {
+          params: { workspaceId: workspaceResult.value.id, templateId },
+          headers: authHeaders,
+        },
+      );
+      await copyToClipboard({
+        value: new URL(
+          `${router.basePath}${data.path}`,
+          window.location.origin,
+        ).toString(),
+        successNotice: "Preview link copied",
+        failureNotice: "Failed to copy preview link",
+      });
+    } catch {
+      enqueueSnackbar("Failed to create preview link", { variant: "error" });
+    }
+  }, [workspaceResult, templateId, authHeaders, baseApiUrl, router.basePath]);
+
   const commands: SettingsCommand[] = useMemo(() => {
     return [
+      ...(channel === ChannelType.Email
+        ? [
+            {
+              label: "Copy web preview link",
+              icon: <ContentCopyOutlined />,
+              disabled: !template,
+              action: handleCopyWebPreview,
+            },
+          ]
+        : []),
       {
         label: "Duplicate message template",
         icon: <ContentCopyOutlined />,
@@ -932,7 +969,7 @@ export default function TemplateEditor({
         },
       },
     ];
-  }, [template, handleDuplicate]);
+  }, [template, handleDuplicate, channel, handleCopyWebPreview]);
 
   if (!workspace || !template || !renderEditorParams) {
     return null;
