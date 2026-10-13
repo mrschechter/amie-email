@@ -213,9 +213,10 @@ const BaseRawConfigProps = {
     Type.String({ format: "naturalNumber" }),
   ),
   amieAttributionIncludeOpens: Type.Optional(BoolStr),
-  amieLinkClickDataStartsAt: Type.Optional(
-    Type.String({ format: "date-time" }),
-  ),
+  // Plain string: "date-time" is not in this app's TypeBox FormatRegistry, and an
+  // unregistered format fails the WHOLE config check (took the dashboard and SES
+  // webhook down 2026-10-13). Parsed and validated in parseRawConfig instead.
+  amieLinkClickDataStartsAt: Type.Optional(Type.String()),
   computePropertiesSplit: Type.Optional(BoolStr),
   computePropertiesTimeout: Type.Optional(
     Type.String({ format: "naturalNumber" }),
@@ -891,7 +892,10 @@ function parseRawConfig(rawConfig: RawConfig): Config {
     clickhouseMaxMemoryUsage:
       rawConfig.clickhouseMaxMemoryUsage ?? "10000000000",
     amieLinkClickDataStartsAt:
-      rawConfig.amieLinkClickDataStartsAt ?? "2026-10-13T00:00:00.000Z",
+      rawConfig.amieLinkClickDataStartsAt &&
+      !Number.isNaN(Date.parse(rawConfig.amieLinkClickDataStartsAt))
+        ? new Date(rawConfig.amieLinkClickDataStartsAt).toISOString()
+        : "2026-10-13T00:00:00.000Z",
     amieAttributionWindowDays: rawConfig.amieAttributionWindowDays
       ? parseInt(rawConfig.amieAttributionWindowDays)
       : 5,
