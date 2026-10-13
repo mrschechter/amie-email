@@ -20,14 +20,25 @@ export default function LinksClicked({
       </p>
       {data.linkClicks.length === 0 && <p>No link clicks in this range.</p>}
       {data.linkClicks.map((group) => (
-        <div
+        <details
           key={JSON.stringify([
             group.broadcastId,
             group.journeyId,
             group.templateId,
           ])}
+          style={{ margin: "4px 0", borderTop: "1px solid rgba(0,0,0,0.08)" }}
         >
-          <h3>{group.name}</h3>
+          <summary
+            style={{ cursor: "pointer", padding: "8px 0", fontWeight: 600 }}
+          >
+            {group.name}
+            <span className={styles.muted} style={{ fontWeight: 400 }}>
+              {" "}
+              · {group.rows.length.toLocaleString()} link
+              {group.rows.length === 1 ? "" : "s"}
+              {` · ${group.uniqueClickers.toLocaleString()} ${group.uniqueClickers === 1 ? "person" : "people"} clicked`}
+            </span>
+          </summary>
           {group.incomplete && (
             <p className={styles.muted}>
               Link-level data starts {data.linkDataStartsAt?.slice(0, 10)}.{" "}
@@ -74,7 +85,7 @@ export default function LinksClicked({
               </tbody>
             </table>
           </div>
-        </div>
+        </details>
       ))}
     </section>
   );

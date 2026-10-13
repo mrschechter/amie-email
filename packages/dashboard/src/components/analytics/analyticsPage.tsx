@@ -349,9 +349,7 @@ export default function AnalyticsPage({ tab }: { tab: (typeof tabs)[number] }) {
               />
             </>
           )}
-          {(tab === "broadcasts" || tab === "deliverability") && (
-            <LinksClicked data={data} />
-          )}
+          {tab === "broadcasts" && <LinksClicked data={data} />}
           {tab === "revenue" && (
             <RevenueScreen
               key={JSON.stringify(params)}
@@ -407,6 +405,8 @@ export default function AnalyticsPage({ tab }: { tab: (typeof tabs)[number] }) {
                   </tbody>
                 </table>
               </div>
+              {/* Kept last so it never pushes the main deliverability tables down. */}
+              <LinksClicked data={data} />
             </>
           )}
         </>
