@@ -72,6 +72,7 @@ jest.mock("./config", () => ({
   default: () => ({
     amieAttributionWindowDays: 5,
     amieAttributionIncludeOpens: true,
+    amieLinkClickDataStartsAt: "2026-10-13T00:00:00.000Z",
     clickhouseMaxMemoryUsage: "1000000000",
   }),
 }));
@@ -503,6 +504,58 @@ describe("analytics report assembly", () => {
       "overview",
     );
     expect(jest.mocked(query).mock.calls.length - beforeCalls).toBe(8);
+  });
+  it("includes scoped link reporting on broadcast detail", async () => {
+    mockQueryRows.push(
+      [],
+      [],
+      [],
+      [],
+      [
+        {
+          broadcastId: "broadcast",
+          journeyId: "",
+          templateId: "",
+          link: "https://example.com/offer?token=raw",
+          uniqueClickers: "2",
+          totalClicks: "3",
+          allUniqueClickers: "4",
+          clicksWithoutLink: "1",
+        },
+      ],
+    );
+    const report = await getAnalytics(
+      { ...request, workspaceId: "link-detail", compare: false },
+      "broadcasts",
+      "broadcast",
+    );
+    expect(report.linkDataStartsAt).toBe("2026-10-13T00:00:00.000Z");
+    expect(report.linkClicks).toEqual([
+      expect.objectContaining({
+        broadcastId: "broadcast",
+        name: "September broadcast",
+        uniqueClickers: 4,
+        clicksWithoutLink: 1,
+        incomplete: true,
+        rows: [
+          {
+            link: "https://example.com/offer?token=raw",
+            linkKind: "content",
+            uniqueClickers: 2,
+            totalClicks: 3,
+            clickerRate: 0.5,
+          },
+        ],
+      }),
+    ]);
+    expect(
+      jest.mocked(query).mock.calls.at(-1)?.[0].query_params,
+    ).toMatchObject({
+      v0: "link-detail",
+      v3: ["broadcast-flow"],
+      v4: ["broadcast"],
+      v5: "broadcast",
+    });
   });
   it("scopes a detail response to the selected source and returns 404 for absent resources", async () => {
     mockQueryRows.push(

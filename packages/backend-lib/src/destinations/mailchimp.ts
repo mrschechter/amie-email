@@ -4,6 +4,7 @@ import mailchimp, {
   MessagesSendSuccessResponse,
 } from "@mailchimp/mailchimp_transactional";
 import { AxiosError } from "axios";
+import { clickLinkProperties } from "isomorphic-lib/src/linkClicks";
 import { err, ok, ResultAsync } from "neverthrow";
 import * as R from "remeda";
 import { v5 as uuidv5 } from "uuid";
@@ -16,6 +17,7 @@ import {
   InternalEventType,
   KnownBatchTrackData,
   MailChimpEvent,
+  MailChimpEventType,
 } from "../types";
 
 function isRetryableError(error: AxiosError): boolean {
@@ -144,7 +146,13 @@ export async function submitMailChimpEvents({
         return [];
       }
       // eslint-disable-next-line no-underscore-dangle
-      const messageId = uuidv5(`${e.event}:${e.msg._id}`, workspaceId);
+      const providerId = e.msg._id;
+      const messageId = uuidv5(
+        e.event === MailChimpEventType.Click
+          ? JSON.stringify([e.event, providerId, e.ts, e.url ?? ""])
+          : `${e.event}:${providerId}`,
+        workspaceId,
+      );
       let event: InternalEventType;
       switch (e.event) {
         case "open":
@@ -173,7 +181,11 @@ export async function submitMailChimpEvents({
           return [];
       }
       const properties = R.merge(
-        { email: e.msg.email },
+        {
+          email: e.msg.email,
+          ...(e.event === MailChimpEventType.Click &&
+            clickLinkProperties(e.url)),
+        },
         R.pick(e.msg.metadata, MESSAGE_METADATA_FIELDS),
       );
       const { userId } = e.msg.metadata;

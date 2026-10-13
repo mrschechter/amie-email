@@ -213,6 +213,9 @@ const BaseRawConfigProps = {
     Type.String({ format: "naturalNumber" }),
   ),
   amieAttributionIncludeOpens: Type.Optional(BoolStr),
+  amieLinkClickDataStartsAt: Type.Optional(
+    Type.String({ format: "date-time" }),
+  ),
   computePropertiesSplit: Type.Optional(BoolStr),
   computePropertiesTimeout: Type.Optional(
     Type.String({ format: "naturalNumber" }),
@@ -387,6 +390,7 @@ export type Config = Overwrite<
     clickhouseMaxMemoryUsage: string;
     amieAttributionWindowDays: number;
     amieAttributionIncludeOpens: boolean;
+    amieLinkClickDataStartsAt: string;
     computePropertiesSplit: boolean;
     computePropertiesTimeout: number;
     waitForComputePropertiesBaseDelayMs: number;
@@ -886,6 +890,8 @@ function parseRawConfig(rawConfig: RawConfig): Config {
     // 10 GB
     clickhouseMaxMemoryUsage:
       rawConfig.clickhouseMaxMemoryUsage ?? "10000000000",
+    amieLinkClickDataStartsAt:
+      rawConfig.amieLinkClickDataStartsAt ?? "2026-10-13T00:00:00.000Z",
     amieAttributionWindowDays: rawConfig.amieAttributionWindowDays
       ? parseInt(rawConfig.amieAttributionWindowDays)
       : 5,

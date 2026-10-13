@@ -11,6 +11,7 @@ import {
 import { SpanStatusCode } from "@opentelemetry/api";
 import { and, eq } from "drizzle-orm";
 import { SourceType } from "isomorphic-lib/src/constants";
+import { clickLinkProperties } from "isomorphic-lib/src/linkClicks";
 import {
   jsonParseSafe,
   schemaValidateWithErr,
@@ -258,7 +259,14 @@ export async function submitAmazonSesEvents(
     }
 
     const messageId = uuidv5(
-      `${event.eventType}:${event.mail.messageId}`,
+      event.eventType === AmazonSesNotificationType.Click
+        ? JSON.stringify([
+            event.eventType,
+            event.mail.messageId,
+            timestamp,
+            event.click.link ?? "",
+          ])
+        : `${event.eventType}:${event.mail.messageId}`,
       workspaceId,
     );
     const metadataTags = R.pick(tags, MESSAGE_METADATA_FIELDS);
@@ -274,6 +282,12 @@ export async function submitAmazonSesEvents(
         properties: {
           email: event.mail.destination?.[0],
           ...metadataTags,
+          ...(event.eventType === AmazonSesNotificationType.Click && {
+            ...clickLinkProperties(event.click.link),
+            ...(event.click.linkTags !== undefined && {
+              linkTags: event.click.linkTags,
+            }),
+          }),
           ...(event.eventType === AmazonSesNotificationType.Bounce && {
             bounceType: event.bounce.bounceType,
             bounceSubType: event.bounce.bounceSubType,

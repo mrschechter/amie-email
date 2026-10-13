@@ -28,6 +28,7 @@ import config from "./config";
 import { db } from "./db";
 import * as schema from "./db/schema";
 import { getJourneysStats } from "./journeys";
+import { getLinkClicks } from "./linkClicks";
 import { buildProviderExpression } from "./recipientProviders";
 import {
   getRevenueFacts,
@@ -517,6 +518,24 @@ async function loadAnalytics(
     });
     response.addresses =
       await addresses.json<AnalyticsResponse["addresses"][number]>();
+  }
+  if (
+    view === "broadcasts" ||
+    view === "deliverability" ||
+    (view === "flows" && id)
+  ) {
+    response.linkDataStartsAt = config().amieLinkClickDataStartsAt;
+    response.linkClicks = await getLinkClicks(
+      resolved,
+      broadcasts,
+      journeys,
+      templates,
+      response.linkDataStartsAt,
+      {
+        journeyId: view === "flows" ? id : undefined,
+        broadcastId: view === "broadcasts" ? id : undefined,
+      },
+    );
   }
   if (request.compare !== false) {
     const before = {
