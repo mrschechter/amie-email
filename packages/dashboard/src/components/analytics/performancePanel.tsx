@@ -11,6 +11,7 @@ import styles from "./analytics.module.css";
 import { CalculationDrawer, RangeControls } from "./analyticsLayout";
 import { QueryState } from "./analyticsPage";
 import { KpiStrip } from "./kpiCard";
+import LinksClicked from "./linksClicked";
 import MetricTimeSeries from "./metricTimeSeries";
 import PerformanceTable, { StatusPill } from "./performanceTable";
 import ProviderTables from "./providerTables";
@@ -77,6 +78,7 @@ export default function PerformancePanel({
               </div>
             </>
           )}
+          <LinksClicked data={data} />
           <ProviderTables data={data} />
           <h2>Daily performance</h2>
           <MetricTimeSeries rows={data.daily} />

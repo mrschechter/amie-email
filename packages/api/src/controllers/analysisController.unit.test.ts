@@ -113,6 +113,46 @@ describe("analytics API (DB-free)", () => {
     expect(response.statusCode).toBe(200);
     expect(getAnalytics).toHaveBeenCalledWith(params, route, id);
   });
+  it.each([`broadcasts/${id}`, `flows/${id}`, "deliverability"])(
+    "serializes link reporting on %s",
+    async (route) => {
+      const linkClicks: AnalyticsResponse["linkClicks"] = [
+        {
+          broadcastId: id,
+          journeyId: "",
+          templateId: "",
+          name: "Fall broadcast",
+          uniqueClickers: 2,
+          clicksWithoutLink: 1,
+          incomplete: true,
+          rows: [
+            {
+              link: "https://example.com/?token=raw",
+              linkKind: "content",
+              uniqueClickers: 1,
+              totalClicks: 3,
+              clickerRate: 0.5,
+            },
+          ],
+        },
+      ];
+      jest.mocked(getAnalytics).mockResolvedValue({
+        ...report,
+        linkClicks,
+        linkDataStartsAt: "2026-10-13T00:00:00.000Z",
+      });
+      const response = await app.inject({
+        method: "GET",
+        url: `/api/analysis/${route}`,
+        query: params,
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        linkClicks,
+        linkDataStartsAt: "2026-10-13T00:00:00.000Z",
+      });
+    },
+  );
   it("rejects invalid windows, dates, IDs and excessive ranges inline", async () => {
     await Promise.all(
       [

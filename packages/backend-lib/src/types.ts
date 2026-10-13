@@ -375,7 +375,12 @@ export const AmazonSesClickEvent = Type.Object({
         ipAddress: NullableAndOptional(Type.String()),
         userAgent: NullableAndOptional(Type.String()),
         link: NullableAndOptional(Type.String()),
-        linkTags: NullableAndOptional(Type.String()),
+        linkTags: NullableAndOptional(
+          Type.Union([
+            Type.String(),
+            Type.Record(Type.String(), Type.Array(Type.String())),
+          ]),
+        ),
       }),
     ),
   ]),

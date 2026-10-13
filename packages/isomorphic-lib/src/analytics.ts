@@ -1,5 +1,7 @@
 import { Static, Type } from "@sinclair/typebox";
 
+import { LinkClickGroup } from "./linkClicks";
+
 export const AnalyticsRequest = Type.Object({
   workspaceId: Type.String(),
   startDate: Type.String({ format: "date-time" }),
@@ -114,6 +116,8 @@ export const AnalyticsResponse = Type.Object({
   revenue: Type.Optional(RevenueTotals),
   orders: Type.Optional(Type.Array(RevenueOrder)),
   ordersHasMore: Type.Optional(Type.Boolean()),
+  linkClicks: Type.Optional(Type.Array(LinkClickGroup)),
+  linkDataStartsAt: Type.Optional(Type.String()),
   addresses: Type.Array(
     Type.Object({
       userId: Type.String(),

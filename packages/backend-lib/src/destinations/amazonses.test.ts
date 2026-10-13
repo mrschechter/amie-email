@@ -386,6 +386,82 @@ describe("handleSesNotification", () => {
     },
   );
 
+  it.each([
+    ["https://example.com/offer?token=raw&utm_campaign=fall", "content"],
+    ["https://example.com/unsubscribe?token=raw", "unsubscribe"],
+    [
+      "https://example.com/api/public/subscription-management/page?sub=0",
+      "unsubscribe",
+    ],
+    [
+      "https://example.com/api/public/subscription-management/page",
+      "preferences",
+    ],
+    ["https://example.com/api/public/view-in-browser?w=raw", "view_in_browser"],
+    [undefined, undefined],
+  ])(
+    "captures the provider link %s without adding tracking data",
+    async (link, linkKind) => {
+      const linkTags = { campaign: ["fall"], button: ["primary"] };
+      unwrap(
+        await handleSesNotification(
+          notification({
+            eventType: AmazonSesNotificationType.Click,
+            mail: complaint.mail,
+            click: {
+              timestamp: complaint.complaint.timestamp,
+              link,
+              linkTags,
+              ipAddress: "192.0.2.1",
+            },
+          }),
+        ),
+      );
+      const item = jest.mocked(submitBatch).mock.calls[0]?.[0].data.batch[0];
+      expect(item).toMatchObject({
+        event: InternalEventType.EmailClicked,
+        properties: { linkTags },
+      });
+      if (item?.type !== EventType.Track)
+        throw new Error("Expected track event");
+      if (link === undefined) {
+        expect(item.properties).not.toHaveProperty("link");
+        expect(item.properties).not.toHaveProperty("linkKind");
+      } else expect(item.properties).toMatchObject({ link, linkKind });
+      expect(item.properties).not.toHaveProperty("ipAddress");
+    },
+  );
+
+  it("deduplicates click retries while preserving different links and repeated clicks", async () => {
+    const click = {
+      timestamp: complaint.complaint.timestamp,
+      link: "https://example.com/a",
+    };
+    for (const value of [
+      click,
+      click,
+      { ...click, link: "https://example.com/b" },
+      { ...click, timestamp: "2026-09-29T04:00:00Z" },
+    ]) {
+      unwrap(
+        // Sequential retries exercise stable IDs in delivery order.
+        // eslint-disable-next-line no-await-in-loop
+        await handleSesNotification(
+          notification({
+            eventType: AmazonSesNotificationType.Click,
+            mail: complaint.mail,
+            click: value,
+          }),
+        ),
+      );
+    }
+    const ids = jest
+      .mocked(submitBatch)
+      .mock.calls.map(([call]) => call.data.batch[0]?.messageId);
+    expect(ids[0]).toBe(ids[1]);
+    expect(new Set(ids).size).toBe(3);
+  });
+
   it("returns submission failures so SNS can retry the same event IDs", async () => {
     jest.mocked(submitBatch).mockRejectedValueOnce(new Error("write failed"));
     expect((await handleSesNotification(notification(complaint))).isErr()).toBe(

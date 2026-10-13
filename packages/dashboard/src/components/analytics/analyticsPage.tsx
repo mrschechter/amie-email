@@ -17,6 +17,7 @@ import AnalyticsLayout, {
   tabs,
 } from "./analyticsLayout";
 import { KpiStrip, money } from "./kpiCard";
+import LinksClicked from "./linksClicked";
 import MetricTimeSeries from "./metricTimeSeries";
 import PerformanceTable from "./performanceTable";
 import ProviderTables from "./providerTables";
@@ -347,6 +348,9 @@ export default function AnalyticsPage({ tab }: { tab: (typeof tabs)[number] }) {
                 sources={data.sources}
               />
             </>
+          )}
+          {(tab === "broadcasts" || tab === "deliverability") && (
+            <LinksClicked data={data} />
           )}
           {tab === "revenue" && (
             <RevenueScreen
