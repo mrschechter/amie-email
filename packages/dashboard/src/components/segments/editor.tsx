@@ -97,6 +97,20 @@ import InfoTooltip from "../infoTooltip";
 import { MessageTemplateAutocomplete } from "../messageTemplateAutocomplete";
 import { SubscriptionGroupAutocompleteV2 } from "../subscriptionGroupAutocomplete";
 import TraitAutocomplete from "../traitAutocomplete";
+import {
+  DraggableRow,
+  DropSlot,
+  RowActionsMenu,
+  SegmentDndProvider,
+} from "./segmentTreeControls";
+import {
+  dropAt,
+  insertCondition,
+  listTargetGroups,
+  moveToGroup,
+  moveWithinGroup,
+  wrapInGroup,
+} from "./segmentTreeOps";
 
 type SegmentGroupedOption = GroupedOption<SegmentNodeType>;
 
@@ -483,6 +497,16 @@ function removeEditableSegmentChild(
     parent.children = parent.children.filter((c) => c !== nodeId);
     definition.nodes = definition.nodes.filter((n) => n.id !== nodeId);
     removeOrphanedSegmentNodes(definition);
+    return draft;
+  });
+}
+
+function editSegmentTree(
+  setState: Updater<SegmentEditorState>,
+  edit: (definition: Draft<SegmentDefinition>) => unknown,
+) {
+  setState((draft) => {
+    edit(draft.editedSegment.definition);
     return draft;
   });
 }
@@ -2867,22 +2891,75 @@ function SegmentNodeComponent({
   let el: React.ReactElement;
 
   if (node.type === SegmentNodeType.And || node.type === SegmentNodeType.Or) {
+    const { definition } = editedSegment;
+    const childCount = node.children.length;
     const rows = node.children.flatMap((childId, i) => {
       const child = nodeById[childId];
       if (!child || !isBodySegmentNode(child)) {
         return [];
       }
 
+      const moveTargets = listTargetGroups(definition, childId).filter(
+        (g) => g.id !== node.id,
+      );
       return (
-        <SegmentNodeComponent
-          key={i}
-          node={child}
-          renderDelete={i !== 0}
-          parentId={node.id}
-          label={i === 0 ? "empty" : node.type}
-        />
+        <React.Fragment key={childId}>
+          <DropSlot groupId={node.id} index={i} disabled={disabled} />
+          <DraggableRow nodeId={childId} disabled={disabled}>
+            <Stack direction="row" spacing={1} alignItems="flex-start">
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <SegmentNodeComponent
+                  node={child}
+                  renderDelete={childCount > 1}
+                  parentId={node.id}
+                  label={i === 0 ? "empty" : node.type}
+                />
+              </Box>
+              <RowActionsMenu
+                disabled={disabled}
+                actions={{
+                  canMoveUp: i > 0,
+                  canMoveDown: i < childCount - 1,
+                  onMoveUp: () =>
+                    editSegmentTree(setState, (d) =>
+                      moveWithinGroup(d, node.id, childId, -1),
+                    ),
+                  onMoveDown: () =>
+                    editSegmentTree(setState, (d) =>
+                      moveWithinGroup(d, node.id, childId, 1),
+                    ),
+                  onAddBelow: () =>
+                    editSegmentTree(setState, (d) =>
+                      insertCondition(d, node.id, i + 1),
+                    ),
+                  onWrapOr: () =>
+                    editSegmentTree(setState, (d) =>
+                      wrapInGroup(d, node.id, childId, SegmentNodeType.Or),
+                    ),
+                  onWrapAnd: () =>
+                    editSegmentTree(setState, (d) =>
+                      wrapInGroup(d, node.id, childId, SegmentNodeType.And),
+                    ),
+                  moveTargets: childCount > 1 ? moveTargets : [],
+                  onMoveTo: (groupId) =>
+                    editSegmentTree(setState, (d) =>
+                      moveToGroup(d, childId, node.id, groupId),
+                    ),
+                }}
+              />
+            </Stack>
+          </DraggableRow>
+        </React.Fragment>
       );
     });
+    rows.push(
+      <DropSlot
+        key="end-slot"
+        groupId={node.id}
+        index={childCount}
+        disabled={disabled}
+      />,
+    );
     el = (
       <Stack spacing={3}>
         <Stack direction="row" spacing={1}>
@@ -2892,6 +2969,7 @@ function SegmentNodeComponent({
             color="primary"
             disabled={disabled}
             size="large"
+            aria-label="Add condition to this group"
             onClick={() => addEditableSegmentChild(setState, node.id)}
           >
             <AddCircleOutlineOutlined />
@@ -3098,12 +3176,21 @@ export default function SegmentEditor({
           ...sx,
         }}
       >
-        <SegmentNodeComponent
-          node={entryNode}
-          isRoot
-          renderDelete={false}
-          label="empty"
-        />
+        <SegmentDndProvider
+          onDrop={(nodeId, groupId, index) =>
+            contextValue.setState((draft) => {
+              dropAt(draft.editedSegment.definition, nodeId, groupId, index);
+              return draft;
+            })
+          }
+        >
+          <SegmentNodeComponent
+            node={entryNode}
+            isRoot
+            renderDelete={false}
+            label="empty"
+          />
+        </SegmentDndProvider>
       </Box>
     </SegmentEditorContext.Provider>
   );
