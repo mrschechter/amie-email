@@ -17,6 +17,7 @@ import {
   buildVisualDesign,
   expandSelfClosingMjml,
   hasUnsubscribeLink,
+  isMjmlBody,
   STARTER_MJML,
   VISUAL_EMAIL_VARIABLES,
   VisualOpenState,
@@ -182,9 +183,27 @@ export default function VisualEmailEditor({
     });
     editorRef.current = editor;
 
+    let loadedDesign = false;
+    let loadWarning: string | null = null;
     if (design?.project) {
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-      editor.loadProjectData(design.project as never);
+      try {
+        // The draft store freezes state and GrapesJS mutates project data
+        // while loading it, so hand it a private copy.
+        const project: Record<string, unknown> = JSON.parse(
+          JSON.stringify(design.project),
+        );
+        // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+        editor.loadProjectData(project as never);
+        loadedDesign = true;
+      } catch {
+        loadWarning =
+          "The saved visual design couldn't be loaded, so the email's current MJML was opened instead";
+      }
+    }
+    if (loadedDesign) {
+      // design restored above
+    } else if (design?.project && isMjmlBody(current.body)) {
+      editor.setComponents(expandSelfClosingMjml(current.body));
     } else if (startSource === "mjml" && current.body) {
       editor.setComponents(expandSelfClosingMjml(current.body));
     } else {
@@ -269,7 +288,8 @@ export default function VisualEmailEditor({
       // ignore
     }
 
-    setWarnings(visualDesignWarnings(editor.getHtml()));
+    const mjmlWarnings = visualDesignWarnings(editor.getHtml());
+    setWarnings(loadWarning ? [loadWarning, ...mjmlWarnings] : mjmlWarnings);
     // Starting from MJML or the starter writes the first design immediately.
     if (!design && !disabled) flush();
     editor.on("update", schedule);
