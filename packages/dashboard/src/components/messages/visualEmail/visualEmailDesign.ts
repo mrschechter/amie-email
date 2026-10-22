@@ -39,37 +39,50 @@ const BRAND = {
   page: "#FBF7F2",
 };
 
-/** Blank-but-sendable starting point: header, copy, CTA and the unsubscribe footer. */
+const FONT = "Helvetica, Arial, sans-serif";
+const TEXT_ATTRS = `font-family="${FONT}" font-size="16px" line-height="26px" color="${BRAND.text}"`;
+const BUTTON_ATTRS = `font-family="${FONT}" background-color="${BRAND.teal}" color="#FFFFFF" border-radius="999px" font-size="15px" font-weight="bold" inner-padding="14px 28px"`;
+
+/**
+ * Blank-but-sendable starting point: header, copy, CTA and the unsubscribe footer.
+ * Styles are inline on each element (no <mj-attributes>) so the canvas shows
+ * exactly what is sent and every value is editable in the style panel.
+ */
 export const STARTER_MJML = `<mjml>
-  <mj-head>
-    <mj-attributes>
-      <mj-all font-family="Helvetica, Arial, sans-serif" />
-      <mj-text font-size="16px" line-height="26px" color="${BRAND.text}" />
-      <mj-button background-color="${BRAND.teal}" color="#FFFFFF" border-radius="999px" font-size="15px" font-weight="bold" inner-padding="14px 28px" />
-    </mj-attributes>
-  </mj-head>
   <mj-body background-color="${BRAND.page}" width="600px">
     <mj-section background-color="#FFFFFF" padding="28px 24px 8px">
       <mj-column>
-        <mj-text align="center" font-family="Georgia, 'Times New Roman', serif" font-size="26px" font-weight="bold">Amie<span style="color:${BRAND.rose};">.</span></mj-text>
+        <mj-text align="center" font-family="Georgia, 'Times New Roman', serif" font-size="26px" font-weight="bold" color="${BRAND.text}">Amie<span style="color:${BRAND.rose};">.</span></mj-text>
       </mj-column>
     </mj-section>
     <mj-section background-color="#FFFFFF" padding="8px 24px">
       <mj-column>
-        <mj-image src="${AMIE_PLACEHOLDER_IMAGE_URL}" alt="Describe this image" href="${AMIE_HOME_URL}" border-radius="12px" />
-        <mj-text>Hi {{ user.firstName | default: "there" }},</mj-text>
-        <mj-text>Start writing here. Click any block to edit it, or drag new blocks in from the Blocks panel.</mj-text>
-        <mj-button href="${AMIE_HOME_URL}">Shop now</mj-button>
+        <mj-image src="${AMIE_PLACEHOLDER_IMAGE_URL}" alt="Describe this image" href="${AMIE_HOME_URL}" border-radius="12px"></mj-image>
+        <mj-text ${TEXT_ATTRS}>Hi {{ user.firstName | default: "there" }},</mj-text>
+        <mj-text ${TEXT_ATTRS}>Start writing here. Click any block to edit it, or drag new blocks in from the Blocks panel.</mj-text>
+        <mj-button href="${AMIE_HOME_URL}" ${BUTTON_ATTRS}>Shop now</mj-button>
       </mj-column>
     </mj-section>
     <mj-section background-color="#FFFFFF" padding="16px 24px 28px" border-top="1px solid #F2EBE2">
       <mj-column>
-        <mj-text align="center" font-size="12px" line-height="20px" color="${BRAND.muted}">{{ user.physicalAddress | default: "382 NE 191st St, Miami, FL 33179" }}</mj-text>
-        <mj-text align="center" font-size="12px" line-height="20px" color="${BRAND.teal}"><a href="{% unsubscribe_url %}" target="_blank" style="color:${BRAND.teal};text-decoration:underline;">Unsubscribe</a></mj-text>
+        <mj-text align="center" font-family="${FONT}" font-size="12px" line-height="20px" color="${BRAND.muted}">{{ user.physicalAddress | default: "382 NE 191st St, Miami, FL 33179" }}</mj-text>
+        <mj-text align="center" font-family="${FONT}" font-size="12px" line-height="20px" color="${BRAND.teal}"><a href="{% unsubscribe_url %}" target="_blank" style="color:${BRAND.teal};text-decoration:underline;">Unsubscribe</a></mj-text>
       </mj-column>
     </mj-section>
   </mj-body>
 </mjml>`;
+
+/**
+ * GrapesJS's parser treats `<mj-image ... />` as an open tag, nesting every
+ * following sibling inside it (content disappears from the canvas and the
+ * saved MJML is corrupted). Expand self-closing MJML tags before loading.
+ */
+export function expandSelfClosingMjml(mjml: string): string {
+  return mjml.replace(
+    /<(mj-[\w-]+)((?:[^>"']|"[^"]*"|'[^']*')*?)\s*\/>/g,
+    "<$1$2></$1>",
+  );
+}
 
 export type CodeEmailDraft = CodeEmailContents & { type: "Email" };
 

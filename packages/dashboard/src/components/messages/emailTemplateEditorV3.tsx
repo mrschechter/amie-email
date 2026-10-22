@@ -1245,15 +1245,17 @@ export default function EmailTemplateEditorV3({
             ]}
             onChange={setTab}
           />
-          <SegmentControl
-            label="Preview size"
-            value={previewWidth}
-            options={[
-              { value: "desktop", label: "Desktop" },
-              { value: "mobile", label: "Mobile" },
-            ]}
-            onChange={setPreviewWidth}
-          />
+          {tab === "visual" ? null : (
+            <SegmentControl
+              label="Preview size"
+              value={previewWidth}
+              options={[
+                { value: "desktop", label: "Desktop" },
+                { value: "mobile", label: "Mobile" },
+              ]}
+              onChange={setPreviewWidth}
+            />
+          )}
         </Stack>
 
         <Box

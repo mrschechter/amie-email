@@ -15,6 +15,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   applyVisualSave,
   buildVisualDesign,
+  expandSelfClosingMjml,
   hasUnsubscribeLink,
   STARTER_MJML,
   VISUAL_EMAIL_VARIABLES,
@@ -185,7 +186,7 @@ export default function VisualEmailEditor({
       // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
       editor.loadProjectData(design.project as never);
     } else if (startSource === "mjml" && current.body) {
-      editor.setComponents(current.body);
+      editor.setComponents(expandSelfClosingMjml(current.body));
     } else {
       editor.setComponents(STARTER_MJML);
     }
