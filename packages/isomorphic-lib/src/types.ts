@@ -1671,6 +1671,22 @@ export const BaseEmailContents = Type.Object({
 
 export type BaseEmailContents = Static<typeof BaseEmailContents>;
 
+/**
+ * Editable source for templates built in the visual (drag & drop) editor.
+ * `body` stays the source of truth for sending: the visual editor writes MJML
+ * into `body`, and `mjml` records exactly what it wrote so edits made outside
+ * the visual editor (Code tab, AI) can be detected instead of overwritten.
+ */
+export const VisualEmailDesign = Type.Object({
+  version: Type.Literal(1),
+  editor: Type.Literal("grapesjs-mjml"),
+  project: Type.Record(Type.String(), Type.Unknown()),
+  mjml: Type.String(),
+  updatedAt: Type.Optional(Type.String()),
+});
+
+export type VisualEmailDesign = Static<typeof VisualEmailDesign>;
+
 export const CodeEmailContents = Type.Composite([
   BaseEmailContents,
   Type.Object({
@@ -1682,6 +1698,7 @@ export const CodeEmailContents = Type.Composite([
         Type.Null(),
       ]),
     ),
+    visualDesign: Type.Optional(Type.Union([VisualEmailDesign, Type.Null()])),
   }),
 ]);
 
