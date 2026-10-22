@@ -52,8 +52,9 @@ describe("visual email design helpers", () => {
     expect(visualOpenState({ body: "<mjml><mj-body></mj-body></mjml>" })).toBe(
       "importMjml",
     );
+    // hand-written HTML can now be opened in the HTML visual editor
     expect(visualOpenState({ body: "<html><body>hi</body></html>" })).toBe(
-      "customHtml",
+      "importHtml",
     );
     const design = buildVisualDesign({
       project: { pages: [] },

@@ -1281,6 +1281,7 @@ export default function EmailTemplateEditorV3({
               workspaceId={workspaceId}
               baseApiUrl={baseApiUrl}
               authHeaders={authHeaders}
+              onOpenCode={() => setTab("code")}
             />
           ) : null}
           {visualMounted && !emailDraft ? (
