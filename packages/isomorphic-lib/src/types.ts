@@ -1672,15 +1672,31 @@ export const BaseEmailContents = Type.Object({
 export type BaseEmailContents = Static<typeof BaseEmailContents>;
 
 /**
+ * Which visual editor produced a design:
+ * - `grapesjs-mjml`: GrapesJS + MJML blocks; `body` is MJML.
+ * - `grapesjs-html`: plain GrapesJS over a hand-written HTML document (e.g.
+ *   imported Mautic templates); `body` is the full HTML document.
+ */
+export const VisualEmailEditorKind = Type.Union([
+  Type.Literal("grapesjs-mjml"),
+  Type.Literal("grapesjs-html"),
+]);
+
+export type VisualEmailEditorKind = Static<typeof VisualEmailEditorKind>;
+
+/**
  * Editable source for templates built in the visual (drag & drop) editor.
- * `body` stays the source of truth for sending: the visual editor writes MJML
- * into `body`, and `mjml` records exactly what it wrote so edits made outside
- * the visual editor (Code tab, AI) can be detected instead of overwritten.
+ * `body` stays the source of truth for sending: the visual editor writes its
+ * output (MJML or HTML, per `editor`) into `body`, and `mjml` records exactly
+ * what it wrote so edits made outside the visual editor (Code tab, AI) can be
+ * detected instead of overwritten. The field keeps its historical name for
+ * backward compatibility; for `grapesjs-html` designs it holds HTML.
  */
 export const VisualEmailDesign = Type.Object({
   version: Type.Literal(1),
-  editor: Type.Literal("grapesjs-mjml"),
+  editor: VisualEmailEditorKind,
   project: Type.Record(Type.String(), Type.Unknown()),
+  /** The exact body the visual editor last wrote (MJML or HTML). */
   mjml: Type.String(),
   updatedAt: Type.Optional(Type.String()),
 });

@@ -6,9 +6,12 @@ import {
   CodeEmailContents,
   EmailContentsType,
   VisualEmailDesign,
+  VisualEmailEditorKind,
 } from "isomorphic-lib/src/types";
 
 export const VISUAL_EDITOR_ID = "grapesjs-mjml" as const;
+/** Plain GrapesJS over a hand-written HTML document (see visualEmailHtml.ts). */
+export const VISUAL_HTML_EDITOR_ID = "grapesjs-html" as const;
 
 /**
  * Personalization the visual editor can insert. These are the exact Liquid
@@ -31,7 +34,7 @@ export const VISUAL_EMAIL_VARIABLES: { label: string; value: string }[] = [
   { label: "View in browser URL", value: "{% view_in_browser_url %}" },
 ];
 
-const BRAND = {
+export const VISUAL_BRAND = {
   text: "#3E3733",
   muted: "#A39B93",
   teal: "#2D7A7A",
@@ -39,9 +42,9 @@ const BRAND = {
   page: "#FBF7F2",
 };
 
-const FONT = "Helvetica, Arial, sans-serif";
-const TEXT_ATTRS = `font-family="${FONT}" font-size="16px" line-height="26px" color="${BRAND.text}"`;
-const BUTTON_ATTRS = `font-family="${FONT}" background-color="${BRAND.teal}" color="#FFFFFF" border-radius="999px" font-size="15px" font-weight="bold" inner-padding="14px 28px"`;
+export const VISUAL_FONT = "Helvetica, Arial, sans-serif";
+const TEXT_ATTRS = `font-family="${VISUAL_FONT}" font-size="16px" line-height="26px" color="${VISUAL_BRAND.text}"`;
+const BUTTON_ATTRS = `font-family="${VISUAL_FONT}" background-color="${VISUAL_BRAND.teal}" color="#FFFFFF" border-radius="999px" font-size="15px" font-weight="bold" inner-padding="14px 28px"`;
 
 /**
  * Blank-but-sendable starting point: header, copy, CTA and the unsubscribe footer.
@@ -49,10 +52,10 @@ const BUTTON_ATTRS = `font-family="${FONT}" background-color="${BRAND.teal}" col
  * exactly what is sent and every value is editable in the style panel.
  */
 export const STARTER_MJML = `<mjml>
-  <mj-body background-color="${BRAND.page}" width="600px">
+  <mj-body background-color="${VISUAL_BRAND.page}" width="600px">
     <mj-section background-color="#FFFFFF" padding="28px 24px 8px">
       <mj-column>
-        <mj-text align="center" font-family="Georgia, 'Times New Roman', serif" font-size="26px" font-weight="bold" color="${BRAND.text}">Amie<span style="color:${BRAND.rose};">.</span></mj-text>
+        <mj-text align="center" font-family="Georgia, 'Times New Roman', serif" font-size="26px" font-weight="bold" color="${VISUAL_BRAND.text}">Amie<span style="color:${VISUAL_BRAND.rose};">.</span></mj-text>
       </mj-column>
     </mj-section>
     <mj-section background-color="#FFFFFF" padding="8px 24px">
@@ -65,8 +68,8 @@ export const STARTER_MJML = `<mjml>
     </mj-section>
     <mj-section background-color="#FFFFFF" padding="16px 24px 28px" border-top="1px solid #F2EBE2">
       <mj-column>
-        <mj-text align="center" font-family="${FONT}" font-size="12px" line-height="20px" color="${BRAND.muted}">{{ user.physicalAddress | default: "382 NE 191st St, Miami, FL 33179" }}</mj-text>
-        <mj-text align="center" font-family="${FONT}" font-size="12px" line-height="20px" color="${BRAND.teal}"><a href="{% unsubscribe_url %}" target="_blank" style="color:${BRAND.teal};text-decoration:underline;">Unsubscribe</a></mj-text>
+        <mj-text align="center" font-family="${VISUAL_FONT}" font-size="12px" line-height="20px" color="${VISUAL_BRAND.muted}">{{ user.physicalAddress | default: "382 NE 191st St, Miami, FL 33179" }}</mj-text>
+        <mj-text align="center" font-family="${VISUAL_FONT}" font-size="12px" line-height="20px" color="${VISUAL_BRAND.teal}"><a href="{% unsubscribe_url %}" target="_blank" style="color:${VISUAL_BRAND.teal};text-decoration:underline;">Unsubscribe</a></mj-text>
       </mj-column>
     </mj-section>
   </mj-body>
@@ -101,15 +104,16 @@ export function hasUnsubscribeLink(mjmlOrHtml: string): boolean {
  * - `design`: reopen the saved visual design (body still matches it).
  * - `stale`: a visual design exists but body was changed elsewhere (Code tab, AI).
  * - `importMjml`: no design yet, but body is MJML we can open visually.
+ * - `importHtml`: no design yet and body is hand-written HTML (e.g. pasted from
+ *   Mautic); it can be opened in the HTML visual editor after a risk check.
  * - `blank`: no design and no body — start from the starter template.
- * - `customHtml`: body is hand-written HTML; we never auto-convert it.
  */
 export type VisualOpenState =
   | "design"
   | "stale"
   | "importMjml"
-  | "blank"
-  | "customHtml";
+  | "importHtml"
+  | "blank";
 
 function normalize(value: string | undefined | null): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
@@ -125,21 +129,36 @@ export function visualOpenState(
       : "stale";
   }
   if (!draft.body.trim()) return "blank";
-  return isMjmlBody(draft.body) ? "importMjml" : "customHtml";
+  return isMjmlBody(draft.body) ? "importMjml" : "importHtml";
 }
 
+/** Which editor a saved design belongs to (designs before HTML mode are MJML). */
+export function visualDesignEditor(
+  design: Pick<VisualEmailDesign, "editor"> | null | undefined,
+): VisualEmailEditorKind {
+  return design?.editor === VISUAL_HTML_EDITOR_ID
+    ? VISUAL_HTML_EDITOR_ID
+    : VISUAL_EDITOR_ID;
+}
+
+/**
+ * `mjml` is the exact body the editor wrote — MJML for `grapesjs-mjml`, the
+ * full HTML document for `grapesjs-html` (field name kept for compatibility).
+ */
 export function buildVisualDesign({
   project,
   mjml,
+  editor = VISUAL_EDITOR_ID,
   now = new Date(),
 }: {
   project: Record<string, unknown>;
   mjml: string;
+  editor?: VisualEmailEditorKind;
   now?: Date;
 }): VisualEmailDesign {
   return {
     version: 1,
-    editor: VISUAL_EDITOR_ID,
+    editor,
     project,
     mjml,
     updatedAt: now.toISOString(),
@@ -147,8 +166,9 @@ export function buildVisualDesign({
 }
 
 /**
- * Apply a visual-editor save to a Code email draft. `body` becomes the MJML the
- * editor produced (the send pipeline renders Liquid, then compiles MJML), and
+ * Apply a visual-editor save to a Code email draft. `body` becomes what the
+ * editor produced — MJML or HTML (the send pipeline renders Liquid, then
+ * compiles MJML only when the body is MJML; HTML is sent as rendered), and
  * AI composer blocks are cleared so the composer can't rebuild body over it.
  */
 export function applyVisualSave<T extends CodeEmailContents>(

@@ -20,10 +20,42 @@ import {
   isMjmlBody,
   STARTER_MJML,
   VISUAL_EMAIL_VARIABLES,
+  VISUAL_HTML_EDITOR_ID,
+  visualDesignEditor,
   VisualOpenState,
   visualOpenState,
 } from "./visualEmailDesign";
-import { visualDesignWarnings } from "./visualEmailWarnings";
+import {
+  applyShellToCanvas,
+  detectHtmlImportRisks,
+  exportHtmlDocument,
+  HTML_BLOCKS,
+  HtmlImportRisk,
+  HtmlShell,
+  importHtmlIntoEditor,
+  splitHtmlDocument,
+} from "./visualEmailHtml";
+import {
+  visualDesignWarnings,
+  visualHtmlWarnings,
+} from "./visualEmailWarnings";
+
+type StartSource = "design" | "mjml" | "html" | "starter";
+type EditorMode = "mjml" | "html";
+
+function editorModeFor(
+  source: StartSource,
+  design: CodeEmailContents["visualDesign"],
+): EditorMode {
+  if (source === "html") return "html";
+  if (
+    source === "design" &&
+    visualDesignEditor(design) === VISUAL_HTML_EDITOR_ID
+  ) {
+    return "html";
+  }
+  return "mjml";
+}
 
 const SYNC_DEBOUNCE_MS = 700;
 
@@ -36,10 +68,28 @@ export interface VisualEmailEditorProps {
   workspaceId: string | null;
   baseApiUrl: string;
   authHeaders: Record<string, string>;
+  /** Switch the template editor to its Code tab. */
+  onOpenCode?: () => void;
 }
 
 function backupKey(templateId: string) {
   return `amie-visual-email-backup:${templateId}`;
+}
+
+function addMjmlBlocks(editor: Editor) {
+  editor.BlockManager.add("amie-4-columns", {
+    label: "4 Columns",
+    category: "Layout",
+    content: `<mj-section>${Array.from({ length: 4 })
+      .map(() => "<mj-column><mj-text>Column</mj-text></mj-column>")
+      .join("")}</mj-section>`,
+  });
+
+  editor.BlockManager.add("amie-table", {
+    label: "Table",
+    category: "Basic",
+    content: `<mj-text><table style="width:100%;border-collapse:collapse;font-size:14px;" cellpadding="8"><tr><th align="left" style="border-bottom:1px solid #E3DAD1;">Item</th><th align="right" style="border-bottom:1px solid #E3DAD1;">Price</th></tr><tr><td>Product name</td><td align="right">$0.00</td></tr></table></mj-text>`,
+  });
 }
 
 export default function VisualEmailEditor({
@@ -51,6 +101,7 @@ export default function VisualEmailEditor({
   workspaceId,
   baseApiUrl,
   authHeaders,
+  onOpenCode,
 }: VisualEmailEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<Editor | null>(null);
@@ -63,12 +114,21 @@ export default function VisualEmailEditor({
   const [started, setStarted] = useState(
     () => openState === "design" || openState === "blank",
   );
-  const [startSource, setStartSource] = useState<"design" | "mjml" | "starter">(
+  const [startSource, setStartSource] = useState<StartSource>(
     openState === "design" ? "design" : "starter",
   );
   const [pending, setPending] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [recovery, setRecovery] = useState<string | null>(null);
+  // HTML mode: risky content found before opening, awaiting the user's choice.
+  const [riskReview, setRiskReview] = useState<HtmlImportRisk[] | null>(null);
+  const [openedRisks, setOpenedRisks] = useState<HtmlImportRisk[]>([]);
+  // HTML mode: the preserved doctype/head/body tags around the edited content.
+  const shellRef = useRef<HtmlShell | null>(null);
+  // HTML mode never autosaves: edits wait for an explicit Save.
+  const dirtyRef = useRef(false);
+  const mode = editorModeFor(startSource, draft.visualDesign);
+  const modeRef = useRef(mode);
 
   // Reset when the template or draft/published view changes.
   useEffect(() => {
@@ -76,24 +136,53 @@ export default function VisualEmailEditor({
     setOpenState(state);
     setStarted(state === "design" || state === "blank");
     setStartSource(state === "design" ? "design" : "starter");
+    setRiskReview(null);
+    setOpenedRisks([]);
   }, [resetKey]);
+
+  /** Open the current HTML body visually, after showing any risky content. */
+  const requestHtmlOpen = useCallback(() => {
+    const risks = detectHtmlImportRisks(draftRef.current.body);
+    if (risks.length) {
+      setRiskReview(risks);
+      return;
+    }
+    setOpenedRisks([]);
+    setStartSource("html");
+    setStarted(true);
+  }, []);
 
   const flush = useCallback(() => {
     const editor = editorRef.current;
     if (!editor || disabled) return;
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = null;
-    const mjml = editor.getHtml();
     // GrapesJS ProjectData is a plain JSON object; we persist it opaquely.
     const project: Record<string, unknown> = JSON.parse(
       JSON.stringify(editor.getProjectData()),
     );
-    const design = buildVisualDesign({
-      project,
-      mjml,
-    });
-    setDraft((current) => applyVisualSave(current, design));
-    setWarnings(visualDesignWarnings(mjml));
+    if (modeRef.current === "html") {
+      const shell = shellRef.current;
+      if (!shell) return;
+      const html = exportHtmlDocument(editor, shell);
+      const design = buildVisualDesign({
+        project,
+        mjml: html,
+        editor: VISUAL_HTML_EDITOR_ID,
+      });
+      setDraft((current) => applyVisualSave(current, design));
+      setWarnings(visualHtmlWarnings(html));
+      editor.clearDirtyCount();
+      dirtyRef.current = false;
+    } else {
+      const mjml = editor.getHtml();
+      const design = buildVisualDesign({
+        project,
+        mjml,
+      });
+      setDraft((current) => applyVisualSave(current, design));
+      setWarnings(visualDesignWarnings(mjml));
+    }
     setPending(false);
     try {
       window.localStorage.removeItem(backupKey(templateId));
@@ -104,8 +193,10 @@ export default function VisualEmailEditor({
 
   const schedule = useCallback(() => {
     if (disabled) return;
-    setPending(true);
     const editor = editorRef.current;
+    // Loading content can emit updates; only real edits count in HTML mode.
+    if (modeRef.current === "html" && editor && !editor.getDirtyCount()) return;
+    setPending(true);
     if (editor) {
       try {
         window.localStorage.setItem(
@@ -116,6 +207,10 @@ export default function VisualEmailEditor({
         // ignore quota/private-mode errors
       }
     }
+    if (modeRef.current === "html") {
+      dirtyRef.current = true;
+      return;
+    }
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(flush, SYNC_DEBOUNCE_MS);
   }, [disabled, flush, templateId]);
@@ -123,7 +218,7 @@ export default function VisualEmailEditor({
   // Warn before leaving with an unsynced change.
   useEffect(() => {
     const handler = (event: BeforeUnloadEvent) => {
-      if (!timerRef.current) return;
+      if (!timerRef.current && !dirtyRef.current) return;
       event.preventDefault();
       // eslint-disable-next-line no-param-reassign
       event.returnValue = "";
@@ -136,6 +231,10 @@ export default function VisualEmailEditor({
     if (!started || !containerRef.current) return undefined;
     const { current } = draftRef;
     const design = startSource === "design" ? current.visualDesign : null;
+    const htmlMode =
+      editorModeFor(startSource, current.visualDesign) === "html";
+    modeRef.current = htmlMode ? "html" : "mjml";
+    dirtyRef.current = false;
     const editor = grapesjs.init({
       container: containerRef.current,
       height: "100%",
@@ -143,13 +242,18 @@ export default function VisualEmailEditor({
       fromElement: false,
       storageManager: false,
       undoManager: { trackSelection: false },
-      plugins: [
-        (e: Editor) =>
-          grapesjsMjml(e, {
-            imagePlaceholderSrc: AMIE_PLACEHOLDER_IMAGE_URL,
-            columnsPadding: "0px",
-          }),
-      ],
+      // HTML mode: no GrapesJS page CSS (box-sizing etc.) — the canvas should
+      // look like the email does in a client.
+      ...(htmlMode ? { protectedCss: "" } : {}),
+      plugins: htmlMode
+        ? []
+        : [
+            (e: Editor) =>
+              grapesjsMjml(e, {
+                imagePlaceholderSrc: AMIE_PLACEHOLDER_IMAGE_URL,
+                columnsPadding: "0px",
+              }),
+          ],
       assetManager: {
         upload: false,
         autoAdd: true,
@@ -185,7 +289,42 @@ export default function VisualEmailEditor({
 
     let loadedDesign = false;
     let loadWarning: string | null = null;
-    if (design?.project) {
+    if (htmlMode) {
+      // Body content goes into GrapesJS; doctype/head/body tags are kept aside.
+      let split = splitHtmlDocument(design ? design.mjml : current.body);
+      if (design?.project) {
+        try {
+          const project: Record<string, unknown> = JSON.parse(
+            JSON.stringify(design.project),
+          );
+          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+          editor.loadProjectData(project as never);
+          loadedDesign = true;
+        } catch {
+          loadWarning =
+            "The saved visual design couldn't be loaded, so the email's current HTML was opened instead";
+          split = splitHtmlDocument(current.body);
+          setOpenedRisks(detectHtmlImportRisks(current.body));
+        }
+      }
+      if (!loadedDesign) importHtmlIntoEditor(editor, split);
+      const { shell } = split;
+      shellRef.current = shell;
+      const injectDocumentCss = () => {
+        // null until the frame exists; canvas:frame:load runs this again
+        const doc = editor.Canvas.getDocument();
+        if (doc) applyShellToCanvas(doc, shell);
+      };
+      editor.on("canvas:frame:load", injectDocumentCss);
+      editor.onReady(() => {
+        injectDocumentCss();
+        editor.clearDirtyCount();
+      });
+      HTML_BLOCKS.forEach(({ id, ...block }) =>
+        editor.BlockManager.add(id, block),
+      );
+      editor.clearDirtyCount();
+    } else if (design?.project) {
       try {
         // The draft store freezes state and GrapesJS mutates project data
         // while loading it, so hand it a private copy.
@@ -200,8 +339,8 @@ export default function VisualEmailEditor({
           "The saved visual design couldn't be loaded, so the email's current MJML was opened instead";
       }
     }
-    if (loadedDesign) {
-      // design restored above
+    if (loadedDesign || htmlMode) {
+      // design restored / HTML imported above
     } else if (design?.project && isMjmlBody(current.body)) {
       editor.setComponents(expandSelfClosingMjml(current.body));
     } else if (startSource === "mjml" && current.body) {
@@ -244,19 +383,7 @@ export default function VisualEmailEditor({
       },
     ]);
 
-    editor.BlockManager.add("amie-4-columns", {
-      label: "4 Columns",
-      category: "Layout",
-      content: `<mj-section>${Array.from({ length: 4 })
-        .map(() => "<mj-column><mj-text>Column</mj-text></mj-column>")
-        .join("")}</mj-section>`,
-    });
-
-    editor.BlockManager.add("amie-table", {
-      label: "Table",
-      category: "Basic",
-      content: `<mj-text><table style="width:100%;border-collapse:collapse;font-size:14px;" cellpadding="8"><tr><th align="left" style="border-bottom:1px solid #E3DAD1;">Item</th><th align="right" style="border-bottom:1px solid #E3DAD1;">Price</th></tr><tr><td>Product name</td><td align="right">$0.00</td></tr></table></mj-text>`,
-    });
+    if (!htmlMode) addMjmlBlocks(editor);
 
     if (workspaceId) {
       void axios
@@ -288,10 +415,15 @@ export default function VisualEmailEditor({
       // ignore
     }
 
-    const mjmlWarnings = visualDesignWarnings(editor.getHtml());
-    setWarnings(loadWarning ? [loadWarning, ...mjmlWarnings] : mjmlWarnings);
+    const contentWarnings = htmlMode
+      ? visualHtmlWarnings(design && loadedDesign ? design.mjml : current.body)
+      : visualDesignWarnings(editor.getHtml());
+    setWarnings(
+      loadWarning ? [loadWarning, ...contentWarnings] : contentWarnings,
+    );
     // Starting from MJML or the starter writes the first design immediately.
-    if (!design && !disabled) flush();
+    // HTML mode never writes on open: only the Save button changes the body.
+    if (!design && !disabled && !htmlMode) flush();
     editor.on("update", schedule);
 
     return () => {
@@ -302,6 +434,8 @@ export default function VisualEmailEditor({
       editor.off("update", schedule);
       editor.destroy();
       editorRef.current = null;
+      shellRef.current = null;
+      dirtyRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [started, startSource, resetKey]);
@@ -323,8 +457,62 @@ export default function VisualEmailEditor({
   if (disabled) {
     statusLabel =
       "Viewing the published version — switch to the draft to edit.";
+  } else if (pending && mode === "html") {
+    statusLabel = "Unsaved changes — click Save to update the email";
   } else if (pending) {
     statusLabel = "Unsaved changes…";
+  } else if (mode === "html") {
+    statusLabel = "No unsaved changes. Edits reach the email when you click Save.";
+  }
+
+  if (!started && riskReview) {
+    return (
+      <Stack spacing={2} sx={{ p: 3, maxWidth: 720 }}>
+        <Typography variant="h6">
+          Some of this email may not survive the visual editor
+        </Typography>
+        <Typography color="text.secondary">
+          The visual editor would drop, move or rewrite these parts of the email
+          body when you save. Opening it changes nothing; the body is only
+          rewritten when you click Save in the editor. The email&apos;s head
+          (styles, meta tags, title) is always kept exactly.
+        </Typography>
+        <Box component="ul" sx={{ m: 0, pl: 3 }}>
+          {riskReview.map((risk) => (
+            <li key={risk.id}>
+              <Typography>{risk.message}</Typography>
+            </li>
+          ))}
+        </Box>
+        <Stack direction="row" spacing={1}>
+          {onOpenCode ? (
+            <Button
+              variant="contained"
+              onClick={() => {
+                setRiskReview(null);
+                onOpenCode();
+              }}
+            >
+              Keep editing in the Code tab
+            </Button>
+          ) : null}
+          <Button
+            variant="outlined"
+            color="warning"
+            disabled={disabled}
+            onClick={() => {
+              setOpenedRisks(riskReview);
+              setRiskReview(null);
+              setStartSource("html");
+              setStarted(true);
+            }}
+          >
+            Open in visual editor anyway
+          </Button>
+          <Button onClick={() => setRiskReview(null)}>Cancel</Button>
+        </Stack>
+      </Stack>
+    );
   }
 
   if (!started) {
@@ -352,32 +540,44 @@ export default function VisualEmailEditor({
             </Button>
           </>
         ) : null}
-        {openState === "customHtml" ? (
+        {openState === "importHtml" ? (
           <>
-            <Typography variant="h6">This email is custom HTML</Typography>
-            <Typography color="text.secondary">
-              It was written as HTML (Code tab or the AI composer), so it
-              can&apos;t be converted into visual blocks without losing parts of
-              it. You can keep editing it in the Code tab, or start a new visual
-              design, which replaces the current body.
+            <Typography variant="h6">
+              Open this HTML email in the visual editor
             </Typography>
-            <Button
-              variant="outlined"
-              color="warning"
-              disabled={disabled}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    "Start a new visual design? This replaces the current email body.",
-                  )
-                ) {
-                  setStartSource("starter");
-                  setStarted(true);
-                }
-              }}
-            >
-              Start a new visual design
-            </Button>
+            <Typography color="text.secondary">
+              This template is HTML (for example, pasted from Mautic). It can be
+              opened as editable blocks. The doctype, head styles, meta tags and
+              title are kept exactly, and CSS is inlined when you save. Opening
+              it doesn&apos;t change anything — the body is only rewritten when
+              you click Save in the editor.
+            </Typography>
+            <Stack direction="row" spacing={1}>
+              <Button
+                variant="contained"
+                disabled={disabled}
+                onClick={requestHtmlOpen}
+              >
+                Open in visual editor
+              </Button>
+              <Button
+                variant="outlined"
+                color="warning"
+                disabled={disabled}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      "Start a new visual design? This replaces the current email body.",
+                    )
+                  ) {
+                    setStartSource("starter");
+                    setStarted(true);
+                  }
+                }}
+              >
+                Start a new visual design
+              </Button>
+            </Stack>
           </>
         ) : null}
         {openState === "stale" ? (
@@ -394,6 +594,10 @@ export default function VisualEmailEditor({
                 variant="contained"
                 disabled={disabled}
                 onClick={() => {
+                  if (!isMjmlBody(draftRef.current.body)) {
+                    requestHtmlOpen();
+                    return;
+                  }
                   setStartSource("mjml");
                   setStarted(true);
                 }}
@@ -441,6 +645,16 @@ export default function VisualEmailEditor({
             Add an unsubscribe link before sending
           </Typography>
         ) : null}
+        {mode === "html" ? (
+          <Button
+            size="small"
+            variant={pending ? "contained" : "outlined"}
+            disabled={Boolean(disabled) || !pending}
+            onClick={flush}
+          >
+            Save
+          </Button>
+        ) : null}
       </Stack>
       {recovery ? (
         <Alert
@@ -462,6 +676,16 @@ export default function VisualEmailEditor({
       {warnings.length ? (
         <Alert severity="warning" sx={{ py: 0 }}>
           {warnings.join(" · ")}
+        </Alert>
+      ) : null}
+      {mode === "html" && openedRisks.length ? (
+        <Alert
+          severity="warning"
+          sx={{ py: 0 }}
+          onClose={() => setOpenedRisks([])}
+        >
+          Opened with content the editor may change on save:{" "}
+          {openedRisks.map((risk) => risk.message).join(" ")}
         </Alert>
       ) : null}
       <Box

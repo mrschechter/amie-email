@@ -1,7 +1,10 @@
 import { hasUnsubscribeLink } from "./visualEmailDesign";
 
-function attr(tag: string, name: string): string | null {
-  const match = new RegExp(`\\s${name}\\s*=\\s*"([^"]*)"`, "i").exec(tag);
+function attr(tag: string, name: string, quote = '"'): string | null {
+  const match = new RegExp(
+    `\\s${name}\\s*=\\s*${quote}([^${quote}]*)${quote}`,
+    "i",
+  ).exec(tag);
   return match ? match[1] ?? "" : null;
 }
 
@@ -36,6 +39,41 @@ export function visualDesignWarnings(mjml: string): string[] {
     );
   }
   if (mjml.trim() && !hasUnsubscribeLink(mjml)) {
+    warnings.push("No unsubscribe link");
+  }
+  return warnings;
+}
+
+/** Pre-send checks for HTML-mode designs (same spirit as the MJML checks). */
+export function visualHtmlWarnings(html: string): string[] {
+  const warnings: string[] = [];
+  // Only the body is content; <head> holds meta/title/style.
+  const body = html
+    .replace(/<head\b[\s\S]*?<\/head>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "");
+  const images = body.match(/<img\b[^>]*>/gi) ?? [];
+  const missingAlt = images.filter(
+    (tag) => attr(tag, "alt") === null && attr(tag, "alt", "'") === null,
+  ).length;
+  if (missingAlt) {
+    warnings.push(
+      `${missingAlt} image${missingAlt === 1 ? "" : "s"} missing alt text`,
+    );
+  }
+  const links = body.match(/<a\b[^>]*>/gi) ?? [];
+  const deadLinks = links.filter((tag) => {
+    const href = (attr(tag, "href") ?? attr(tag, "href", "'"))?.trim();
+    return href === "" || href === "#";
+  }).length;
+  if (deadLinks) {
+    warnings.push(
+      `${deadLinks} link${deadLinks === 1 ? "" : "s"} without a destination`,
+    );
+  }
+  if (/\{\{\s*\}\}/.test(body)) {
+    warnings.push("An empty {{ }} variable will render blank");
+  }
+  if (html.trim() && !hasUnsubscribeLink(html)) {
     warnings.push("No unsubscribe link");
   }
   return warnings;
