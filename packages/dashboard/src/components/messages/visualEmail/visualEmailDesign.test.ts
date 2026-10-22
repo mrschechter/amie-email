@@ -3,6 +3,7 @@ import { CodeEmailContents, EmailContentsType } from "isomorphic-lib/src/types";
 import {
   applyVisualSave,
   buildVisualDesign,
+  expandSelfClosingMjml,
   hasUnsubscribeLink,
   isMjmlBody,
   STARTER_MJML,
@@ -19,6 +20,23 @@ describe("visual email design helpers", () => {
     expect(STARTER_MJML).toContain('{{ user.firstName | default: "there" }}');
     expect(hasUnsubscribeLink(STARTER_MJML)).toBe(true);
     expect(visualDesignWarnings(STARTER_MJML)).toEqual([]);
+    // the canvas can't render self-closing tags or mj-attributes faithfully
+    expect(STARTER_MJML).not.toMatch(/\/>/);
+    expect(STARTER_MJML).not.toContain("mj-attributes");
+  });
+
+  it("expands self-closing MJML tags so following blocks aren't nested inside them", () => {
+    expect(
+      expandSelfClosingMjml(
+        '<mj-column><mj-image src="a.png" alt="x > y" /><mj-text>Hi</mj-text><mj-divider/></mj-column>',
+      ),
+    ).toBe(
+      '<mj-column><mj-image src="a.png" alt="x > y"></mj-image><mj-text>Hi</mj-text><mj-divider></mj-divider></mj-column>',
+    );
+    // HTML void tags inside mj-text are left alone
+    expect(expandSelfClosingMjml("<mj-text>a<br />b</mj-text>")).toBe(
+      "<mj-text>a<br />b</mj-text>",
+    );
   });
 
   it("only offers Liquid forms Amie Send renders", () => {
@@ -92,6 +110,13 @@ describe("visual email design helpers", () => {
       "1 button without a link",
       "An empty {{ }} variable will render blank",
       "No unsubscribe link",
+    ]);
+    expect(
+      visualDesignWarnings(
+        '<mjml><mj-head><mj-attributes><mj-all font-family="Arial"></mj-all></mj-attributes></mj-head><mj-body><mj-text><a href="{% unsubscribe_url %}">u</a></mj-text></mj-body></mjml>',
+      ),
+    ).toEqual([
+      "Shared style defaults (mj-attributes) are applied when sent but not shown in the canvas",
     ]);
   });
 });

@@ -30,6 +30,11 @@ export function visualDesignWarnings(mjml: string): string[] {
   if (/\{\{\s*\}\}/.test(body)) {
     warnings.push("An empty {{ }} variable will render blank");
   }
+  if (/<mj-attributes\b/i.test(mjml)) {
+    warnings.push(
+      "Shared style defaults (mj-attributes) are applied when sent but not shown in the canvas",
+    );
+  }
   if (mjml.trim() && !hasUnsubscribeLink(mjml)) {
     warnings.push("No unsubscribe link");
   }
