@@ -22,6 +22,33 @@ import {
 
 export const TwilioRestException = RestException;
 
+export const TWILIO_WEBHOOK_PATH = "/api/public/webhooks/twilio";
+
+const UPSTREAM_HOSTED_HOST = "app.dittofeed.com";
+
+/**
+ * Public origin that Twilio status callbacks are sent to, and that the
+ * webhook handler reconstructs to validate X-Twilio-Signature. Both sides
+ * MUST use this function so the signed URL matches.
+ *
+ * Prefers the API base (DASHBOARD_API_BASE, which is how Amie Send is
+ * configured) over dashboardUrl: when DASHBOARD_URL is unset, dashboardUrl
+ * silently defaults to the upstream hosted https://app.dittofeed.com in
+ * production. Same precedence as subscription-management links.
+ */
+export function getTwilioWebhookPublicBaseUrl(): string {
+  const { apiBase, dashboardUrl } = config();
+  return (apiBase || dashboardUrl).replace(/\/+$/, "");
+}
+
+function isUpstreamHostedBaseUrl(baseUrl: string): boolean {
+  try {
+    return new URL(baseUrl).hostname === UPSTREAM_HOSTED_HOST;
+  } catch {
+    return true;
+  }
+}
+
 export interface PhoneNumberSender {
   from: string;
 }
@@ -74,14 +101,25 @@ export async function sendSms({
   try {
     let statusCallback: string | undefined;
     if (!disableCallback) {
-      const baseCallbackUrl = `${config().dashboardUrl}/api/public/webhooks/twilio`;
-      const queryParams = qs.stringify({
-        ...omitBy(tags, (_v, key) => key === "channel"),
-        subscriptionGroupId,
-        userId,
-        workspaceId,
-      });
-      statusCallback = `${baseCallbackUrl}?${queryParams}`;
+      const publicBaseUrl = getTwilioWebhookPublicBaseUrl();
+      if (isUpstreamHostedBaseUrl(publicBaseUrl)) {
+        // Never hand Twilio a callback on the upstream hosted Dittofeed
+        // domain: it is not ours, rejects the callback (503) and would receive
+        // our user/workspace ids. Twilio then falls back to the messaging
+        // service's own status callback, if any.
+        logger().warn(
+          { workspaceId, publicBaseUrl },
+          "Skipping Twilio status callback: public API base URL is not configured (set DASHBOARD_API_BASE or DASHBOARD_URL).",
+        );
+      } else {
+        const queryParams = qs.stringify({
+          ...omitBy(tags, (_v, key) => key === "channel"),
+          subscriptionGroupId,
+          userId,
+          workspaceId,
+        });
+        statusCallback = `${publicBaseUrl}${TWILIO_WEBHOOK_PATH}?${queryParams}`;
+      }
     }
 
     const createPayload = {
@@ -123,18 +161,26 @@ export async function submitTwilioEvents({
 
   switch (TwilioEvent.SmsStatus) {
     case TwilioMessageStatus.Failed:
+    case TwilioMessageStatus.Undelivered:
       eventName = InternalEventType.SmsFailed;
       break;
     case TwilioMessageStatus.Delivered:
-      // TODO wrong
       eventName = InternalEventType.SmsDelivered;
       break;
+    case TwilioMessageStatus.Queued:
+    case TwilioMessageStatus.Sending:
+    case TwilioMessageStatus.Sent:
+    case TwilioMessageStatus.Accepted:
+    case TwilioMessageStatus.Scheduled:
+      // Intermediate states: Twilio calls back again with the final status.
+      return ok(undefined);
     default:
       logger().error(
         {
           workspaceId,
           userId,
-          TwilioEvent,
+          smsStatus: TwilioEvent.SmsStatus,
+          messageSid: TwilioEvent.MessageSid,
         },
         "Unhandled Twilio event type",
       );
@@ -162,6 +208,11 @@ export async function submitTwilioEvents({
       userId,
       body,
       ...tags,
+      twilioStatus: TwilioEvent.SmsStatus,
+      twilioMessageSid: TwilioEvent.MessageSid,
+      ...(TwilioEvent.ErrorCode
+        ? { twilioErrorCode: TwilioEvent.ErrorCode }
+        : {}),
     },
   } as BatchTrackData;
 

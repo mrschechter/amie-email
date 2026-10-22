@@ -269,6 +269,7 @@ export const TwilioEventSms = Type.Object({
   AccountSid: Type.String(),
   From: Type.String(),
   ApiVersion: Type.String(),
+  ErrorCode: Type.Optional(Type.String()),
 });
 
 export type TwilioInboundSchema = Static<typeof TwilioEventSms>;

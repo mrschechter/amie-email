@@ -16,7 +16,10 @@ import { submitMailChimpEvents } from "backend-lib/src/destinations/mailchimp";
 import { submitPostmarkEvents } from "backend-lib/src/destinations/postmark";
 import { submitResendEvents } from "backend-lib/src/destinations/resend";
 import { handleSendgridEvents } from "backend-lib/src/destinations/sendgrid";
-import { submitTwilioEvents } from "backend-lib/src/destinations/twilio";
+import {
+  getTwilioWebhookPublicBaseUrl,
+  submitTwilioEvents,
+} from "backend-lib/src/destinations/twilio";
 import logger from "backend-lib/src/logger";
 import { withSpan } from "backend-lib/src/openTelemetry";
 import {
@@ -578,7 +581,7 @@ export default async function webhookController(fastify: FastifyInstance) {
       const verified = validateRequest(
         twilioSecret.authToken,
         request.headers["x-twilio-signature"],
-        `${backendConfig().dashboardUrl}${request.url}`,
+        `${getTwilioWebhookPublicBaseUrl()}${request.url}`,
         request.body,
       );
 
