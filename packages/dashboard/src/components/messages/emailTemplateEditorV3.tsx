@@ -36,6 +36,7 @@ import {
   MessageTemplateResourceDraft,
   ResourceTypeEnum,
 } from "isomorphic-lib/src/types";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import React, {
   FormEvent,
@@ -62,6 +63,12 @@ import {
 import ImageAssetsPanel from "./imageAssetsPanel";
 import useDraftHistory from "./useDraftHistory";
 
+// GrapesJS touches window/document, so it only ever loads in the browser.
+const VisualEmailEditor = dynamic(
+  () => import("./visualEmail/visualEmailEditor"),
+  { ssr: false },
+);
+
 const COLORS = {
   page: "#FAF8F5",
   text: "#4A4A4A",
@@ -79,7 +86,7 @@ const COLORS = {
   success: "#5F7350",
 };
 
-type EditorTab = "compose" | "code" | "settings";
+type EditorTab = "visual" | "compose" | "code" | "settings";
 type PreviewWidth = "desktop" | "mobile";
 type ConversationMessage = NonNullable<
   AmieComposeRequest["conversation"]
@@ -566,7 +573,13 @@ export default function EmailTemplateEditorV3({
   const { workspace } = useAppStorePick(["workspace"]);
   const composerConfig = useAmieComposerConfigQuery();
   const createTemplate = useMessageTemplateUpdateMutation();
-  const [tab, setTab] = useState<EditorTab>("compose");
+  const [tab, setTab] = useState<EditorTab>(() =>
+    isCodeEmailDraft(draft) && draft.visualDesign ? "visual" : "compose",
+  );
+  const [visualMounted, setVisualMounted] = useState(tab === "visual");
+  useEffect(() => {
+    if (tab === "visual") setVisualMounted(true);
+  }, [tab]);
   const [previewWidth, setPreviewWidth] = useState<PreviewWidth>("desktop");
   const [input, setInput] = useState("");
   const [conversation, setConversation] = useState<DisplayMessage[]>([]);
@@ -1141,7 +1154,7 @@ export default function EmailTemplateEditorV3({
             <span>
               <IconButton
                 aria-label="Undo"
-                disabled={disabled || !canUndo}
+                disabled={disabled || !canUndo || tab === "visual"}
                 onClick={undo}
                 sx={{ color: COLORS.teal, borderRadius: "8px" }}
               >
@@ -1153,7 +1166,7 @@ export default function EmailTemplateEditorV3({
             <span>
               <IconButton
                 aria-label="Redo"
-                disabled={disabled || !canRedo}
+                disabled={disabled || !canRedo || tab === "visual"}
                 onClick={redo}
                 sx={{ color: COLORS.teal, borderRadius: "8px" }}
               >
@@ -1225,6 +1238,7 @@ export default function EmailTemplateEditorV3({
             label="Editor tab"
             value={tab}
             options={[
+              { value: "visual", label: "Visual" },
               { value: "compose", label: "Compose" },
               { value: "code", label: "Code" },
               { value: "settings", label: "Settings" },
@@ -1243,8 +1257,39 @@ export default function EmailTemplateEditorV3({
         </Stack>
 
         <Box
+          data-testid="visual-editor-panel"
           sx={{
-            display: "grid",
+            display: tab === "visual" ? "block" : "none",
+            height: 860,
+          }}
+        >
+          {visualMounted && emailDraft ? (
+            <VisualEmailEditor
+              templateId={templateId}
+              draft={emailDraft}
+              setDraft={(update) =>
+                setDraft((current) =>
+                  isCodeEmailDraft(current)
+                    ? { ...current, ...update(current) }
+                    : current,
+                )
+              }
+              disabled={disabled || !viewDraft}
+              resetKey={`${templateId}:${viewDraft}`}
+              workspaceId={workspaceId}
+              baseApiUrl={baseApiUrl}
+              authHeaders={authHeaders}
+            />
+          ) : null}
+          {visualMounted && !emailDraft ? (
+            <Typography sx={{ p: 3, color: COLORS.muted }}>
+              The visual editor works with HTML/MJML email templates.
+            </Typography>
+          ) : null}
+        </Box>
+        <Box
+          sx={{
+            display: tab === "visual" ? "none" : "grid",
             gridTemplateColumns: {
               xs: "1fr",
               lg: "420px minmax(0,1fr)",
