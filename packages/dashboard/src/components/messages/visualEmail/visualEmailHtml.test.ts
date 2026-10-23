@@ -10,6 +10,7 @@ import {
   MAUTIC_HEAD,
   MAUTIC_TAIL,
 } from "./__fixtures__/mauticEmail";
+import { configureHtmlModeComponents } from "./visualEmailComponents";
 import {
   applyVisualSave,
   buildVisualDesign,
@@ -39,6 +40,7 @@ function newEditor(): Editor {
     storageManager: false,
     protectedCss: "",
   });
+  configureHtmlModeComponents(editor);
   editors.push(editor);
   return editor;
 }
