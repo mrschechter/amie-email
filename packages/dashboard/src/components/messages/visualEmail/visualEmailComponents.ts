@@ -7,6 +7,8 @@
  */
 import type { Component, Editor } from "grapesjs";
 
+import { installFriendlyNames } from "./visualEmailNames";
+
 const LINK_TARGET_OPTIONS = [
   { id: "_blank", label: "New tab" },
   { id: "", label: "Same tab" },
@@ -455,4 +457,5 @@ export function configureHtmlModeComponents(editor: Editor): void {
   installTextCells(editor);
   installImageSettings(editor, "html");
   installBlockPlacement(editor);
+  installFriendlyNames(editor);
 }

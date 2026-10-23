@@ -499,68 +499,111 @@ export function exportHtmlDocument(editor: Editor, shell: HtmlShell): string {
 const TEXT_STYLE = `font-family:${VISUAL_FONT};font-size:16px;line-height:26px;color:${VISUAL_BRAND.text};margin:0 0 16px;`;
 
 /** Email-safe HTML blocks for HTML mode (tables for layout, inline styles). */
+/**
+ * Block-panel icon: inline SVG in the same style as grapesjs-mjml's blocks
+ * (24x24 Material Design Icons paths, `currentColor`). No icon font or
+ * external file, so it always renders.
+ */
+function blockIcon(path: string): string {
+  return `<svg viewBox="0 0 24 24"><path fill="currentColor" d="${path}"/></svg>`;
+}
+
+const BLOCK_ICONS: Record<string, string> = {
+  "amie-html-section":
+    "M2 20h20V4H2v16Zm-1 0V4a1 1 0 0 1 1-1h20a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1Z",
+  "amie-html-2-columns":
+    "M2 20h8V4H2v16Zm-1 0V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1ZM13 20h8V4h-8v16Zm-1 0V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1Z",
+  "amie-html-heading":
+    "M3,4H5V10H9V4H11V18H9V12H5V18H3V4M14,18V16H16V6.31L13.5,7.75V5.44L16,4H18V16H20V18H14Z",
+  "amie-html-text":
+    "M18.5,4L19.66,8.35L18.7,8.61C18.25,7.74 17.79,6.87 17.26,6.43C16.73,6 16.11,6 15.5,6H13V16.5C13,17 13,17.5 13.33,17.75C13.67,18 14.33,18 15,18V19H9V18C9.67,18 10.33,18 10.67,17.75C11,17.5 11,17 11,16.5V6H8.5C7.89,6 7.27,6 6.74,6.43C6.21,6.87 5.75,7.74 5.3,8.61L4.34,8.35L5.5,4H18.5Z",
+  "amie-html-image":
+    "M21,3H3C2,3 1,4 1,5V19A2,2 0 0,0 3,21H21C22,21 23,20 23,19V5C23,4 22,3 21,3M5,17L8.5,12.5L11,15.5L14.5,11L19,17H5Z",
+  "amie-html-button":
+    "M20 20.5C20 21.3 19.3 22 18.5 22H13C12.6 22 12.3 21.9 12 21.6L8 17.4L8.7 16.6C8.9 16.4 9.2 16.3 9.5 16.3H9.7L12 18V9C12 8.4 12.4 8 13 8S14 8.4 14 9V13.5L15.2 13.6L19.1 15.8C19.6 16 20 16.6 20 17.1V20.5M20 2H4C2.9 2 2 2.9 2 4V12C2 13.1 2.9 14 4 14H8V12H4V4H20V12H18V14H20C21.1 14 22 13.1 22 12V4C22 2.9 21.1 2 20 2Z",
+  "amie-html-link":
+    "M10.59,13.41C11,13.8 11,14.44 10.59,14.83C10.2,15.22 9.56,15.22 9.17,14.83C7.22,12.88 7.22,9.71 9.17,7.76V7.76L12.71,4.22C14.66,2.27 17.83,2.27 19.78,4.22C21.73,6.17 21.73,9.34 19.78,11.29L18.29,12.78C18.3,11.96 18.17,11.14 17.89,10.36L18.36,9.88C19.54,8.71 19.54,6.81 18.36,5.64C17.19,4.46 15.29,4.46 14.12,5.64L10.59,9.17C9.41,10.34 9.41,12.24 10.59,13.41M13.41,9.17C13.8,8.78 14.44,8.78 14.83,9.17C16.78,11.12 16.78,14.29 14.83,16.24V16.24L11.29,19.78C9.34,21.73 6.17,21.73 4.22,19.78C2.27,17.83 2.27,14.66 4.22,12.71L5.71,11.22C5.7,12.04 5.83,12.86 6.11,13.65L5.64,14.12C4.46,15.29 4.46,17.19 5.64,18.36C6.81,19.54 8.71,19.54 9.88,18.36L13.41,14.83C14.59,13.66 14.59,11.76 13.41,10.59C13,10.2 13,9.56 13.41,9.17Z",
+  "amie-html-divider":
+    "M21 18H2V20H21V18M19 10V14H4V10H19M20 8H3C2.45 8 2 8.45 2 9V15C2 15.55 2.45 16 3 16H20C20.55 16 21 15.55 21 15V9C21 8.45 20.55 8 20 8M21 4H2V6H21V4Z",
+  "amie-html-spacer":
+    "M8,18H11V15H2V13H22V15H13V18H16L12,22L8,18M12,2L8,6H11V9H2V11H22V9H13V6H16L12,2Z",
+  "amie-html-unsubscribe":
+    "M20 4H4C2.9 4 2 4.9 2 6V18C2 19.1 2.9 20 4 20H13.35C13.13 19.37 13 18.7 13 18L13 18H4V8L12 13L20 8V13.09C20.72 13.21 21.39 13.46 22 13.81V6C22 4.9 21.1 4 20 4M12 11L4 6H20L12 11M21.12 15.46L19 17.59L16.88 15.46L15.47 16.88L17.59 19L15.47 21.12L16.88 22.54L19 20.41L21.12 22.54L22.54 21.12L20.41 19L22.54 16.88L21.12 15.46Z",
+};
+
 export const HTML_BLOCKS: {
   id: string;
   label: string;
   category: string;
+  media: string;
   content: string;
 }[] = [
   {
     id: "amie-html-section",
+    media: blockIcon(BLOCK_ICONS["amie-html-section"] ?? ""),
     label: "Section",
     category: "Layout",
     content: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;"><tr><td style="padding:16px 24px;"><div style="${TEXT_STYLE}">Section content</div></td></tr></table>`,
   },
   {
     id: "amie-html-2-columns",
+    media: blockIcon(BLOCK_ICONS["amie-html-2-columns"] ?? ""),
     label: "2 Columns",
     category: "Layout",
     content: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td width="50%" valign="top" style="padding:8px 12px;"><div style="${TEXT_STYLE}">Left column</div></td><td width="50%" valign="top" style="padding:8px 12px;"><div style="${TEXT_STYLE}">Right column</div></td></tr></table>`,
   },
   {
     id: "amie-html-heading",
+    media: blockIcon(BLOCK_ICONS["amie-html-heading"] ?? ""),
     label: "Heading",
     category: "Basic",
     content: `<h2 style="font-family:Georgia, 'Times New Roman', serif;font-size:26px;line-height:32px;color:${VISUAL_BRAND.text};margin:0 0 16px;">Heading</h2>`,
   },
   {
     id: "amie-html-text",
+    media: blockIcon(BLOCK_ICONS["amie-html-text"] ?? ""),
     label: "Text",
     category: "Basic",
     content: `<div style="${TEXT_STYLE}">Write something here.</div>`,
   },
   {
     id: "amie-html-image",
+    media: blockIcon(BLOCK_ICONS["amie-html-image"] ?? ""),
     label: "Image",
     category: "Basic",
     content: `<img src="${AMIE_PLACEHOLDER_IMAGE_URL}" alt="Describe this image" width="552" style="display:block;width:100%;max-width:552px;height:auto;border:0;">`,
   },
   {
     id: "amie-html-button",
+    media: blockIcon(BLOCK_ICONS["amie-html-button"] ?? ""),
     label: "Button",
     category: "Basic",
     content: `<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:16px auto;"><tr><td style="border-radius:999px;background-color:${VISUAL_BRAND.teal};"><a href="${AMIE_HOME_URL}" target="_blank" style="display:inline-block;padding:14px 28px;font-family:${VISUAL_FONT};font-size:15px;font-weight:bold;color:#FFFFFF;text-decoration:none;border-radius:999px;">Shop now</a></td></tr></table>`,
   },
   {
     id: "amie-html-link",
+    media: blockIcon(BLOCK_ICONS["amie-html-link"] ?? ""),
     label: "Link",
     category: "Basic",
     content: `<a href="${AMIE_HOME_URL}" target="_blank" style="color:${VISUAL_BRAND.teal};text-decoration:underline;">Link text</a>`,
   },
   {
     id: "amie-html-divider",
+    media: blockIcon(BLOCK_ICONS["amie-html-divider"] ?? ""),
     label: "Divider",
     category: "Basic",
     content: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:16px 0;"><div style="border-top:1px solid #E3DAD1;font-size:0;line-height:0;">&nbsp;</div></td></tr></table>`,
   },
   {
     id: "amie-html-spacer",
+    media: blockIcon(BLOCK_ICONS["amie-html-spacer"] ?? ""),
     label: "Spacer",
     category: "Basic",
     content: `<div style="height:24px;line-height:24px;font-size:0;">&nbsp;</div>`,
   },
   {
     id: "amie-html-unsubscribe",
+    media: blockIcon(BLOCK_ICONS["amie-html-unsubscribe"] ?? ""),
     label: "Unsubscribe",
     category: "Basic",
     content: `<p style="font-family:${VISUAL_FONT};font-size:12px;line-height:20px;color:${VISUAL_BRAND.muted};text-align:center;margin:0;"><a href="{% unsubscribe_url %}" target="_blank" style="color:${VISUAL_BRAND.teal};text-decoration:underline;">Unsubscribe</a></p>`,
