@@ -571,7 +571,7 @@ export const HTML_BLOCKS: {
     media: blockIcon(BLOCK_ICONS["amie-html-image"] ?? ""),
     label: "Image",
     category: "Basic",
-    content: `<img src="${AMIE_PLACEHOLDER_IMAGE_URL}" alt="Describe this image" width="552" style="display:block;width:100%;max-width:552px;height:auto;border:0;">`,
+    content: `<img src="${AMIE_PLACEHOLDER_IMAGE_URL}" alt="Describe this image" width="552" style="display:block;margin:0 auto;width:100%;max-width:100%;height:auto;border:0;">`,
   },
   {
     id: "amie-html-button",

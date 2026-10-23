@@ -75,7 +75,12 @@ function hasHeight(
 }
 
 function isEmpty(component: Component): boolean {
-  return content(component).length === 0;
+  // GrapesJS keeps a text-only element's text in `content`, not as children
+  const ownText = String(component.get("content") ?? "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/\u00a0|&nbsp;/g, "")
+    .trim();
+  return content(component).length === 0 && !ownText;
 }
 
 function isSpacer(component: Component): boolean {
