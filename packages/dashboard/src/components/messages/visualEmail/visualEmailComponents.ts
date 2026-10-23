@@ -292,13 +292,51 @@ function isWrapper(component: Component, editor: Editor): boolean {
 }
 
 /** A container that only holds layout tables (besides `except`). */
+/**
+ * Siblings that don't take part in the layout: whitespace, comments (MSO
+ * conditionals), style/script, line breaks and hidden preheaders.
+ */
+function isIgnorable(component: Component): boolean {
+  const type = String(component.get("type") ?? "");
+  if (type === "textnode") {
+    return !String(component.get("content") ?? "")
+      .replace(/\u00a0/g, "")
+      .trim();
+  }
+  if (type === "comment") return true;
+  if (["style", "script", "meta", "link", "br"].includes(tagOf(component))) {
+    return true;
+  }
+  const style = component.getStyle();
+  const display = String(style.display ?? "").toLowerCase();
+  const msoHide = String(style["mso-hide"] ?? "").toLowerCase();
+  const maxHeight = String(style["max-height"] ?? "");
+  return display === "none" || msoHide === "all" || /^0(px)?$/.test(maxHeight);
+}
+
+/** A container that only holds layout tables (besides `except`). */
 function isLayoutContainer(component: Component, except: Component): boolean {
   const others = children(component).filter(
-    (c) =>
-      c !== except &&
-      !(c.get("type") === "textnode" && !String(c.get("content") ?? "").trim()),
+    (c) => c !== except && !isIgnorable(c),
   );
   return others.length > 0 && others.every((c) => tagOf(c) === "table");
+}
+
+/** Nearest sibling that takes part in the layout, before or after. */
+function layoutNeighbour(
+  siblings: Component[],
+  index: number,
+  direction: -1 | 1,
+): Component | undefined {
+  for (
+    let i = index + direction;
+    i >= 0 && i < siblings.length;
+    i += direction
+  ) {
+    const sibling = siblings[i];
+    if (sibling && !isIgnorable(sibling)) return sibling;
+  }
+  return undefined;
 }
 
 /**
@@ -312,12 +350,7 @@ export function contentTableOf(table: Component, fromEnd: boolean): Component {
     if (!onlyRow || otherRows.length) return current;
     const [cell, ...otherCells] = cellsOf(onlyRow);
     if (!cell || otherCells.length) return current;
-    const content = children(cell).filter(
-      (c) =>
-        !(
-          c.get("type") === "textnode" && !String(c.get("content") ?? "").trim()
-        ),
-    );
+    const content = children(cell).filter((c) => !isIgnorable(c));
     if (!content.length || !content.every((c) => tagOf(c) === "table")) {
       return current;
     }
@@ -327,8 +360,8 @@ export function contentTableOf(table: Component, fromEnd: boolean): Component {
   }
 }
 
-function paddingFrom(row: Component | undefined): string {
-  const cell = row ? cellsOf(row)[0] : undefined;
+/** Horizontal padding of a cell as [right, left] CSS values. */
+function horizontalPadding(cell: Component | undefined): [string, string] {
   const style = cell?.getStyle() ?? {};
   const left = style["padding-left"] ?? undefined;
   const right = style["padding-right"] ?? undefined;
@@ -343,7 +376,52 @@ function paddingFrom(row: Component | undefined): string {
   }
   const r = String(right ?? horizontalFromShorthand[0] ?? "24px");
   const l = String(left ?? horizontalFromShorthand[1] ?? "24px");
+  return [r, l];
+}
+
+function paddingFrom(row: Component | undefined): string {
+  const [r, l] = horizontalPadding(row ? cellsOf(row)[0] : undefined);
   return `8px ${r} 8px ${l}`;
+}
+
+function px(value: unknown): number | undefined {
+  const match = /^\s*(\d+(?:\.\d+)?)\s*(px)?\s*$/i.exec(String(value ?? ""));
+  return match ? Number(match[1]) : undefined;
+}
+
+/** Content width (px) of a cell, from its own or its table's fixed width. */
+function cellContentWidth(cell: Component): number | undefined {
+  const row = cell.parent();
+  const container = row?.parent();
+  const table = tagOf(container) === "table" ? container : container?.parent();
+  let width = px(cell.getAttributes().width) ?? px(cell.getStyle().width);
+  if (width === undefined && table) {
+    const tableWidth =
+      px(table.getAttributes().width) ?? px(table.getStyle().width);
+    const cells = cellsOf(row ?? cell).length || 1;
+    const colspan = Number(cell.getAttributes().colspan ?? 1) || 1;
+    if (tableWidth !== undefined) width = (tableWidth * colspan) / cells;
+  }
+  if (width === undefined) return undefined;
+  const [r, l] = horizontalPadding(cell);
+  const inner = width - (px(r) ?? 0) - (px(l) ?? 0);
+  return inner > 0 ? Math.round(inner) : undefined;
+}
+
+/**
+ * A newly dropped image gets the width of the column it landed in (the
+ * `width` attribute Outlook uses); CSS keeps it fluid and centered.
+ */
+function fitDroppedImages(component: Component): void {
+  const images = [component, ...component.components().models].filter(
+    (c) => c.get("type") === "image",
+  );
+  for (const image of images) {
+    let cell = image.parent();
+    while (cell && !["td", "th"].includes(tagOf(cell))) cell = cell.parent();
+    const width = cell ? cellContentWidth(cell) : undefined;
+    if (width !== undefined) image.addAttributes({ width: String(width) });
+  }
 }
 
 /** Wrap `component` in a full-width row/cell inside `table` at `at`. */
@@ -365,7 +443,10 @@ function insertAsRow(
         {
           tagName: "td",
           type: "cell",
-          attributes: colspan > 1 ? { colspan: String(colspan) } : {},
+          attributes:
+            colspan > 1
+              ? { align: "center", colspan: String(colspan) }
+              : { align: "center" },
           style: { padding: paddingFrom(neighbour) },
         },
       ],
@@ -377,6 +458,7 @@ function insertAsRow(
   if (!cell) return component;
   // move the dropped component itself (keeps its children and identity)
   component.move(cell, { at: 0 });
+  fitDroppedImages(component);
   return component;
 }
 
@@ -417,25 +499,31 @@ export function placeDroppedComponent(
       return insertAsRow(table, component, rows(table).indexOf(parent) + 1);
     }
   }
-  const layout =
-    (isWrapper(parent, editor) ||
-      ["td", "th", "div", "center"].includes(parentTag)) &&
-    isLayoutContainer(parent, component);
-  if (!layout) return component;
+  // Body level (or a div/center around the email) next to a table, or a
+  // layout cell that only holds tables: the drop is between the email's
+  // stacked tables, outside any content column.
   const siblings = children(parent);
   const index = siblings.indexOf(component);
-  const before = siblings
-    .slice(0, index)
-    .reverse()
-    .find((c) => tagOf(c) === "table");
-  const after = siblings.slice(index + 1).find((c) => tagOf(c) === "table");
-  if (before) {
-    const table = contentTableOf(before, true);
-    return insertAsRow(table, component, rows(table).length);
+  const before = layoutNeighbour(siblings, index, -1);
+  const after = layoutNeighbour(siblings, index, 1);
+  const nextToTable = tagOf(before) === "table" || tagOf(after) === "table";
+  const layout =
+    ((isWrapper(parent, editor) || ["div", "center"].includes(parentTag)) &&
+      nextToTable) ||
+    (["td", "th"].includes(parentTag) && isLayoutContainer(parent, component));
+  if (!layout) {
+    fitDroppedImages(component);
+    return component;
   }
-  if (after) {
+  // Prefer the table below (between a header and the content, the new row
+  // starts the content); otherwise the table above.
+  if (after && tagOf(after) === "table") {
     const table = contentTableOf(after, false);
     return insertAsRow(table, component, 0);
+  }
+  if (before && tagOf(before) === "table") {
+    const table = contentTableOf(before, true);
+    return insertAsRow(table, component, rows(table).length);
   }
   return component;
 }

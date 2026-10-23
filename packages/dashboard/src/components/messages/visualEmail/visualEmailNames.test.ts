@@ -158,6 +158,16 @@ describe("friendly layer names in HTML mode", () => {
     ).toEqual(["Divider", "Spacer", "Divider", "Button"]);
   });
 
+  it("text-only cells with a line-height are Text, not Spacer", () => {
+    const { editor } = load(
+      '<table><tr><td style="padding:8px;line-height:24px;">Hey there</td></tr><tr><td style="height:20px;line-height:20px;">&nbsp;</td></tr></table>',
+    );
+    const cells = all(editor.getWrapper()).filter(
+      (c) => c.get("tagName") === "td",
+    );
+    expect(cells.map((c) => c.getName())).toEqual(["Text", "Spacer"]);
+  });
+
   it("a name the user gives a layer still wins", () => {
     const { editor } = load(MAUTIC_EMAIL);
     const card = all(editor.getWrapper()).find((c) =>

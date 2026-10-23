@@ -6,6 +6,10 @@ import grapesjsMjml from "grapesjs-mjml";
 
 import { MAUTIC_EMAIL } from "./__fixtures__/mauticEmail";
 import {
+  STACKED_TABLES_EMAIL,
+  WRAPPED_STACKED_TABLES_EMAIL,
+} from "./__fixtures__/stackedTablesEmail";
+import {
   configureHtmlModeComponents,
   getImageLink,
   getImageSrc,
@@ -358,5 +362,144 @@ describe("dropping blocks into a Mautic table layout", () => {
     const placed = drop(editor, cell, block("amie-html-text"), 1);
     expect(placed.parent()).toBe(cell);
     assertValidTables(save());
+  });
+});
+
+describe("dropping blocks between stacked sibling tables (no wrapping card)", () => {
+  const imageBlock = () => {
+    const found = HTML_BLOCKS.find((b) => b.id === "amie-html-image");
+    if (!found) throw new Error("image block");
+    return found.content;
+  };
+
+  function dropAt(editor: Editor, target: Component, at: number) {
+    const added = target.components().add(imageBlock(), { at });
+    const component = Array.isArray(added) ? added[0] : added;
+    if (!component) throw new Error("not added");
+    return placeDroppedComponent(editor, component);
+  }
+
+  const byClass = (editor: Editor, cls: string) =>
+    find(
+      editor,
+      (c) => c.get("tagName") === "table" && c.getClasses().includes(cls),
+    );
+
+  /** Index right after `component` among its parent's children. */
+  const after = (component: Component) => component.index() + 1;
+
+  function savedImage(html: string) {
+    const doc = assertValidTables(html);
+    const img = doc.querySelector('img[alt="Describe this image"]');
+    if (!img) throw new Error("image not saved");
+    return { doc, img };
+  }
+
+  it.each([
+    ["stacked tables in <body>", STACKED_TABLES_EMAIL],
+    ["stacked tables in an outer 100% table", WRAPPED_STACKED_TABLES_EMAIL],
+  ])(
+    "%s: a drop between header and content lands in the 600px column, centered",
+    (_label, body) => {
+      const { editor, save } = htmlEditor(body);
+      const header = byClass(editor, "header");
+      const container = parentOf(header);
+      const placed = dropAt(editor, container, after(header));
+      const saved = save();
+      const { doc, img } = savedImage(saved);
+      // inside the content table, as its first row
+      const table = img.closest("table");
+      expect(table?.classList.contains("content")).toBe(true);
+      expect(table?.getAttribute("width")).toBe("600");
+      const firstRow = doc.querySelector("table.content > tbody > tr");
+      expect(firstRow?.contains(img)).toBe(true);
+      const cell = img.closest("td");
+      expect(cell?.getAttribute("align")).toBe("center");
+      // padded like the content rows, and sized to the 552px inner width
+      expect(cell?.getAttribute("style")).toBe("padding:8px 24px 8px 24px;");
+      expect(img.getAttribute("width")).toBe("552");
+      expect(img.getAttribute("style")).toBe(
+        "display:block;margin:0 auto;width:100%;max-width:100%;height:auto;border:0;",
+      );
+      // nothing left between the stacked tables
+      expect(Array.from(doc.body.children).map((c) => c.tagName)).not.toContain(
+        "IMG",
+      );
+      expect(placed.get("type")).toBe("image");
+      // clean output: no editor ids/attributes, head and Liquid untouched
+      expect(saved).not.toMatch(/data-gjs|gjs-|\sid="i[a-z0-9]{3,6}"/);
+      expect(saved).toContain("{{ user.firstName | default: 'Gorgeous' }}");
+      expect(saved).toContain('href="{% unsubscribe_url %}"');
+      expect(saved.startsWith(splitHtmlDocument(body).shell.before)).toBe(true);
+    },
+  );
+
+  it("a drop above the first table starts the first table; below the last ends the last", () => {
+    const { editor, save } = htmlEditor(STACKED_TABLES_EMAIL);
+    const wrapper = wrapperOf(editor);
+    dropAt(editor, wrapper, 0);
+    dropAt(editor, wrapper, wrapper.components().length);
+    const { doc } = savedImage(save());
+    const images = doc.querySelectorAll('img[alt="Describe this image"]');
+    expect(images).toHaveLength(2);
+    expect(images[0]?.closest("table")?.classList.contains("header")).toBe(
+      true,
+    );
+    expect(
+      doc
+        .querySelector("table.header > tbody > tr")
+        ?.contains(images[0] ?? null),
+    ).toBe(true);
+    // header cells have no side padding, so the image is the full 600px
+    expect(images[0]?.getAttribute("width")).toBe("600");
+    const contentRows = doc.querySelectorAll("table.content > tbody > tr");
+    expect(
+      contentRows[contentRows.length - 1]?.contains(images[1] ?? null),
+    ).toBe(true);
+  });
+
+  it("skips the hidden preheader and Outlook comments when finding the neighbour", () => {
+    const { editor } = htmlEditor(STACKED_TABLES_EMAIL);
+    const wrapper = wrapperOf(editor);
+    // right after the preheader, before the header table
+    const preheader = wrapper
+      .components()
+      .models.find((c) => String(c.getStyle().display ?? "").includes("none"));
+    if (!preheader) throw new Error("no preheader");
+    const placed = dropAt(editor, wrapper, after(preheader));
+    expect(all(byClass(editor, "header"))).toContain(placed);
+  });
+
+  it("a drop inside the outer table's centering cell goes into the column", () => {
+    const { editor, save } = htmlEditor(WRAPPED_STACKED_TABLES_EMAIL);
+    const outerCell = parentOf(byClass(editor, "header"));
+    dropAt(editor, outerCell, outerCell.components().length);
+    const { doc, img } = savedImage(save());
+    const rows = doc.querySelectorAll("table.content > tbody > tr");
+    expect(rows[rows.length - 1]?.contains(img)).toBe(true);
+  });
+
+  it("an image dropped into an existing content cell is sized to that column", () => {
+    const { editor, save } = htmlEditor(STACKED_TABLES_EMAIL);
+    const cell = find(
+      editor,
+      (c) =>
+        c.get("tagName") === "td" &&
+        String(c.getStyle().padding ?? "").startsWith("8px 24px 24px"),
+    );
+    const placed = dropAt(editor, cell, cell.components().length);
+    expect(placed.parent()).toBe(cell);
+    const { img } = savedImage(save());
+    expect(img.getAttribute("width")).toBe("552");
+  });
+
+  it("the single-card Mautic layout still works as before", () => {
+    const { editor, save } = htmlEditor();
+    const wrapper = wrapperOf(editor);
+    dropAt(editor, wrapper, wrapper.components().length);
+    const { doc, img } = savedImage(save());
+    const rows = doc.querySelectorAll("table.container > tbody > tr");
+    expect(rows[rows.length - 1]?.contains(img)).toBe(true);
+    expect(img.getAttribute("width")).toBe("552");
   });
 });
