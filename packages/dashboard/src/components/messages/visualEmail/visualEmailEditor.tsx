@@ -1,6 +1,20 @@
 import "grapesjs/dist/css/grapes.min.css";
 
-import { Alert, Box, Button, Stack, Typography } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  Checkbox,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  FormControlLabel,
+  MenuItem,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
 import axios from "axios";
 import grapesjs, { Editor } from "grapesjs";
 import grapesjsMjml from "grapesjs-mjml";
@@ -12,6 +26,10 @@ import { AMIE_PLACEHOLDER_IMAGE_URL } from "isomorphic-lib/src/amieLinks";
 import { CodeEmailContents } from "isomorphic-lib/src/types";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
+import {
+  configureHtmlModeComponents,
+  installImageSettings,
+} from "./visualEmailComponents";
 import {
   applyVisualSave,
   buildVisualDesign,
@@ -36,6 +54,11 @@ import {
   splitHtmlDocument,
 } from "./visualEmailHtml";
 import {
+  installRichTextToolbar,
+  LinkOptions,
+  RTE_TOOLBAR_CSS,
+} from "./visualEmailRte";
+import {
   visualDesignWarnings,
   visualHtmlWarnings,
 } from "./visualEmailWarnings";
@@ -58,6 +81,20 @@ function editorModeFor(
 }
 
 const SYNC_DEBOUNCE_MS = 700;
+
+/** Liquid URL tags offered in the link dialog (same forms as the variables list). */
+const LINK_VARIABLES = VISUAL_EMAIL_VARIABLES.filter((v) =>
+  v.value.startsWith("{%"),
+);
+
+interface LinkDialogState {
+  href: string;
+  newTab: boolean;
+  editing: boolean;
+  apply: (link: LinkOptions | null) => void;
+}
+
+const TOOLBAR_STYLE_ID = "amie-rte-toolbar-css";
 
 export interface VisualEmailEditorProps {
   templateId: string;
@@ -123,6 +160,7 @@ export default function VisualEmailEditor({
   // HTML mode: risky content found before opening, awaiting the user's choice.
   const [riskReview, setRiskReview] = useState<HtmlImportRisk[] | null>(null);
   const [openedRisks, setOpenedRisks] = useState<HtmlImportRisk[]>([]);
+  const [linkDialog, setLinkDialog] = useState<LinkDialogState | null>(null);
   // HTML mode: the preserved doctype/head/body tags around the edited content.
   const shellRef = useRef<HtmlShell | null>(null);
   // HTML mode never autosaves: edits wait for an explicit Save.
@@ -287,6 +325,27 @@ export default function VisualEmailEditor({
     });
     editorRef.current = editor;
 
+    // Component types and toolbar go in before any content loads, so
+    // imported images/cells pick them up.
+    if (htmlMode) configureHtmlModeComponents(editor);
+    else installImageSettings(editor, "mjml");
+    installRichTextToolbar(editor, {
+      mode: htmlMode ? "html" : "mjml",
+      openLinkDialog: (existing, apply) =>
+        setLinkDialog({
+          href: existing?.href ?? "",
+          newTab: existing ? existing.target === "_blank" : true,
+          editing: Boolean(existing),
+          apply,
+        }),
+    });
+    if (!document.getElementById(TOOLBAR_STYLE_ID)) {
+      const style = document.createElement("style");
+      style.id = TOOLBAR_STYLE_ID;
+      style.textContent = RTE_TOOLBAR_CSS;
+      document.head.appendChild(style);
+    }
+
     let loadedDesign = false;
     let loadWarning: string | null = null;
     if (htmlMode) {
@@ -348,24 +407,6 @@ export default function VisualEmailEditor({
     } else {
       editor.setComponents(STARTER_MJML);
     }
-
-    // Personalization picker inside the text toolbar.
-    const select = document.createElement("select");
-    select.title = "Insert variable";
-    select.style.cssText =
-      "font-size:12px;max-width:150px;margin:0 4px;color:#333;";
-    select.innerHTML = `<option value="">{ } Variables</option>${VISUAL_EMAIL_VARIABLES.map(
-      (v) =>
-        `<option value="${v.value.replace(/"/g, "&quot;")}">${v.label}</option>`,
-    ).join("")}`;
-    editor.RichTextEditor.add("amie-variables", {
-      icon: select,
-      event: "change",
-      result: (rte) => {
-        if (select.value) rte.insertHTML(select.value);
-        select.value = "";
-      },
-    });
 
     // GrapesJS keeps its own undo stack for every structural, style and text edit.
     editor.Panels.addButton("options", [
@@ -462,7 +503,8 @@ export default function VisualEmailEditor({
   } else if (pending) {
     statusLabel = "Unsaved changes…";
   } else if (mode === "html") {
-    statusLabel = "No unsaved changes. Edits reach the email when you click Save.";
+    statusLabel =
+      "No unsaved changes. Edits reach the email when you click Save.";
   }
 
   if (!started && riskReview) {
@@ -628,8 +670,91 @@ export default function VisualEmailEditor({
     );
   }
 
+  const linkDialogEl = (
+    <Dialog
+      open={Boolean(linkDialog)}
+      onClose={() => setLinkDialog(null)}
+      fullWidth
+      maxWidth="sm"
+    >
+      <DialogTitle>
+        {linkDialog?.editing ? "Edit link" : "Insert link"}
+      </DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ pt: 1 }}>
+          <TextField
+            autoFocus
+            label="Link URL"
+            placeholder="https://tryamie.com/…"
+            value={linkDialog?.href ?? ""}
+            onChange={(event) =>
+              setLinkDialog((d) => (d ? { ...d, href: event.target.value } : d))
+            }
+          />
+          <TextField
+            select
+            label="Or use a link variable"
+            value=""
+            onChange={(event) =>
+              setLinkDialog((d) => (d ? { ...d, href: event.target.value } : d))
+            }
+          >
+            {LINK_VARIABLES.map((v) => (
+              <MenuItem key={v.value} value={v.value}>
+                {v.label}
+              </MenuItem>
+            ))}
+          </TextField>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={linkDialog?.newTab ?? true}
+                onChange={(event) =>
+                  setLinkDialog((d) =>
+                    d ? { ...d, newTab: event.target.checked } : d,
+                  )
+                }
+              />
+            }
+            label="Open in a new tab"
+          />
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        {linkDialog?.editing ? (
+          <Button
+            color="warning"
+            onClick={() => {
+              linkDialog.apply(null);
+              setLinkDialog(null);
+            }}
+          >
+            Remove link
+          </Button>
+        ) : null}
+        <Box sx={{ flex: 1 }} />
+        <Button onClick={() => setLinkDialog(null)}>Cancel</Button>
+        <Button
+          variant="contained"
+          disabled={!linkDialog?.href.trim()}
+          onClick={() => {
+            if (!linkDialog) return;
+            linkDialog.apply({
+              href: linkDialog.href.trim(),
+              target: linkDialog.newTab ? "_blank" : "",
+            });
+            setLinkDialog(null);
+          }}
+        >
+          Apply
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+
   return (
     <Stack sx={{ height: "100%" }} data-testid="visual-email-editor">
+      {linkDialogEl}
       <Stack
         direction="row"
         alignItems="center"

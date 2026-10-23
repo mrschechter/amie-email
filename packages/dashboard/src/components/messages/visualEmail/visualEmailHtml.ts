@@ -509,13 +509,13 @@ export const HTML_BLOCKS: {
     id: "amie-html-section",
     label: "Section",
     category: "Layout",
-    content: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;"><tr><td style="padding:16px 24px;"><p style="${TEXT_STYLE}">Section content</p></td></tr></table>`,
+    content: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;"><tr><td style="padding:16px 24px;"><div style="${TEXT_STYLE}">Section content</div></td></tr></table>`,
   },
   {
     id: "amie-html-2-columns",
     label: "2 Columns",
     category: "Layout",
-    content: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td width="50%" valign="top" style="padding:8px 12px;"><p style="${TEXT_STYLE}">Left column</p></td><td width="50%" valign="top" style="padding:8px 12px;"><p style="${TEXT_STYLE}">Right column</p></td></tr></table>`,
+    content: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td width="50%" valign="top" style="padding:8px 12px;"><div style="${TEXT_STYLE}">Left column</div></td><td width="50%" valign="top" style="padding:8px 12px;"><div style="${TEXT_STYLE}">Right column</div></td></tr></table>`,
   },
   {
     id: "amie-html-heading",
@@ -527,7 +527,7 @@ export const HTML_BLOCKS: {
     id: "amie-html-text",
     label: "Text",
     category: "Basic",
-    content: `<p style="${TEXT_STYLE}">Write something here.</p>`,
+    content: `<div style="${TEXT_STYLE}">Write something here.</div>`,
   },
   {
     id: "amie-html-image",
