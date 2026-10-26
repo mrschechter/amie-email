@@ -11,7 +11,13 @@
  */
 import type { Component, Editor, RichTextEditorAction } from "grapesjs";
 
+import {
+  COLOR_POPOVER_CSS,
+  openColorPopover,
+  rgbToHex,
+} from "./visualEmailColor";
 import { VISUAL_EMAIL_VARIABLES } from "./visualEmailDesign";
+import { MONTSERRAT_STACK } from "./visualEmailFonts";
 
 /** GrapesJS doesn't export its RTE class type; take it from the action API. */
 type RichTextEditor = Parameters<RichTextEditorAction["result"]>[0];
@@ -19,6 +25,9 @@ type RichTextEditor = Parameters<RichTextEditorAction["result"]>[0];
 /** Email-safe font stacks (web-safe fonts every major client has). */
 export const RTE_FONTS: { label: string; value: string }[] = [
   { label: "Helvetica / Arial", value: "Helvetica, Arial, sans-serif" },
+  // web font: loaded in the canvas, linked in the email head when used;
+  // clients without web fonts fall back to Arial/Helvetica
+  { label: "Montserrat", value: MONTSERRAT_STACK },
   { label: "Arial", value: "Arial, Helvetica, sans-serif" },
   { label: "Verdana", value: "Verdana, Geneva, sans-serif" },
   { label: "Tahoma", value: "Tahoma, Verdana, sans-serif" },
@@ -459,18 +468,22 @@ export const RTE_TOOLBAR_CSS = `
 .gjs-rte-actionbar { flex-wrap: wrap; }
 .gjs-rte-action { width: auto; min-width: 26px; height: 28px; box-sizing: border-box; font-size: 13px; }
 .gjs-rte-action select, .gjs-rte-action input { font-size: 12px; color: #333; background: #fff; border: 0; border-radius: 3px; height: 20px; }
-.gjs-rte-action input[type=color] { width: 22px; padding: 0; }
+.gjs-rte-action .amie-color-icon { display: inline-flex; flex-direction: column; align-items: center; line-height: 14px; }
+.gjs-rte-action .amie-color-bar { display: block; width: 16px; height: 3px; margin-top: 1px; border: 1px solid rgba(255,255,255,.4); }
 .gjs-rte-action.amie-rte-disabled { opacity: 0.35; cursor: not-allowed; }
-`;
+${COLOR_POPOVER_CSS}`;
 
-function currentRange(rte: RichTextEditor): Range | null {
+/** The parts of the RTE the actions touch (lets tests use a plain element). */
+export type RteLike = Pick<RichTextEditor, "el" | "doc" | "selection">;
+
+function currentRange(rte: RteLike): Range | null {
   const sel = rte.selection();
   if (!sel?.rangeCount) return null;
   const range = sel.getRangeAt(0);
   return rte.el.contains(range.commonAncestorContainer) ? range : null;
 }
 
-function finish(rte: RichTextEditor, range: Range): void {
+function finish(rte: RteLike, range: Range): void {
   const sel = rte.selection();
   if (sel) {
     sel.removeAllRanges();
@@ -498,22 +511,40 @@ function selectIcon(
   return select;
 }
 
-function colorIcon(
-  title: string,
-  label: string,
-  value: string,
-): HTMLLabelElement {
-  const wrap = document.createElement("label");
-  wrap.title = title;
-  wrap.style.cssText =
-    "display:flex;align-items:center;gap:2px;cursor:pointer;";
-  const text = document.createElement("span");
-  text.innerHTML = label;
-  const input = document.createElement("input");
-  input.type = "color";
-  input.value = value;
-  wrap.append(text, input);
-  return wrap;
+/** The selection's current color for `prop`, as #RRGGBB (to prefill the picker). */
+export function selectionColor(
+  rte: RteLike,
+  range: Range,
+  prop: "color" | "background-color",
+): string | null {
+  const node = range.startContainer;
+  const el = node.nodeType === 1 ? node : node.parentNode;
+  const view = rte.doc.defaultView;
+  if (!el || el.nodeType !== 1 || !view) return null;
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- nodeType 1 is an Element
+  const style = view.getComputedStyle(el as Element);
+  return rgbToHex(prop === "color" ? style.color : style.backgroundColor);
+}
+
+/**
+ * Apply (or, with an empty value, clear) a color on a range saved when the
+ * picker opened: put the selection back, then style it inline. Returns false
+ * if that text is no longer being edited.
+ */
+export function applySavedColor(
+  rte: RteLike,
+  range: Range,
+  prop: "color" | "background-color",
+  color: string,
+): boolean {
+  if (!rte.el.isConnected || !rte.el.contains(range.commonAncestorContainer)) {
+    return false;
+  }
+  const sel = rte.selection();
+  sel?.removeAllRanges();
+  sel?.addRange(range);
+  finish(rte, applyInlineStyle(rte.el, range, prop, color));
+  return true;
 }
 
 function hasSyncContent(
@@ -580,19 +611,35 @@ export function installRichTextToolbar(
     name: string,
     title: string,
     label: string,
-    prop: string,
+    prop: "color" | "background-color",
     initial: string,
   ) => {
-    const icon = colorIcon(title, label, initial);
-    const input = icon.querySelector("input");
+    const icon = document.createElement("span");
+    icon.className = "amie-color-icon";
+    icon.innerHTML = `${label}<span class="amie-color-bar"></span>`;
+    const bar = icon.querySelector<HTMLElement>(".amie-color-bar");
+    if (bar) bar.style.background = initial;
     rteModule.add(name, {
       icon,
-      event: "change",
       attributes: { title },
-      result: (rte) => {
-        const range = currentRange(rte);
-        if (range && input)
-          finish(rte, applyInlineStyle(rte.el, range, prop, input.value));
+      result: (rte, action) => {
+        const range = currentRange(rte)?.cloneRange();
+        if (!range || range.collapsed) return;
+        openColorPopover({
+          anchor: action.btn ?? icon,
+          title,
+          initial: selectionColor(rte, range, prop),
+          closeOn: [rte.doc],
+          onApply: (color) => {
+            if (
+              applySavedColor(rte, range, prop, color ?? "") &&
+              color &&
+              bar
+            ) {
+              bar.style.background = color;
+            }
+          },
+        });
       },
     });
   };
@@ -600,7 +647,7 @@ export function installRichTextToolbar(
   colorAction(
     "amie-highlight",
     "Highlight color",
-    '<span style="background:#FFF3A3;padding:0 2px">ab</span>',
+    '<span style="padding:0 2px">ab</span>',
     "background-color",
     "#FFF3A3",
   );
