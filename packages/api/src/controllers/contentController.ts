@@ -11,6 +11,7 @@ import {
   testTemplate,
   upsertMessageTemplate,
 } from "backend-lib/src/messaging";
+import { compileMjmlKeepingLiquid } from "backend-lib/src/mjmlToHtml";
 import { signTemplatePreviewToken } from "backend-lib/src/templatePreviewToken";
 import { Secret } from "backend-lib/src/types";
 import { randomUUID } from "crypto";
@@ -113,6 +114,32 @@ export default async function contentController(fastify: FastifyInstance) {
       return reply
         .header("Cache-Control", "no-store")
         .send({ path: `/public/template-preview/${token}` });
+    },
+  );
+
+  fastify.withTypeProvider<TypeBoxTypeProvider>().post(
+    "/templates/mjml-to-html",
+    {
+      schema: {
+        description:
+          "Compile a visual-editor MJML email to the HTML the send pipeline would produce, keeping Liquid unrendered. Used by the visual editor's Convert to HTML email action; nothing is saved.",
+        tags: ["Content"],
+        body: Type.Object({
+          workspaceId: Type.String(),
+          mjml: Type.String({ maxLength: 2_000_000 }),
+        }),
+        response: {
+          200: Type.Object({ html: Type.String() }),
+          422: BaseMessageResponse,
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = compileMjmlKeepingLiquid(request.body.mjml);
+      if (!result.ok) {
+        return reply.status(422).send({ message: result.message });
+      }
+      return reply.status(200).send({ html: result.html });
     },
   );
 
