@@ -615,3 +615,48 @@ export const HTML_BLOCKS: {
     content: `<p style="font-family:${VISUAL_FONT};font-size:12px;line-height:20px;color:${VISUAL_BRAND.muted};text-align:center;margin:0;"><a href="{% unsubscribe_url %}" target="_blank" style="color:${VISUAL_BRAND.teal};text-decoration:underline;">Unsubscribe</a></p>`,
   },
 ];
+
+const STARTER_TEXT = `font-family:${VISUAL_FONT};font-size:16px;line-height:26px;color:${VISUAL_BRAND.text};`;
+const STARTER_SMALL = `font-family:${VISUAL_FONT};font-size:12px;line-height:20px;`;
+
+/**
+ * Blank-but-sendable HTML starter: the email-safe table version of
+ * STARTER_MJML (same header, image, copy, CTA and unsubscribe footer, same
+ * Liquid), as a full document. Inline styles everywhere; the head only
+ * holds resets and the mobile breakpoint.
+ */
+export const STARTER_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <title>Amie</title>
+  <style type="text/css">
+    body { margin: 0; padding: 0; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table, td { border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    @media only screen and (max-width: 620px) {
+      .amie-container { width: 100% !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background-color:${VISUAL_BRAND.page};">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${VISUAL_BRAND.page};">
+    <tr>
+      <td align="center" style="padding:24px 12px;">
+        <table class="amie-container" role="presentation" align="center" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;background-color:#FFFFFF;">
+          <tr><td align="center" style="padding:28px 24px 8px;font-family:Georgia, 'Times New Roman', serif;font-size:26px;line-height:32px;font-weight:bold;color:${VISUAL_BRAND.text};">Amie<span style="color:${VISUAL_BRAND.rose};">.</span></td></tr>
+          <tr><td align="center" style="padding:8px 24px;"><a href="${AMIE_HOME_URL}" target="_blank"><img src="${AMIE_PLACEHOLDER_IMAGE_URL}" alt="Describe this image" width="552" style="display:block;margin:0 auto;width:100%;max-width:100%;height:auto;border:0;border-radius:12px;" /></a></td></tr>
+          <tr><td style="padding:8px 24px;${STARTER_TEXT}">Hi {{ user.firstName | default: "there" }},</td></tr>
+          <tr><td style="padding:8px 24px;${STARTER_TEXT}">Start writing here. Click any block to edit it, or drag new blocks in from the Blocks panel.</td></tr>
+          <tr><td align="center" style="padding:16px 24px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center"><tr><td style="border-radius:999px;background-color:${VISUAL_BRAND.teal};"><a href="${AMIE_HOME_URL}" target="_blank" style="display:inline-block;padding:14px 28px;font-family:${VISUAL_FONT};font-size:15px;font-weight:bold;color:#FFFFFF;text-decoration:none;border-radius:999px;">Shop now</a></td></tr></table></td></tr>
+          <tr><td align="center" style="padding:16px 24px 4px;border-top:1px solid #F2EBE2;${STARTER_SMALL}color:${VISUAL_BRAND.muted};">{{ user.physicalAddress | default: "382 NE 191st St, Miami, FL 33179" }}</td></tr>
+          <tr><td align="center" style="padding:4px 24px 28px;${STARTER_SMALL}color:${VISUAL_BRAND.teal};"><a href="{% unsubscribe_url %}" target="_blank" style="color:${VISUAL_BRAND.teal};text-decoration:underline;">Unsubscribe</a></td></tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;

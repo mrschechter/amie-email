@@ -11,6 +11,8 @@ import {
   DialogTitle,
   FormControlLabel,
   MenuItem,
+  Radio,
+  RadioGroup,
   Stack,
   TextField,
   Typography,
@@ -30,6 +32,7 @@ import {
   configureHtmlModeComponents,
   installImageSettings,
 } from "./visualEmailComponents";
+import { convertMjmlToHtml, readMjmlBackup } from "./visualEmailConvert";
 import {
   applyVisualSave,
   buildVisualDesign,
@@ -53,6 +56,7 @@ import {
   HtmlShell,
   importHtmlIntoEditor,
   splitHtmlDocument,
+  STARTER_HTML,
 } from "./visualEmailHtml";
 import {
   installRichTextToolbar,
@@ -64,14 +68,27 @@ import {
   visualHtmlWarnings,
 } from "./visualEmailWarnings";
 
-type StartSource = "design" | "mjml" | "html" | "starter";
+type StartSource =
+  | "design"
+  | "mjml"
+  | "html"
+  | "starter"
+  | "htmlStarter"
+  | "htmlConverted";
+type NewDesignKind = "html" | "mjml";
 type EditorMode = "mjml" | "html";
 
 function editorModeFor(
   source: StartSource,
   design: CodeEmailContents["visualDesign"],
 ): EditorMode {
-  if (source === "html") return "html";
+  if (
+    source === "html" ||
+    source === "htmlStarter" ||
+    source === "htmlConverted"
+  ) {
+    return "html";
+  }
   if (
     source === "design" &&
     visualDesignEditor(design) === VISUAL_HTML_EDITOR_ID
@@ -149,9 +166,9 @@ export default function VisualEmailEditor({
   const [openState, setOpenState] = useState<VisualOpenState>(() =>
     visualOpenState(draft),
   );
-  const [started, setStarted] = useState(
-    () => openState === "design" || openState === "blank",
-  );
+  // A blank template shows the HTML/MJML choice first; nothing is written
+  // until a design is started.
+  const [started, setStarted] = useState(() => openState === "design");
   const [startSource, setStartSource] = useState<StartSource>(
     openState === "design" ? "design" : "starter",
   );
@@ -162,6 +179,15 @@ export default function VisualEmailEditor({
   const [riskReview, setRiskReview] = useState<HtmlImportRisk[] | null>(null);
   const [openedRisks, setOpenedRisks] = useState<HtmlImportRisk[]>([]);
   const [linkDialog, setLinkDialog] = useState<LinkDialogState | null>(null);
+  const [newKind, setNewKind] = useState<NewDesignKind>("html");
+  // Convert to HTML: the confirm dialog's answer, and the compiled HTML the
+  // re-initialised HTML editor opens.
+  const [convertPrompt, setConvertPrompt] = useState<
+    ((ok: boolean) => void) | null
+  >(null);
+  const [convertError, setConvertError] = useState<string | null>(null);
+  const [converting, setConverting] = useState(false);
+  const convertedHtmlRef = useRef<string | null>(null);
   // HTML mode: the preserved doctype/head/body tags around the edited content.
   const shellRef = useRef<HtmlShell | null>(null);
   // HTML mode never autosaves: edits wait for an explicit Save.
@@ -173,7 +199,7 @@ export default function VisualEmailEditor({
   useEffect(() => {
     const state = visualOpenState(draftRef.current);
     setOpenState(state);
-    setStarted(state === "design" || state === "blank");
+    setStarted(state === "design");
     setStartSource(state === "design" ? "design" : "starter");
     setRiskReview(null);
     setOpenedRisks([]);
@@ -353,7 +379,12 @@ export default function VisualEmailEditor({
     let loadWarning: string | null = null;
     if (htmlMode) {
       // Body content goes into GrapesJS; doctype/head/body tags are kept aside.
-      let split = splitHtmlDocument(design ? design.mjml : current.body);
+      let htmlSource = design ? design.mjml : current.body;
+      if (startSource === "htmlStarter") htmlSource = STARTER_HTML;
+      if (startSource === "htmlConverted") {
+        htmlSource = convertedHtmlRef.current ?? current.body;
+      }
+      let split = splitHtmlDocument(htmlSource);
       if (design?.project) {
         try {
           const project: Record<string, unknown> = JSON.parse(
@@ -468,6 +499,15 @@ export default function VisualEmailEditor({
     // Starting from MJML or the starter writes the first design immediately.
     // HTML mode never writes on open: only the Save button changes the body.
     if (!design && !disabled && !htmlMode) flush();
+    // A new HTML design or a confirmed conversion is an explicit action, so
+    // it writes the HTML document right away (opening an email never does).
+    if (
+      !disabled &&
+      (startSource === "htmlStarter" || startSource === "htmlConverted")
+    ) {
+      flush();
+      convertedHtmlRef.current = null;
+    }
     editor.on("update", schedule);
 
     return () => {
@@ -560,6 +600,54 @@ export default function VisualEmailEditor({
     );
   }
 
+  const startNewDesign = (replaces: boolean) => {
+    if (
+      replaces &&
+      !window.confirm(
+        "Start a new visual design? This replaces the current email body.",
+      )
+    ) {
+      return;
+    }
+    setStartSource(newKind === "html" ? "htmlStarter" : "starter");
+    setStarted(true);
+  };
+
+  const newDesignChooser = (replaces: boolean) => (
+    <Stack spacing={1.5} data-testid="new-visual-design">
+      <Typography variant={replaces ? "subtitle1" : "h6"}>
+        Start a new visual design
+      </Typography>
+      <RadioGroup
+        value={newKind}
+        onChange={(event) =>
+          setNewKind(event.target.value === "mjml" ? "mjml" : "html")
+        }
+      >
+        <FormControlLabel
+          value="html"
+          control={<Radio />}
+          label="HTML email (recommended) — the Code tab shows editable HTML"
+        />
+        <FormControlLabel
+          value="mjml"
+          control={<Radio />}
+          label="MJML email — the Code tab shows MJML"
+        />
+      </RadioGroup>
+      <Box>
+        <Button
+          variant={replaces ? "outlined" : "contained"}
+          color={replaces ? "warning" : "primary"}
+          disabled={disabled}
+          onClick={() => startNewDesign(replaces)}
+        >
+          Start a new visual design
+        </Button>
+      </Box>
+    </Stack>
+  );
+
   if (!started) {
     return (
       <Stack spacing={2} sx={{ p: 3, maxWidth: 720 }}>
@@ -605,26 +693,11 @@ export default function VisualEmailEditor({
               >
                 Open in visual editor
               </Button>
-              <Button
-                variant="outlined"
-                color="warning"
-                disabled={disabled}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      "Start a new visual design? This replaces the current email body.",
-                    )
-                  ) {
-                    setStartSource("starter");
-                    setStarted(true);
-                  }
-                }}
-              >
-                Start a new visual design
-              </Button>
             </Stack>
+            {newDesignChooser(true)}
           </>
         ) : null}
+        {openState === "blank" ? newDesignChooser(false) : null}
         {openState === "stale" ? (
           <>
             <Typography variant="h6">
@@ -672,6 +745,106 @@ export default function VisualEmailEditor({
       </Stack>
     );
   }
+
+  const convertToHtml = async () => {
+    const editor = editorRef.current;
+    if (!editor || disabled || modeRef.current !== "mjml") return;
+    setConvertError(null);
+    // keep the latest edits in the MJML that's backed up and converted
+    flush();
+    const mjml = withMjmlFonts(editor.getHtml());
+    const result = await convertMjmlToHtml({
+      templateId,
+      mjml,
+      visualDesign: draftRef.current.visualDesign,
+      confirm: () =>
+        new Promise<boolean>((resolve) => {
+          setConvertPrompt(() => resolve);
+        }),
+      compile: async (source) => {
+        setConverting(true);
+        try {
+          const response = await axios.post<{ html: string }>(
+            `${baseApiUrl}/content/templates/mjml-to-html`,
+            { workspaceId, mjml: source },
+            { headers: authHeaders },
+          );
+          return { ok: true, html: response.data.html };
+        } catch (e) {
+          const message =
+            axios.isAxiosError<{ message?: string }>(e) &&
+            e.response?.data.message
+              ? e.response.data.message
+              : "The email couldn't be converted. Nothing was changed.";
+          return { ok: false, message };
+        } finally {
+          setConverting(false);
+        }
+      },
+    });
+    if (result.status === "error") setConvertError(result.message);
+    if (result.status === "converted") {
+      convertedHtmlRef.current = result.html;
+      setStartSource("htmlConverted");
+    }
+  };
+
+  const answerConvert = (ok: boolean) => {
+    convertPrompt?.(ok);
+    setConvertPrompt(null);
+  };
+
+  const convertDialogEl = (
+    <Dialog
+      open={Boolean(convertPrompt)}
+      onClose={() => answerConvert(false)}
+      maxWidth="sm"
+    >
+      <DialogTitle>Convert to an HTML email?</DialogTitle>
+      <DialogContent>
+        <Stack spacing={1.5}>
+          <Typography>
+            This turns the email into an HTML email, compiled exactly as it
+            would be sent. The Code tab will show HTML you can edit, and the
+            visual editor keeps working in HTML mode.
+          </Typography>
+          <Typography>
+            <b>This is one-way</b> — it won&apos;t turn back into MJML blocks.
+            The current MJML is kept as a backup in this browser (you can
+            restore it from the editor toolbar), and the published version
+            doesn&apos;t change until you publish.
+          </Typography>
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => answerConvert(false)}>Cancel</Button>
+        <Button variant="contained" onClick={() => answerConvert(true)}>
+          Convert to HTML email
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+
+  const mjmlBackup =
+    mode === "html" && draft.visualDesign?.editor === VISUAL_HTML_EDITOR_ID
+      ? readMjmlBackup(templateId)
+      : null;
+  const restoreMjml = () => {
+    if (!mjmlBackup) return;
+    if (
+      !window.confirm(
+        "Restore the MJML version from before the conversion? The current HTML email is replaced.",
+      )
+    ) {
+      return;
+    }
+    setDraft((current) => ({
+      ...current,
+      body: mjmlBackup.body,
+      visualDesign: mjmlBackup.visualDesign ?? null,
+    }));
+    setStartSource(mjmlBackup.visualDesign ? "design" : "mjml");
+  };
 
   const linkDialogEl = (
     <Dialog
@@ -758,6 +931,7 @@ export default function VisualEmailEditor({
   return (
     <Stack sx={{ height: "100%" }} data-testid="visual-email-editor">
       {linkDialogEl}
+      {convertDialogEl}
       <Stack
         direction="row"
         alignItems="center"
@@ -773,6 +947,23 @@ export default function VisualEmailEditor({
             Add an unsubscribe link before sending
           </Typography>
         ) : null}
+        {mode === "mjml" && !disabled ? (
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={converting}
+            onClick={() => {
+              void convertToHtml();
+            }}
+          >
+            {converting ? "Converting…" : "Convert to HTML email"}
+          </Button>
+        ) : null}
+        {mjmlBackup && !disabled ? (
+          <Button size="small" color="warning" onClick={restoreMjml}>
+            Restore MJML version
+          </Button>
+        ) : null}
         {mode === "html" ? (
           <Button
             size="small"
@@ -784,6 +975,11 @@ export default function VisualEmailEditor({
           </Button>
         ) : null}
       </Stack>
+      {convertError ? (
+        <Alert severity="error" onClose={() => setConvertError(null)}>
+          {convertError}
+        </Alert>
+      ) : null}
       {recovery ? (
         <Alert
           severity="info"
