@@ -1,4 +1,9 @@
 import { hasUnsubscribeLink } from "./visualEmailDesign";
+import { countBrokenLiquidLinks } from "./visualEmailLinks";
+
+export function brokenLinksWarning(count: number): string {
+  return `${count} link${count === 1 ? "" : "s"} point${count === 1 ? "s" : ""} to the editor instead of a Liquid tag (e.g. {% unsubscribe_url %}) — fixed when you save`;
+}
 
 function attr(tag: string, name: string, quote = '"'): string | null {
   const match = new RegExp(
@@ -38,6 +43,10 @@ export function visualDesignWarnings(mjml: string): string[] {
       "Shared style defaults (mj-attributes) are applied when sent but not shown in the canvas",
     );
   }
+  const broken = countBrokenLiquidLinks(mjml);
+  if (broken) {
+    warnings.push(brokenLinksWarning(broken));
+  }
   if (mjml.trim() && !hasUnsubscribeLink(mjml)) {
     warnings.push("No unsubscribe link");
   }
@@ -72,6 +81,10 @@ export function visualHtmlWarnings(html: string): string[] {
   }
   if (/\{\{\s*\}\}/.test(body)) {
     warnings.push("An empty {{ }} variable will render blank");
+  }
+  const broken = countBrokenLiquidLinks(html);
+  if (broken) {
+    warnings.push(brokenLinksWarning(broken));
   }
   if (html.trim() && !hasUnsubscribeLink(html)) {
     warnings.push("No unsubscribe link");

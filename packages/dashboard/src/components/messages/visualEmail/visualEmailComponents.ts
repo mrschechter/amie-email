@@ -7,6 +7,7 @@
  */
 import type { Component, Editor } from "grapesjs";
 
+import { repairLiquidHref } from "./visualEmailLinks";
 import { installFriendlyNames } from "./visualEmailNames";
 
 const LINK_TARGET_OPTIONS = [
@@ -161,7 +162,9 @@ export function imageTraits() {
         value: unknown;
         editor: Editor;
       }) => {
-        const next = setImageLink(component, { href: String(value ?? "") });
+        const next = setImageLink(component, {
+          href: repairLiquidHref(String(value ?? "")),
+        });
         if (next !== component) editor.select(next);
       },
     },
@@ -188,6 +191,63 @@ export function imageTraits() {
   ];
 }
 
+/**
+ * Link URL trait for links (HTML mode, incl. button links) and mj-button:
+ * reads/writes the raw attribute — Liquid such as {% unsubscribe_url %} is
+ * stored exactly — and repairs a value mangled into a dashboard URL.
+ */
+export function linkHrefTrait() {
+  return {
+    type: "text",
+    name: "amie-href",
+    label: "Link URL",
+    placeholder: "https://… or {% unsubscribe_url %}",
+    getValue: ({ component }: { component: Component }) => {
+      const { href } = component.getAttributes();
+      return typeof href === "string" ? href : "";
+    },
+    setValue: ({
+      component,
+      value,
+    }: {
+      component: Component;
+      value: unknown;
+    }) => {
+      const href = repairLiquidHref(String(value ?? "").trim());
+      if (href) component.addAttributes({ href });
+      else component.removeAttributes("href");
+    },
+  };
+}
+
+function installLinkHrefTraits(editor: Editor, mode: "mjml" | "html"): void {
+  if (mode === "html") {
+    editor.Components.addType("link", {
+      model: {
+        defaults: {
+          traits: [
+            "title",
+            linkHrefTrait(),
+            {
+              type: "select",
+              name: "target",
+              label: "Open link in",
+              options: [
+                { id: "", label: "Same tab" },
+                { id: "_blank", label: "New tab" },
+              ],
+            },
+          ],
+        },
+      },
+    });
+  } else {
+    editor.Components.addType("mj-button", {
+      model: { defaults: { traits: [linkHrefTrait()] } },
+    });
+  }
+}
+
 export function installImageSettings(
   editor: Editor,
   mode: "mjml" | "html",
@@ -200,6 +260,29 @@ export function installImageSettings(
   editor.Components.addType(type, {
     model: { defaults: { traits } },
   });
+  installLinkHrefTraits(editor, mode);
+}
+
+/**
+ * Repair Liquid hrefs that were mangled into dashboard URLs, on every
+ * component (an explicit save only — never on open). Returns how many.
+ */
+export function repairComponentLinks(editor: Editor): number {
+  let repaired = 0;
+  const visit = (component: Component) => {
+    const { href } = component.getAttributes();
+    if (typeof href === "string") {
+      const fixed = repairLiquidHref(href);
+      if (fixed !== href) {
+        component.addAttributes({ href: fixed });
+        repaired += 1;
+      }
+    }
+    component.components().forEach(visit);
+  };
+  const wrapper = editor.getWrapper();
+  if (wrapper) visit(wrapper);
+  return repaired;
 }
 
 /* ------------------------------------------------------------------ */
