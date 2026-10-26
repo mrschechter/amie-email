@@ -2,6 +2,7 @@ import {
   AMIE_HOME_URL,
   AMIE_PLACEHOLDER_IMAGE_URL,
 } from "isomorphic-lib/src/amieLinks";
+import { withoutPreviewText } from "isomorphic-lib/src/emailPreviewText";
 import {
   CodeEmailContents,
   EmailContentsType,
@@ -124,7 +125,10 @@ export function visualOpenState(
 ): VisualOpenState {
   const design = draft.visualDesign;
   if (design) {
-    return normalize(design.mjml) === normalize(draft.body)
+    // preview text is edited outside the visual editor (Subject/Settings)
+    // and carried into every visual save, so it isn't an outside edit
+    return normalize(withoutPreviewText(design.mjml)) ===
+      normalize(withoutPreviewText(draft.body))
       ? "design"
       : "stale";
   }
