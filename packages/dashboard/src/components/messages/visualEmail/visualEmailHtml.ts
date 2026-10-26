@@ -17,6 +17,7 @@ import juice from "juice";
 
 import { VISUAL_BRAND, VISUAL_FONT } from "./visualEmailDesign";
 import { stripManagedFontLink, withFontLinks } from "./visualEmailFonts";
+import { repairLiquidLinks } from "./visualEmailLinks";
 
 /**
  * Marks the one `<style>` block the visual editor owns: CSS that can't be
@@ -482,6 +483,8 @@ export function exportHtmlDocument(editor: Editor, shell: HtmlShell): string {
     content = juice.inlineContent(content, inlineCss, JUICE_OPTIONS);
   }
   content = restoreLiquidAndEntities(content);
+  // Liquid links mangled into dashboard URLs are restored on save
+  content = repairLiquidLinks(content).markup;
 
   const editorStyle = preserved.length
     ? `<style ${EDITOR_STYLE_ATTR}>${preserved.join("")}</style>`

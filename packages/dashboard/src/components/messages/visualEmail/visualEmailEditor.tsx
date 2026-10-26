@@ -31,6 +31,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   configureHtmlModeComponents,
   installImageSettings,
+  repairComponentLinks,
 } from "./visualEmailComponents";
 import { convertMjmlToHtml, readMjmlBackup } from "./visualEmailConvert";
 import {
@@ -59,8 +60,15 @@ import {
   STARTER_HTML,
 } from "./visualEmailHtml";
 import {
+  countBrokenLiquidLinks,
+  repairLiquidLinks,
+  validateHref,
+} from "./visualEmailLinks";
+import {
+  hasSyncContent,
   installRichTextToolbar,
   LinkOptions,
+  RTE_CHANGE_EVENT,
   RTE_TOOLBAR_CSS,
 } from "./visualEmailRte";
 import {
@@ -173,6 +181,8 @@ export default function VisualEmailEditor({
     openState === "design" ? "design" : "starter",
   );
   const [pending, setPending] = useState(false);
+  // Liquid links mangled into dashboard URLs, found on open; Save repairs them.
+  const [repairableLinks, setRepairableLinks] = useState(0);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [recovery, setRecovery] = useState<string | null>(null);
   // HTML mode: risky content found before opening, awaiting the user's choice.
@@ -217,69 +227,109 @@ export default function VisualEmailEditor({
     setStarted(true);
   }, []);
 
-  const flush = useCallback(() => {
-    const editor = editorRef.current;
-    if (!editor || disabled) return;
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = null;
-    // GrapesJS ProjectData is a plain JSON object; we persist it opaquely.
-    const project: Record<string, unknown> = JSON.parse(
-      JSON.stringify(editor.getProjectData()),
-    );
-    if (modeRef.current === "html") {
-      const shell = shellRef.current;
-      if (!shell) return;
-      const html = exportHtmlDocument(editor, shell);
-      const design = buildVisualDesign({
-        project,
-        mjml: html,
-        editor: VISUAL_HTML_EDITOR_ID,
-      });
-      setDraft((current) => applyVisualSave(current, design));
-      setWarnings(visualHtmlWarnings(html));
-      editor.clearDirtyCount();
-      dirtyRef.current = false;
-    } else {
-      // declares Montserrat with <mj-font> when the email uses it
-      const mjml = withMjmlFonts(editor.getHtml());
-      const design = buildVisualDesign({
-        project,
-        mjml,
-      });
-      setDraft((current) => applyVisualSave(current, design));
-      setWarnings(visualDesignWarnings(mjml));
-    }
-    setPending(false);
-    try {
-      window.localStorage.removeItem(backupKey(templateId));
-    } catch {
-      // storage unavailable — autosave to the server still happened
-    }
-  }, [disabled, setDraft, templateId]);
-
-  const schedule = useCallback(() => {
-    if (disabled) return;
-    const editor = editorRef.current;
-    // Loading content can emit updates; only real edits count in HTML mode.
-    if (modeRef.current === "html" && editor && !editor.getDirtyCount()) return;
-    setPending(true);
-    if (editor) {
-      try {
-        window.localStorage.setItem(
-          backupKey(templateId),
-          JSON.stringify({ at: Date.now(), project: editor.getProjectData() }),
+  /**
+   * Write the editor's design to the draft. `repair` restores Liquid links
+   * that were mangled into dashboard URLs — explicit saves only, never the
+   * automatic first write when an MJML email is opened.
+   */
+  const saveDesign = useCallback(
+    (repair: boolean) => {
+      const editor = editorRef.current;
+      if (!editor || disabled) return;
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = null;
+      const run = () => {
+        if (repair) {
+          repairComponentLinks(editor);
+          setRepairableLinks(0);
+        }
+        // GrapesJS ProjectData is a plain JSON object; we persist it opaquely.
+        const project: Record<string, unknown> = JSON.parse(
+          JSON.stringify(editor.getProjectData()),
         );
-      } catch {
-        // ignore quota/private-mode errors
+        if (modeRef.current === "html") {
+          const shell = shellRef.current;
+          if (!shell) return;
+          const html = exportHtmlDocument(editor, shell);
+          const design = buildVisualDesign({
+            project,
+            mjml: html,
+            editor: VISUAL_HTML_EDITOR_ID,
+          });
+          setDraft((current) => applyVisualSave(current, design));
+          setWarnings(visualHtmlWarnings(html));
+          editor.clearDirtyCount();
+          dirtyRef.current = false;
+        } else {
+          // declares Montserrat with <mj-font> when the email uses it
+          const fonts = withMjmlFonts(editor.getHtml());
+          const mjml = repair ? repairLiquidLinks(fonts).markup : fonts;
+          const design = buildVisualDesign({
+            project,
+            mjml,
+          });
+          setDraft((current) => applyVisualSave(current, design));
+          setWarnings(visualDesignWarnings(mjml));
+        }
+        setPending(false);
+        try {
+          window.localStorage.removeItem(backupKey(templateId));
+        } catch {
+          // storage unavailable — autosave to the server still happened
+        }
+      };
+      // HTML mode: text being edited right now is written to the model first,
+      // so a toolbar edit (link, color …) isn't lost when Save is clicked.
+      const view: unknown =
+        modeRef.current === "html" ? editor.getSelected()?.getView() : null;
+      if (hasSyncContent(view)) {
+        void view.syncContent().then(run);
+      } else {
+        run();
       }
-    }
-    if (modeRef.current === "html") {
-      dirtyRef.current = true;
-      return;
-    }
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(flush, SYNC_DEBOUNCE_MS);
-  }, [disabled, flush, templateId]);
+    },
+    [disabled, setDraft, templateId],
+  );
+
+  const flush = useCallback(() => saveDesign(true), [saveDesign]);
+
+  const schedule = useCallback(
+    (force = false) => {
+      if (disabled) return;
+      const editor = editorRef.current;
+      // Loading content can emit updates; only real edits count in HTML mode.
+      // Toolbar edits (`force`) don't change GrapesJS's dirty count.
+      if (
+        !force &&
+        modeRef.current === "html" &&
+        editor &&
+        !editor.getDirtyCount()
+      ) {
+        return;
+      }
+      setPending(true);
+      if (editor) {
+        try {
+          window.localStorage.setItem(
+            backupKey(templateId),
+            JSON.stringify({
+              at: Date.now(),
+              project: editor.getProjectData(),
+            }),
+          );
+        } catch {
+          // ignore quota/private-mode errors
+        }
+      }
+      if (modeRef.current === "html") {
+        dirtyRef.current = true;
+        return;
+      }
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(flush, SYNC_DEBOUNCE_MS);
+    },
+    [disabled, flush, templateId],
+  );
 
   // Warn before leaving with an unsynced change.
   useEffect(() => {
@@ -498,7 +548,12 @@ export default function VisualEmailEditor({
     );
     // Starting from MJML or the starter writes the first design immediately.
     // HTML mode never writes on open: only the Save button changes the body.
-    if (!design && !disabled && !htmlMode) flush();
+    if (!design && !disabled && !htmlMode) saveDesign(false);
+    let openedMarkup = editor.getHtml();
+    if (htmlMode)
+      openedMarkup = design && loadedDesign ? design.mjml : current.body;
+    const broken = countBrokenLiquidLinks(openedMarkup);
+    setRepairableLinks(broken);
     // A new HTML design or a confirmed conversion is an explicit action, so
     // it writes the HTML document right away (opening an email never does).
     if (
@@ -508,14 +563,41 @@ export default function VisualEmailEditor({
       flush();
       convertedHtmlRef.current = null;
     }
-    editor.on("update", schedule);
+    const onUpdate = () => schedule(false);
+    editor.on("update", onUpdate);
+    // Toolbar actions and paste edit the DOM without GrapesJS counting a
+    // change: mark the edit, and save (MJML) once the text is synced back to
+    // the model when editing stops.
+    let rteEdited = false;
+    const onRteChange = () => {
+      rteEdited = true;
+      schedule(true);
+    };
+    const onRteDisable = () => {
+      if (!rteEdited) return;
+      rteEdited = false;
+      setTimeout(() => schedule(true), 50);
+    };
+    const listenCanvas = () => {
+      const doc = editor.Canvas.getDocument();
+      doc?.removeEventListener(RTE_CHANGE_EVENT, onRteChange);
+      doc?.addEventListener(RTE_CHANGE_EVENT, onRteChange);
+    };
+    editor.on("canvas:frame:load", listenCanvas);
+    editor.onReady(listenCanvas);
+    editor.on("rte:disable", onRteDisable);
 
     return () => {
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
       }
-      editor.off("update", schedule);
+      editor.off("update", onUpdate);
+      editor.off("rte:disable", onRteDisable);
+      editor.Canvas.getDocument()?.removeEventListener(
+        RTE_CHANGE_EVENT,
+        onRteChange,
+      );
       editor.destroy();
       editorRef.current = null;
       shellRef.current = null;
@@ -846,6 +928,10 @@ export default function VisualEmailEditor({
     setStartSource(mjmlBackup.visualDesign ? "design" : "mjml");
   };
 
+  const linkDialogError = linkDialog?.href.trim()
+    ? validateHref(linkDialog.href)
+    : null;
+
   const linkDialogEl = (
     <Dialog
       open={Boolean(linkDialog)}
@@ -861,8 +947,16 @@ export default function VisualEmailEditor({
           <TextField
             autoFocus
             label="Link URL"
-            placeholder="https://tryamie.com/…"
+            // plain text, not type="url": Liquid like {% unsubscribe_url %}
+            // isn't a URL and must be stored exactly as typed
+            type="text"
+            placeholder="https://tryamie.com/… or {% unsubscribe_url %}"
             value={linkDialog?.href ?? ""}
+            error={Boolean(linkDialogError)}
+            helperText={
+              linkDialogError ??
+              "Web link, mailto:, tel:, or a Liquid tag — saved exactly as typed."
+            }
             onChange={(event) =>
               setLinkDialog((d) => (d ? { ...d, href: event.target.value } : d))
             }
@@ -912,7 +1006,7 @@ export default function VisualEmailEditor({
         <Button onClick={() => setLinkDialog(null)}>Cancel</Button>
         <Button
           variant="contained"
-          disabled={!linkDialog?.href.trim()}
+          disabled={!linkDialog?.href.trim() || Boolean(linkDialogError)}
           onClick={() => {
             if (!linkDialog) return;
             linkDialog.apply({
@@ -967,8 +1061,8 @@ export default function VisualEmailEditor({
         {mode === "html" ? (
           <Button
             size="small"
-            variant={pending ? "contained" : "outlined"}
-            disabled={Boolean(disabled) || !pending}
+            variant={pending || repairableLinks ? "contained" : "outlined"}
+            disabled={Boolean(disabled) || (!pending && !repairableLinks)}
             onClick={flush}
           >
             Save

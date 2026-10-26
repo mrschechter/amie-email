@@ -18,6 +18,7 @@ import {
 } from "./visualEmailColor";
 import { VISUAL_EMAIL_VARIABLES } from "./visualEmailDesign";
 import { MONTSERRAT_STACK } from "./visualEmailFonts";
+import { repairLiquidHref } from "./visualEmailLinks";
 
 /** GrapesJS doesn't export its RTE class type; take it from the action API. */
 type RichTextEditor = Parameters<RichTextEditorAction["result"]>[0];
@@ -231,13 +232,19 @@ export function readLink(root: HTMLElement, range: Range): LinkOptions | null {
   const a = linkAt(root, range);
   return a
     ? {
-        href: a.getAttribute("href") ?? "",
+        // the attribute, never `a.href` (which resolves Liquid into a URL);
+        // a link broken that way before is shown repaired
+        href: repairLiquidHref(a.getAttribute("href") ?? ""),
         target: a.getAttribute("target") ?? "",
       }
     : null;
 }
 
-function setLinkAttributes(a: Element, { href, target }: LinkOptions): void {
+function setLinkAttributes(
+  a: Element,
+  { href: raw, target }: LinkOptions,
+): void {
+  const href = repairLiquidHref(raw);
   a.setAttribute("href", href);
   if (target) a.setAttribute("target", target);
   else a.removeAttribute("target");
@@ -483,15 +490,21 @@ function currentRange(rte: RteLike): Range | null {
   return rte.el.contains(range.commonAncestorContainer) ? range : null;
 }
 
+/** Bubbles from the edited element after any toolbar/paste edit. */
+export const RTE_CHANGE_EVENT = "amie-rte-change";
+
 function finish(rte: RteLike, range: Range): void {
   const sel = rte.selection();
   if (sel) {
     sel.removeAllRanges();
     sel.addRange(range);
   }
-  // Let GrapesJS know the content changed (it syncs the model from the DOM).
+  // Let GrapesJS know the content changed (it syncs the model from the DOM)
+  // and tell the editor UI an edit happened: toolbar actions change the DOM
+  // without typing, which GrapesJS doesn't count as an unsaved change.
   const EventCtor = rte.doc.defaultView?.Event ?? Event;
   rte.el.dispatchEvent(new EventCtor("input", { bubbles: true }));
+  rte.el.dispatchEvent(new EventCtor(RTE_CHANGE_EVENT, { bubbles: true }));
 }
 
 function selectIcon(
@@ -547,9 +560,9 @@ export function applySavedColor(
   return true;
 }
 
-function hasSyncContent(
-  view: unknown,
-): view is { syncContent: () => Promise<void> } {
+export function hasSyncContent(view: unknown): view is {
+  syncContent: (opts?: { force?: boolean; content?: string }) => Promise<void>;
+} {
   return (
     typeof view === "object" &&
     view !== null &&
@@ -558,9 +571,87 @@ function hasSyncContent(
   );
 }
 
+/**
+ * Dialogs and pickers take focus, which makes GrapesJS stop editing the text
+ * (and sync it) *before* the user's choice is applied. Write the element's
+ * content back to its component so that late edit isn't lost.
+ */
+export function syncAfterDeferredEdit(editor: Editor, el: HTMLElement): void {
+  const find = (component: Component): Component | undefined => {
+    if (component.getView()?.el === el) return component;
+    for (const child of component.components().models) {
+      const found = find(child);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  const wrapper = editor.getWrapper();
+  const component = wrapper ? find(wrapper) : undefined;
+  const view: unknown = component?.getView();
+  const editing =
+    typeof view === "object" &&
+    view !== null &&
+    "rteEnabled" in view &&
+    Boolean(view.rteEnabled);
+  if (!editing && hasSyncContent(view)) {
+    void view.syncContent({ force: true, content: el.innerHTML });
+  }
+}
+
 /** The text component whose RTE is active (for component-level alignment). */
 function editingComponent(editor: Editor): Component | undefined {
   return editor.getSelected();
+}
+
+const DROP_ON_PASTE =
+  "script, style, meta, link, title, base, iframe, object, embed, form, input, button, select, textarea";
+
+/**
+ * Insert clipboard content at `range`: HTML is cleaned (no scripts/styles/
+ * classes/editor ids; Liquid hrefs repaired), plain text keeps line breaks.
+ */
+export function insertPasted(
+  root: HTMLElement,
+  range: Range,
+  html: string,
+  text: string,
+): Range {
+  const doc = root.ownerDocument;
+  const fragment = doc.createDocumentFragment();
+  if (html) {
+    const Parser = doc.defaultView?.DOMParser ?? DOMParser;
+    const parsed = new Parser().parseFromString(html, "text/html");
+    parsed.querySelectorAll(DROP_ON_PASTE).forEach((el) => el.remove());
+    const walker = parsed.createTreeWalker(parsed.body, 128 /* comments */);
+    const comments: Node[] = [];
+    while (walker.nextNode()) comments.push(walker.currentNode);
+    comments.forEach((c) => c.parentNode?.removeChild(c));
+    parsed.body.querySelectorAll("*").forEach((el) => {
+      el.removeAttribute("class");
+      el.removeAttribute("id");
+      Array.from(el.attributes)
+        .filter((a) => /^(on|data-gjs)/i.test(a.name))
+        .forEach((a) => el.removeAttribute(a.name));
+      const href = el.getAttribute("href");
+      if (href !== null) el.setAttribute("href", repairLiquidHref(href));
+    });
+    Array.from(parsed.body.childNodes).forEach((node) =>
+      fragment.appendChild(doc.importNode(node, true)),
+    );
+  } else {
+    text.split(/\r\n|\r|\n/).forEach((line, i) => {
+      if (i > 0) fragment.appendChild(doc.createElement("br"));
+      fragment.appendChild(doc.createTextNode(line));
+    });
+  }
+  range.deleteContents();
+  const last = fragment.lastChild;
+  range.insertNode(fragment);
+  if (last) {
+    range.setStartAfter(last);
+    range.collapse(true);
+  }
+  return range;
 }
 
 /**
@@ -572,6 +663,22 @@ export function installRichTextToolbar(
   { mode, openLinkDialog }: RteToolbarOptions,
 ): void {
   const rteModule = editor.RichTextEditor;
+  // Pasting HTML (including copy/paste inside the canvas) goes through our
+  // sanitizer: Chrome resolves hrefs on copy, which mangles Liquid links.
+  const rteConfig: {
+    onPaste?: (data: { ev: ClipboardEvent; rte: RichTextEditor }) => void;
+  } = rteModule.getConfig();
+  rteConfig.onPaste = ({ ev, rte }) => {
+    const range = currentRange(rte);
+    const data = ev.clipboardData;
+    if (!range || !data) return;
+    const html = data.getData("text/html");
+    const text = data.getData("text");
+    if (!html && !text) return;
+    ev.preventDefault();
+    finish(rte, insertPasted(rte.el, range, html, text));
+  };
+
   // GrapesJS's own link/wrap actions create links without an href prompt and
   // styling wrappers with editor ids; ours replace them.
   rteModule.remove("link");
@@ -631,13 +738,9 @@ export function installRichTextToolbar(
           initial: selectionColor(rte, range, prop),
           closeOn: [rte.doc],
           onApply: (color) => {
-            if (
-              applySavedColor(rte, range, prop, color ?? "") &&
-              color &&
-              bar
-            ) {
-              bar.style.background = color;
-            }
+            if (!applySavedColor(rte, range, prop, color ?? "")) return;
+            syncAfterDeferredEdit(editor, rte.el);
+            if (color && bar) bar.style.background = color;
           },
         });
       },
@@ -663,6 +766,7 @@ export function installRichTextToolbar(
           ? applyLink(rte.el, range, link)
           : removeLink(rte.el, range);
         finish(rte, next);
+        syncAfterDeferredEdit(editor, rte.el);
       });
     },
   });
