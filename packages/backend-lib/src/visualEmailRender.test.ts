@@ -129,3 +129,20 @@ describe("visual design schema", () => {
     );
   });
 });
+
+describe("Montserrat from the visual editor", () => {
+  it("an <mj-font> declared by the MJML editor compiles to a guarded font link", () => {
+    const html = renderLiquid({
+      template:
+        '<mjml><mj-head><mj-font name="Montserrat" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&amp;display=swap"></mj-font></mj-head><mj-body><mj-section><mj-column><mj-text><span style="font-family:Montserrat, Arial, Helvetica, sans-serif;">Hi {{ user.firstName }}</span></mj-text></mj-column></mj-section></mj-body></mjml>',
+      mjml: true,
+      workspaceId: randomUUID(),
+      identifierKey: "email",
+      userProperties: { firstName: "Ana", email: "ana@example.com" },
+    });
+    expect(html).toContain("Hi Ana");
+    expect(html).toMatch(
+      /<!--\[if !mso\]><!-->[\s\S]*fonts\.googleapis\.com\/css2\?family=Montserrat[\s\S]*<!--<!\[endif\]-->/,
+    );
+  });
+});

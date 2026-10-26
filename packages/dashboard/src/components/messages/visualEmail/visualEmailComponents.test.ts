@@ -19,6 +19,7 @@ import {
   setImageLink,
   setImageSrc,
 } from "./visualEmailComponents";
+import { MONTSERRAT_LINK_HTML, stripManagedFontLink } from "./visualEmailFonts";
 import {
   exportHtmlDocument,
   HTML_BLOCKS,
@@ -430,7 +431,14 @@ describe("dropping blocks between stacked sibling tables (no wrapping card)", ()
       expect(saved).not.toMatch(/data-gjs|gjs-|\sid="i[a-z0-9]{3,6}"/);
       expect(saved).toContain("{{ user.firstName | default: 'Gorgeous' }}");
       expect(saved).toContain('href="{% unsubscribe_url %}"');
-      expect(saved.startsWith(splitHtmlDocument(body).shell.before)).toBe(true);
+      // head byte-identical, apart from the one Montserrat link the header
+      // bar's font needs (added before </head>)
+      expect(
+        stripManagedFontLink(saved).startsWith(
+          splitHtmlDocument(body).shell.before,
+        ),
+      ).toBe(true);
+      expect(saved.split(MONTSERRAT_LINK_HTML)).toHaveLength(2);
     },
   );
 

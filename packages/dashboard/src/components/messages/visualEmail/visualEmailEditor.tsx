@@ -43,6 +43,7 @@ import {
   VisualOpenState,
   visualOpenState,
 } from "./visualEmailDesign";
+import { installCanvasFonts, withMjmlFonts } from "./visualEmailFonts";
 import {
   applyShellToCanvas,
   detectHtmlImportRisks,
@@ -213,7 +214,8 @@ export default function VisualEmailEditor({
       editor.clearDirtyCount();
       dirtyRef.current = false;
     } else {
-      const mjml = editor.getHtml();
+      // declares Montserrat with <mj-font> when the email uses it
+      const mjml = withMjmlFonts(editor.getHtml());
       const design = buildVisualDesign({
         project,
         mjml,
@@ -329,6 +331,7 @@ export default function VisualEmailEditor({
     // imported images/cells pick them up.
     if (htmlMode) configureHtmlModeComponents(editor);
     else installImageSettings(editor, "mjml");
+    installCanvasFonts(editor);
     installRichTextToolbar(editor, {
       mode: htmlMode ? "html" : "mjml",
       openLinkDialog: (existing, apply) =>

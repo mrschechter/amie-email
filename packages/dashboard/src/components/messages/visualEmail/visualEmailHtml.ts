@@ -16,6 +16,7 @@ import {
 import juice from "juice";
 
 import { VISUAL_BRAND, VISUAL_FONT } from "./visualEmailDesign";
+import { stripManagedFontLink, withFontLinks } from "./visualEmailFonts";
 
 /**
  * Marks the one `<style>` block the visual editor owns: CSS that can't be
@@ -94,7 +95,8 @@ export function splitHtmlDocument(html: string): SplitHtml {
     const lower = withoutEditorStyle.toLowerCase();
     const close = lower.lastIndexOf("</body");
     const end = close >= start ? close : withoutEditorStyle.length;
-    before = withoutEditorStyle.slice(0, start);
+    // the Montserrat link a previous save added is re-derived on every save
+    before = stripManagedFontLink(withoutEditorStyle.slice(0, start));
     content = withoutEditorStyle.slice(start, end);
     after = withoutEditorStyle.slice(end);
     bodyAttributes = parseAttributes(open[0]);
@@ -484,7 +486,11 @@ export function exportHtmlDocument(editor: Editor, shell: HtmlShell): string {
   const editorStyle = preserved.length
     ? `<style ${EDITOR_STYLE_ATTR}>${preserved.join("")}</style>`
     : "";
-  let { before } = shell;
+  // One managed Montserrat <link> when the email uses it (see visualEmailFonts)
+  let before = withFontLinks(
+    shell.before,
+    [content, shell.headCss, ...preserved].join("\n"),
+  );
   if (editorStyle) {
     const headClose = before.toLowerCase().lastIndexOf("</head");
     if (headClose !== -1) {
