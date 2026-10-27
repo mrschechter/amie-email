@@ -25,7 +25,12 @@ import {
   AmieAssetListResponse,
 } from "isomorphic-lib/src/amieAssets";
 import { AMIE_PLACEHOLDER_IMAGE_URL } from "isomorphic-lib/src/amieLinks";
-import { CodeEmailContents } from "isomorphic-lib/src/types";
+import {
+  readPreviewText,
+  stripLegacyMjmlPreview,
+  writePreviewText,
+} from "isomorphic-lib/src/emailPreviewText";
+import { CodeEmailContents, VisualEmailDesign } from "isomorphic-lib/src/types";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -121,6 +126,22 @@ interface LinkDialogState {
 }
 
 const TOOLBAR_STYLE_ID = "amie-rte-toolbar-css";
+
+/**
+ * The template's preview text (set in the Subject / Settings panel) lives in
+ * the body. Every visual save carries it over into what the editor wrote —
+ * `<mj-preview>` for MJML, the hidden preheader for HTML — so a visual save
+ * never drops or duplicates it.
+ */
+function withDraftPreview(
+  design: VisualEmailDesign,
+  current: CodeEmailContents,
+): VisualEmailDesign {
+  return {
+    ...design,
+    mjml: writePreviewText(design.mjml, readPreviewText(current.body)),
+  };
+}
 
 export interface VisualEmailEditorProps {
   templateId: string;
@@ -256,7 +277,9 @@ export default function VisualEmailEditor({
             mjml: html,
             editor: VISUAL_HTML_EDITOR_ID,
           });
-          setDraft((current) => applyVisualSave(current, design));
+          setDraft((current) =>
+            applyVisualSave(current, withDraftPreview(design, current)),
+          );
           setWarnings(visualHtmlWarnings(html));
           editor.clearDirtyCount();
           dirtyRef.current = false;
@@ -268,7 +291,9 @@ export default function VisualEmailEditor({
             project,
             mjml,
           });
-          setDraft((current) => applyVisualSave(current, design));
+          setDraft((current) =>
+            applyVisualSave(current, withDraftPreview(design, current)),
+          );
           setWarnings(visualDesignWarnings(mjml));
         }
         setPending(false);
@@ -485,9 +510,13 @@ export default function VisualEmailEditor({
     if (loadedDesign || htmlMode) {
       // design restored / HTML imported above
     } else if (design?.project && isMjmlBody(current.body)) {
-      editor.setComponents(expandSelfClosingMjml(current.body));
+      editor.setComponents(
+        expandSelfClosingMjml(stripLegacyMjmlPreview(current.body)),
+      );
     } else if (startSource === "mjml" && current.body) {
-      editor.setComponents(expandSelfClosingMjml(current.body));
+      editor.setComponents(
+        expandSelfClosingMjml(stripLegacyMjmlPreview(current.body)),
+      );
     } else {
       editor.setComponents(STARTER_MJML);
     }
@@ -1036,6 +1065,26 @@ export default function VisualEmailEditor({
           {statusLabel}
         </Typography>
         <Box sx={{ flex: 1 }} />
+        <TextField
+          size="small"
+          placeholder="Preview text (shown after the subject in the inbox)"
+          inputProps={{ "aria-label": "Preview text" }}
+          value={readPreviewText(draft.body)}
+          disabled={Boolean(disabled)}
+          // Same field as Subject / Settings: stored in the body
+          // (<mj-preview> or the hidden preheader); every save keeps it.
+          onChange={(event) => {
+            const { value } = event.target;
+            setDraft((current) => ({
+              ...current,
+              body: writePreviewText(current.body, value),
+            }));
+          }}
+          sx={{
+            width: 340,
+            "& .MuiInputBase-input": { fontSize: 12.5, py: 0.5 },
+          }}
+        />
         {!hasUnsubscribeLink(draft.body) ? (
           <Typography sx={{ fontSize: 12.5, color: "#B76E79" }}>
             Add an unsubscribe link before sending
