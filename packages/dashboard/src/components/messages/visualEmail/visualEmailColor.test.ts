@@ -11,7 +11,12 @@ import {
   rememberColor,
   rgbToHex,
 } from "./visualEmailColor";
-import { applySavedColor, RteLike, selectionColor } from "./visualEmailRte";
+import {
+  applySavedColor,
+  RteLike,
+  saveSelection,
+  selectionColor,
+} from "./visualEmailRte";
 
 function memoryStorage(initial: Record<string, string> = {}) {
   const data = { ...initial };
@@ -121,7 +126,7 @@ describe("recent colors", () => {
 describe("applying a color to a saved selection", () => {
   it("styles the saved range inline even after the selection moved", () => {
     const { root, range, rte } = editable();
-    const saved = range.cloneRange();
+    const saved = saveSelection(root, range);
     // the user clicked elsewhere (e.g. to close a native picker)
     document.getSelection()?.collapse(root, 0);
     expect(applySavedColor(rte, saved, "color", "#B76E79")).toBe(true);
@@ -134,7 +139,12 @@ describe("applying a color to a saved selection", () => {
 
   it("highlight uses background-color, and clearing removes it", () => {
     const { root, range, rte } = editable();
-    applySavedColor(rte, range, "background-color", "#FFF3A3");
+    applySavedColor(
+      rte,
+      saveSelection(root, range),
+      "background-color",
+      "#FFF3A3",
+    );
     expect(root.innerHTML).toBe(
       'Hi <span style="background-color:#FFF3A3;">there</span> you',
     );
@@ -142,14 +152,25 @@ describe("applying a color to a saved selection", () => {
     if (!span) throw new Error("no span");
     const again = document.createRange();
     again.selectNodeContents(span);
-    applySavedColor(rte, again, "background-color", "");
+    applySavedColor(rte, saveSelection(root, again), "background-color", "");
     expect(root.innerHTML).toBe("Hi there you");
   });
 
   it("does nothing when that text is no longer being edited", () => {
     const { root, range, rte } = editable();
+    const saved = saveSelection(root, range);
     root.remove();
-    expect(applySavedColor(rte, range, "color", "#000000")).toBe(false);
+    expect(applySavedColor(rte, saved, "color", "#000000")).toBe(false);
+  });
+
+  it("still colors the right words after GrapesJS rebuilt the text", () => {
+    const { root, range, rte } = editable();
+    const saved = saveSelection(root, range);
+    root.innerHTML = "Hi there you"; // same text, new nodes
+    expect(applySavedColor(rte, saved, "color", "#B76E79")).toBe(true);
+    expect(root.innerHTML).toBe(
+      'Hi <span style="color:#B76E79;">there</span> you',
+    );
   });
 
   it("prefills from the selection's current color", () => {

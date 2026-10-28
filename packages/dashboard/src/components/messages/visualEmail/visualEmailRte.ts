@@ -92,6 +92,10 @@ function isElement(node: Node | null | undefined): node is HTMLElement {
   return Boolean(node) && node?.nodeType === 1;
 }
 
+function isText(node: Node): node is Text {
+  return node.nodeType === 3;
+}
+
 function isParentNode(node: Node): node is Element | DocumentFragment {
   return node.nodeType === 1 || node.nodeType === 11;
 }
@@ -250,7 +254,46 @@ function setLinkAttributes(
   else a.removeAttribute("target");
 }
 
-/** Insert or edit a link. `href` is written exactly (Liquid allowed). */
+// letters (incl. accented Latin), digits, apostrophes and hyphens
+const WORD_CHAR_RE = /[\w'\u2019\u00C0-\u024F-]/;
+
+/**
+ * Grow a collapsed caret that sits in or at the edge of a word to cover that
+ * word. Returns false (range unchanged) when there's no word at the caret.
+ */
+export function expandToWord(range: Range): boolean {
+  if (!range.collapsed) return false;
+  const node = range.startContainer;
+  if (node.nodeType !== 3) return false;
+  const text = node.textContent ?? "";
+  let start = range.startOffset;
+  let end = start;
+  while (start > 0 && WORD_CHAR_RE.test(text.charAt(start - 1))) start -= 1;
+  while (end < text.length && WORD_CHAR_RE.test(text.charAt(end))) end += 1;
+  if (start === end) return false;
+  range.setStart(node, start);
+  range.setEnd(node, end);
+  return true;
+}
+
+/**
+ * Text for a link inserted with nothing selected: the variable's label
+ * ("Unsubscribe"), "Link" for other Liquid, or the web address itself.
+ * Never the raw Liquid tag, which would be shown to the reader.
+ */
+export function linkTextFor(href: string): string {
+  const value = href.trim();
+  const known = VISUAL_EMAIL_VARIABLES.find((v) => v.value === value);
+  if (known?.linkText) return known.linkText;
+  if (/\{%|\{\{/.test(value)) return "Link";
+  return value.replace(/^mailto:|^tel:|^sms:/i, "");
+}
+
+/**
+ * Insert or edit a link. `href` is written exactly (Liquid allowed). With
+ * nothing selected, the word at the caret is linked; with no word there, a
+ * link labelled by `linkTextFor` is inserted.
+ */
 export function applyLink(
   root: HTMLElement,
   range: Range,
@@ -264,8 +307,8 @@ export function applyLink(
   const doc = root.ownerDocument;
   const a = doc.createElement("a");
   setLinkAttributes(a, options);
-  if (range.collapsed) {
-    a.textContent = options.href;
+  if (range.collapsed && !expandToWord(range)) {
+    a.textContent = linkTextFor(options.href);
   } else {
     const fragment = range.extractContents();
     // links can't nest
@@ -493,7 +536,7 @@ function currentRange(rte: RteLike): Range | null {
 /** Bubbles from the edited element after any toolbar/paste edit. */
 export const RTE_CHANGE_EVENT = "amie-rte-change";
 
-function finish(rte: RteLike, range: Range): void {
+function finish(rte: RteLike, range: Range, root: HTMLElement = rte.el): void {
   const sel = rte.selection();
   if (sel) {
     sel.removeAllRanges();
@@ -503,8 +546,89 @@ function finish(rte: RteLike, range: Range): void {
   // and tell the editor UI an edit happened: toolbar actions change the DOM
   // without typing, which GrapesJS doesn't count as an unsaved change.
   const EventCtor = rte.doc.defaultView?.Event ?? Event;
-  rte.el.dispatchEvent(new EventCtor("input", { bubbles: true }));
-  rte.el.dispatchEvent(new EventCtor(RTE_CHANGE_EVENT, { bubbles: true }));
+  root.dispatchEvent(new EventCtor("input", { bubbles: true }));
+  root.dispatchEvent(new EventCtor(RTE_CHANGE_EVENT, { bubbles: true }));
+}
+
+/**
+ * A selection remembered as character offsets into the edited text, not as a
+ * live `Range`.
+ *
+ * Why: the link dialog, color picker and toolbar dropdowns take focus, which
+ * makes GrapesJS stop editing and, if the text changed since editing started,
+ * rebuild the block's DOM from its model. A saved `Range` then points at
+ * removed nodes and collapses to the start of the block, so the link was
+ * inserted there (with its URL as the text) instead of around the words.
+ * The rebuilt DOM has the same text, so offsets still find the words.
+ */
+export interface SavedSelection {
+  start: number;
+  end: number;
+}
+
+function textOffset(root: HTMLElement, node: Node, offset: number): number {
+  const before = root.ownerDocument.createRange();
+  before.setStart(root, 0);
+  before.setEnd(node, offset);
+  return before.toString().length;
+}
+
+export function saveSelection(root: HTMLElement, range: Range): SavedSelection {
+  return {
+    start: textOffset(root, range.startContainer, range.startOffset),
+    end: textOffset(root, range.endContainer, range.endOffset),
+  };
+}
+
+/** The range for `saved` in `root`'s current DOM (clamped to its text). */
+export function restoreSelection(
+  root: HTMLElement,
+  saved: SavedSelection,
+): Range {
+  const doc = root.ownerDocument;
+  const range = doc.createRange();
+  range.setStart(root, 0);
+  range.collapse(true);
+  const walker = doc.createTreeWalker(root, 4 /* text */);
+  const texts: Text[] = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (isText(node)) texts.push(node);
+  }
+  // `atEnd`: a boundary between two text nodes belongs to the earlier one
+  // for the end of the selection and to the later one for its start, so the
+  // range covers exactly the selected text.
+  const locate = (target: number, atEnd: boolean): [Node, number] | null => {
+    let seen = 0;
+    for (const text of texts) {
+      const len = text.data.length;
+      if (target < seen + len || (atEnd && target === seen + len)) {
+        return [text, target - seen];
+      }
+      seen += len;
+    }
+    const last = texts[texts.length - 1];
+    return last ? [last, last.data.length] : null;
+  };
+  const start = locate(saved.start, saved.start === saved.end);
+  const end = locate(saved.end, true);
+  if (start) range.setStart(start[0], start[1]);
+  if (end) range.setEnd(end[0], end[1]);
+  return range;
+}
+
+/**
+ * Where a deferred edit goes: the element being edited when the dialog
+ * opened, or — if GrapesJS re-rendered that text block meanwhile — the
+ * block's current element.
+ */
+function editedRoot(
+  rte: RteLike,
+  component: Component | undefined,
+): HTMLElement | null {
+  if (rte.el.isConnected) return rte.el;
+  const el = component?.getView()?.getChildrenContainer();
+  return el?.isConnected ? el : null;
 }
 
 function selectIcon(
@@ -540,23 +664,41 @@ export function selectionColor(
 }
 
 /**
- * Apply (or, with an empty value, clear) a color on a range saved when the
- * picker opened: put the selection back, then style it inline. Returns false
- * if that text is no longer being edited.
+ * Apply (or, with an empty value, clear) a color on the selection saved when
+ * the picker opened: find it again, then style it inline. Returns false if
+ * that text is no longer on the page.
  */
 export function applySavedColor(
   rte: RteLike,
-  range: Range,
+  saved: SavedSelection,
   prop: "color" | "background-color",
   color: string,
+  root: HTMLElement | null = rte.el,
 ): boolean {
-  if (!rte.el.isConnected || !rte.el.contains(range.commonAncestorContainer)) {
-    return false;
-  }
-  const sel = rte.selection();
-  sel?.removeAllRanges();
-  sel?.addRange(range);
-  finish(rte, applyInlineStyle(rte.el, range, prop, color));
+  if (!root?.isConnected) return false;
+  const range = restoreSelection(root, saved);
+  if (range.collapsed) return false;
+  finish(rte, applyInlineStyle(root, range, prop, color), root);
+  return true;
+}
+
+/**
+ * Apply the link dialog's result (`null` removes the link) to the selection
+ * saved when it opened. Returns false if that text is no longer on the page.
+ */
+export function applySavedLink(
+  rte: RteLike,
+  saved: SavedSelection,
+  link: LinkOptions | null,
+  root: HTMLElement | null = rte.el,
+): boolean {
+  if (!root?.isConnected) return false;
+  const range = restoreSelection(root, saved);
+  finish(
+    rte,
+    link ? applyLink(root, range, link) : removeLink(root, range),
+    root,
+  );
   return true;
 }
 
@@ -578,7 +720,12 @@ export function hasSyncContent(view: unknown): view is {
  */
 export function syncAfterDeferredEdit(editor: Editor, el: HTMLElement): void {
   const find = (component: Component): Component | undefined => {
-    if (component.getView()?.el === el) return component;
+    const view = component.getView();
+    // HTML text cells edit their own element; MJML text (mj-text) edits an
+    // inner container, which is what the RTE's `el` is.
+    if (view && (view.el === el || view.getChildrenContainer() === el)) {
+      return component;
+    }
     for (const child of component.components().models) {
       const found = find(child);
       if (found) return found;
@@ -655,6 +802,24 @@ export function insertPasted(
 }
 
 /**
+ * Insert a variable from the toolbar. URL variables ({% unsubscribe_url %} …)
+ * become a link — around the selected text, or labelled "Unsubscribe" etc. —
+ * because as plain text the tag would render as a bare, unclickable URL.
+ * Other variables are inserted as text, exactly.
+ */
+export function insertVariable(
+  root: HTMLElement,
+  range: Range,
+  value: string,
+): Range {
+  const variable = VISUAL_EMAIL_VARIABLES.find((v) => v.value === value);
+  if (variable?.linkText) {
+    return applyLink(root, range, { href: value, target: "_blank" });
+  }
+  return insertTextAt(root, range, value);
+}
+
+/**
  * Install the Mautic-like toolbar. Call once per editor, before content loads.
  * The variables picker is its own action at the end of the toolbar.
  */
@@ -684,6 +849,52 @@ export function installRichTextToolbar(
   rteModule.remove("link");
   rteModule.remove("wrap");
 
+  // Toolbar dropdowns take focus when opened, which can end editing (and
+  // rebuild the text) before `change` fires; remember the selection first.
+  let activeRte: RichTextEditor | null = null;
+  editor.on("rte:enable", (_view: unknown, rte: RichTextEditor) => {
+    activeRte = rte;
+  });
+  const snapshotOn = (select: HTMLSelectElement) => {
+    let snapshot: {
+      rte: RichTextEditor;
+      saved: SavedSelection;
+      component: Component | undefined;
+    } | null = null;
+    const take = () => {
+      const range = activeRte ? currentRange(activeRte) : null;
+      snapshot =
+        activeRte && range
+          ? {
+              rte: activeRte,
+              saved: saveSelection(activeRte.el, range),
+              component: editingComponent(editor),
+            }
+          : null;
+    };
+    select.addEventListener("mousedown", take);
+    select.addEventListener("focus", take);
+    /** Run `edit` on the remembered selection (or the live one). */
+    return (
+      rte: RichTextEditor,
+      edit: (root: HTMLElement, range: Range) => Range,
+    ) => {
+      const snap = snapshot && snapshot.rte === rte ? snapshot : null;
+      snapshot = null;
+      const live = currentRange(rte);
+      let root: HTMLElement | null = rte.el;
+      let range: Range | null = live;
+      if (snap) {
+        root = editedRoot(rte, snap.component);
+        range = root ? restoreSelection(root, snap.saved) : null;
+      }
+      if (!root || !range) return;
+      finish(rte, edit(root, range), root);
+      // the dropdown took focus, so editing may already have stopped
+      syncAfterDeferredEdit(editor, root);
+    };
+  };
+
   const styleSelect = (
     name: string,
     title: string,
@@ -692,14 +903,15 @@ export function installRichTextToolbar(
     options: { label: string; value: string }[],
   ) => {
     const select = selectIcon(title, placeholder, options);
+    const run = snapshotOn(select);
     rteModule.add(name, {
       icon: select,
       event: "change",
       attributes: { title },
       result: (rte) => {
-        const range = currentRange(rte);
-        if (range && select.value) {
-          finish(rte, applyInlineStyle(rte.el, range, prop, select.value));
+        const { value } = select;
+        if (value) {
+          run(rte, (root, range) => applyInlineStyle(root, range, prop, value));
         }
         select.value = "";
       },
@@ -730,16 +942,20 @@ export function installRichTextToolbar(
       icon,
       attributes: { title },
       result: (rte, action) => {
-        const range = currentRange(rte)?.cloneRange();
+        const range = currentRange(rte);
         if (!range || range.collapsed) return;
+        const saved = saveSelection(rte.el, range);
+        const component = editingComponent(editor);
         openColorPopover({
           anchor: action.btn ?? icon,
           title,
           initial: selectionColor(rte, range, prop),
           closeOn: [rte.doc],
           onApply: (color) => {
-            if (!applySavedColor(rte, range, prop, color ?? "")) return;
-            syncAfterDeferredEdit(editor, rte.el);
+            const root = editedRoot(rte, component);
+            if (!root || !applySavedColor(rte, saved, prop, color ?? "", root))
+              return;
+            syncAfterDeferredEdit(editor, root);
             if (color && bar) bar.style.background = color;
           },
         });
@@ -759,14 +975,15 @@ export function installRichTextToolbar(
     icon: "🔗",
     attributes: { title: "Insert or edit link" },
     result: (rte) => {
-      const range = currentRange(rte)?.cloneRange();
+      const range = currentRange(rte);
       if (!range) return;
+      // offsets, not the Range: see SavedSelection
+      const saved = saveSelection(rte.el, range);
+      const component = editingComponent(editor);
       openLinkDialog(readLink(rte.el, range), (link) => {
-        const next = link
-          ? applyLink(rte.el, range, link)
-          : removeLink(rte.el, range);
-        finish(rte, next);
-        syncAfterDeferredEdit(editor, rte.el);
+        const root = editedRoot(rte, component);
+        if (!root || !applySavedLink(rte, saved, link, root)) return;
+        syncAfterDeferredEdit(editor, root);
       });
     },
   });
@@ -848,16 +1065,20 @@ export function installRichTextToolbar(
   const variables = selectIcon(
     "Insert variable",
     "{ } Variables",
-    VISUAL_EMAIL_VARIABLES,
+    VISUAL_EMAIL_VARIABLES.map((v) => ({
+      label: v.linkText ? `${v.linkText} link` : v.label,
+      value: v.value,
+    })),
   );
+  const runVariable = snapshotOn(variables);
   rteModule.add("amie-variables", {
     icon: variables,
     event: "change",
     attributes: { title: "Insert variable" },
     result: (rte) => {
-      const range = currentRange(rte);
-      if (range && variables.value) {
-        finish(rte, insertTextAt(rte.el, range, variables.value));
+      const { value } = variables;
+      if (value) {
+        runVariable(rte, (root, range) => insertVariable(root, range, value));
       }
       variables.value = "";
     },

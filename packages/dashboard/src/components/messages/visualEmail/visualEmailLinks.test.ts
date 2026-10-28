@@ -22,7 +22,19 @@ import {
   repairLiquidLinks,
   validateHref,
 } from "./visualEmailLinks";
-import { applyLink, insertPasted, readLink } from "./visualEmailRte";
+import {
+  applyLink,
+  applySavedLink,
+  expandToWord,
+  insertPasted,
+  insertVariable,
+  linkTextFor,
+  readLink,
+  restoreSelection,
+  RteLike,
+  saveSelection,
+  syncAfterDeferredEdit,
+} from "./visualEmailRte";
 import {
   visualDesignWarnings,
   visualHtmlWarnings,
@@ -164,6 +176,333 @@ describe("RTE link dialog → attribute", () => {
     const { root, range } = editable("x", "x");
     insertPasted(root, range, "", "a\nb");
     expect(root.innerHTML).toBe("a<br>b");
+  });
+});
+
+/**
+ * Nicholate 2026-10-28: linking "Unsubscribe" / "Manage subscription" put the
+ * Liquid tag as text next to the words. Double-clicking a word in a text
+ * block that isn't being edited yet leaves only a caret in it (GrapesJS
+ * starts editing and places the caret at the click), so the link was
+ * inserted at the caret with the tag as its text; the Variables menu inserted
+ * the URL tag as plain text. In MJML mode a link from the dialog was also
+ * dropped on save.
+ */
+describe("linking footer text to unsubscribe / manage subscription", () => {
+  const FOOTER = "Unsubscribe | Manage subscription";
+
+  function caret(text: string, at: number) {
+    const { root, range } = editable(text, "");
+    const node = root.firstChild;
+    if (!node) throw new Error("no text");
+    range.setStart(node, at);
+    range.collapse(true);
+    return { root, range };
+  }
+
+  it.each([
+    ["inside", 5],
+    ["at the start of", 0],
+    ["at the end of", "Unsubscribe".length],
+  ])("a caret %s the word links the word, not the tag text", (_where, at) => {
+    const { root, range } = caret(FOOTER, Number(at));
+    applyLink(root, range, { href: "{% unsubscribe_url %}", target: "_blank" });
+    expect(root.innerHTML).toBe(
+      '<a href="{% unsubscribe_url %}" target="_blank">Unsubscribe</a> | Manage subscription',
+    );
+  });
+
+  it("with no word at the caret, inserts a labelled link (never the raw tag)", () => {
+    const { root, range } = caret("Footer: ", "Footer: ".length);
+    applyLink(root, range, {
+      href: "{% subscription_management_url %}",
+      target: "_blank",
+    });
+    expect(root.innerHTML).toBe(
+      'Footer: <a href="{% subscription_management_url %}" target="_blank">Manage subscription</a>',
+    );
+    expect(root.textContent).not.toContain("{%");
+  });
+
+  it("labels for links inserted with nothing selected", () => {
+    expect(linkTextFor("{% unsubscribe_url %}")).toBe("Unsubscribe");
+    expect(linkTextFor("{% subscription_management_url %}")).toBe(
+      "Manage subscription",
+    );
+    expect(linkTextFor("{% view_in_browser_url %}")).toBe("View in browser");
+    expect(linkTextFor("{{ user.offerUrl }}")).toBe("Link");
+    expect(linkTextFor("https://tryamie.com")).toBe("https://tryamie.com");
+    expect(linkTextFor("mailto:care@tryamie.com")).toBe("care@tryamie.com");
+  });
+
+  it("expandToWord leaves a caret between words alone", () => {
+    const { range } = caret("a | b", 2);
+    expect(expandToWord(range)).toBe(false);
+    expect(range.collapsed).toBe(true);
+  });
+
+  it.each([
+    ["Unsubscribe", "{% unsubscribe_url %}"],
+    ["Manage subscription", "{% subscription_management_url %}"],
+  ])(
+    "Variables menu: %s selected + its URL variable wraps the text in a link",
+    (word, tag) => {
+      const { root, range } = editable(FOOTER, word);
+      insertVariable(root, range, tag);
+      const a = firstLink(root);
+      expect(a.getAttribute("href")).toBe(tag);
+      expect(a.textContent).toBe(word);
+      expect(root.textContent).toBe(FOOTER);
+    },
+  );
+
+  it("Variables menu: a URL variable at a caret links the word / adds a labelled link", () => {
+    const inWord = caret(FOOTER, 3);
+    insertVariable(inWord.root, inWord.range, "{% unsubscribe_url %}");
+    expect(inWord.root.innerHTML).toBe(
+      '<a href="{% unsubscribe_url %}" target="_blank">Unsubscribe</a> | Manage subscription',
+    );
+    document.body.innerHTML = "";
+    const emptyRoot = document.createElement("td");
+    document.body.appendChild(emptyRoot);
+    const emptyRange = document.createRange();
+    emptyRange.setStart(emptyRoot, 0);
+    insertVariable(emptyRoot, emptyRange, "{% view_in_browser_url %}");
+    expect(emptyRoot.innerHTML).toBe(
+      '<a href="{% view_in_browser_url %}" target="_blank">View in browser</a>',
+    );
+  });
+
+  it("Variables menu: text variables are still inserted exactly", () => {
+    const { root, range } = caret("Hi ,", 3);
+    insertVariable(root, range, '{{ user.firstName | default: "there" }}');
+    expect(root.innerHTML).toBe('Hi {{ user.firstName | default: "there" }},');
+  });
+
+  it("Variables menu: selecting text inside an existing link retargets it", () => {
+    document.body.innerHTML = "";
+    const root = document.createElement("td");
+    root.innerHTML = '<a href="#">Unsubscribe</a> | Manage subscription';
+    document.body.appendChild(root);
+    const range = document.createRange();
+    range.selectNodeContents(firstLink(root));
+    insertVariable(root, range, "{% unsubscribe_url %}");
+    expect(root.innerHTML).toBe(
+      '<a href="{% unsubscribe_url %}" target="_blank">Unsubscribe</a> | Manage subscription',
+    );
+  });
+});
+
+/**
+ * Nicholate 2026-10-28 (WARMING EMAIL 11): selecting words and adding any
+ * link — https CTAs too — put the URL as the link text at the *start* of the
+ * text block. The link dialog takes focus, GrapesJS stops editing and, since
+ * the text was edited, rebuilds the block's DOM from the model; the Range
+ * saved when the dialog opened then pointed at removed nodes and collapsed
+ * to offset 0 of the block.
+ */
+describe("the selection survives GrapesJS rebuilding the text block", () => {
+  const BLOCK = "Read about <b>tamarind</b> and its benefits for women today.";
+
+  function block(selectWord: string) {
+    document.body.innerHTML = "";
+    const root = document.createElement("td");
+    root.innerHTML = BLOCK;
+    document.body.appendChild(root);
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let text: Node | null = null;
+    while (!text && walker.nextNode()) {
+      if (walker.currentNode.textContent?.includes(selectWord)) {
+        text = walker.currentNode;
+      }
+    }
+    if (!text) throw new Error("no text");
+    const range = document.createRange();
+    const i = (text.textContent ?? "").indexOf(selectWord);
+    range.setStart(text, i);
+    range.setEnd(text, i + selectWord.length);
+    const rte: RteLike = {
+      el: root,
+      doc: document,
+      selection: () => document.getSelection(),
+    };
+    return { root, range, rte };
+  }
+
+  /** What GrapesJS does when editing stops: same content, new nodes. */
+  function rebuild(root: HTMLElement) {
+    const html = root.innerHTML;
+    root.innerHTML = html;
+  }
+
+  it("the old way: a saved live Range collapses to the start of the block", () => {
+    const { root, range } = block("women");
+    const saved = range.cloneRange();
+    rebuild(root);
+    expect(saved.collapsed).toBe(true);
+    expect(saved.startContainer).toBe(root);
+    expect(saved.startOffset).toBe(0);
+    // …which is where the link (with the URL as its text) ended up
+    applyLink(root, saved, { href: "https://tryamie.com/x", target: "" });
+    expect(root.innerHTML.startsWith("<a ")).toBe(true);
+  });
+
+  it.each(["women", "Read", "today", "tamarind"])(
+    "a CTA link wraps %s after the rebuild",
+    (word) => {
+      const { root, range, rte } = block(word);
+      const saved = saveSelection(root, range);
+      rebuild(root);
+      expect(
+        applySavedLink(rte, saved, {
+          href: "https://tryamie.com/tamarind",
+          target: "_blank",
+        }),
+      ).toBe(true);
+      const a = firstLink(root);
+      expect(a.textContent).toBe(word);
+      expect(a.getAttribute("href")).toBe("https://tryamie.com/tamarind");
+      expect(root.textContent).toBe(
+        "Read about tamarind and its benefits for women today.",
+      );
+    },
+  );
+
+  it("an unsubscribe link wraps the footer word after the rebuild", () => {
+    document.body.innerHTML = "";
+    const root = document.createElement("div");
+    root.textContent = "Unsubscribe | Manage subscription";
+    document.body.appendChild(root);
+    const range = document.createRange();
+    const node = root.firstChild;
+    if (!node) throw new Error("no text");
+    range.setStart(node, 14);
+    range.setEnd(node, 33);
+    const saved = saveSelection(root, range);
+    rebuild(root);
+    const rte: RteLike = {
+      el: root,
+      doc: document,
+      selection: () => document.getSelection(),
+    };
+    applySavedLink(rte, saved, {
+      href: "{% subscription_management_url %}",
+      target: "_blank",
+    });
+    expect(root.innerHTML).toBe(
+      'Unsubscribe | <a href="{% subscription_management_url %}" target="_blank">Manage subscription</a>',
+    );
+  });
+
+  it("selections spanning formatting round-trip exactly", () => {
+    const { root } = block("Read");
+    const range = document.createRange();
+    const b = root.querySelector("b");
+    const after = b?.nextSibling;
+    if (!b?.firstChild || !after) throw new Error("bad fixture");
+    range.setStart(b.firstChild, 3); // "tam|arind"
+    range.setEnd(after, 4); // " and| its"
+    const saved = saveSelection(root, range);
+    rebuild(root);
+    expect(restoreSelection(root, saved).toString()).toBe("arind and");
+  });
+
+  it("removing a link works on the rebuilt block too", () => {
+    document.body.innerHTML = "";
+    const root = document.createElement("td");
+    root.innerHTML = 'Go <a href="https://tryamie.com">here</a> now';
+    document.body.appendChild(root);
+    const range = document.createRange();
+    range.selectNodeContents(firstLink(root));
+    const saved = saveSelection(root, range);
+    rebuild(root);
+    const rte: RteLike = {
+      el: root,
+      doc: document,
+      selection: () => document.getSelection(),
+    };
+    applySavedLink(rte, saved, null);
+    expect(root.innerHTML).toBe("Go here now");
+  });
+
+  it("does nothing if the text block is gone", () => {
+    const { root, range, rte } = block("women");
+    const saved = saveSelection(root, range);
+    root.remove();
+    expect(
+      applySavedLink(rte, saved, { href: "https://tryamie.com", target: "" }),
+    ).toBe(false);
+  });
+});
+
+describe("deferred toolbar edits are written back (HTML and MJML)", () => {
+  /** Minimal GrapesJS shape: a wrapper with one text component. */
+  function fakeEditor(view: {
+    el: HTMLElement;
+    container: HTMLElement;
+    rteEnabled: boolean;
+  }) {
+    const syncContent = jest.fn(async () => {});
+    const text = {
+      getView: () => ({
+        el: view.el,
+        rteEnabled: view.rteEnabled,
+        getChildrenContainer: () => view.container,
+        syncContent,
+      }),
+      components: () => ({ models: [] }),
+    };
+    const wrapper = {
+      getView: () => ({
+        el: document.body,
+        getChildrenContainer: () => document.body,
+      }),
+      components: () => ({ models: [text] }),
+    };
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    const editor = { getWrapper: () => wrapper } as unknown as Editor;
+    return { editor, syncContent };
+  }
+
+  it("MJML: the RTE edits mj-text's inner container, which is matched and synced", () => {
+    const el = document.createElement("div");
+    const container = document.createElement("div");
+    el.appendChild(container);
+    container.innerHTML =
+      '<a href="{% unsubscribe_url %}" target="_blank">Unsubscribe</a> | Manage subscription';
+    const { editor, syncContent } = fakeEditor({
+      el,
+      container,
+      rteEnabled: false,
+    });
+    syncAfterDeferredEdit(editor, container);
+    expect(syncContent).toHaveBeenCalledWith({
+      force: true,
+      content: container.innerHTML,
+    });
+  });
+
+  it("HTML: a text cell edits its own element", () => {
+    const el = document.createElement("td");
+    el.innerHTML = '<a href="{% unsubscribe_url %}">Unsubscribe</a>';
+    const { editor, syncContent } = fakeEditor({
+      el,
+      container: el,
+      rteEnabled: false,
+    });
+    syncAfterDeferredEdit(editor, el);
+    expect(syncContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("still editing: GrapesJS syncs it itself when editing stops", () => {
+    const el = document.createElement("td");
+    const { editor, syncContent } = fakeEditor({
+      el,
+      container: el,
+      rteEnabled: true,
+    });
+    syncAfterDeferredEdit(editor, el);
+    expect(syncContent).not.toHaveBeenCalled();
   });
 });
 

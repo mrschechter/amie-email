@@ -19,20 +19,36 @@ export const VISUAL_HTML_EDITOR_ID = "grapesjs-html" as const;
  * forms Amie Send renders (see backend-lib/src/liquid.ts): `user.*` profile
  * properties with a fallback, and the registered unsubscribe/view-in-browser
  * tags. Nothing here is Klaviyo/Mautic syntax.
+ *
+ * Entries with `linkText` are URLs: the text toolbar turns them into a link
+ * (around the selected text, or labelled `linkText`), never plain text.
  */
-export const VISUAL_EMAIL_VARIABLES: { label: string; value: string }[] = [
+export const VISUAL_EMAIL_VARIABLES: {
+  label: string;
+  value: string;
+  linkText?: string;
+}[] = [
   {
     label: "First name (fallback: there)",
     value: '{{ user.firstName | default: "there" }}',
   },
   { label: "Last name", value: '{{ user.lastName | default: "" }}' },
   { label: "Email address", value: "{{ user.email }}" },
-  { label: "Unsubscribe URL", value: "{% unsubscribe_url %}" },
+  {
+    label: "Unsubscribe URL",
+    value: "{% unsubscribe_url %}",
+    linkText: "Unsubscribe",
+  },
   {
     label: "Manage subscriptions URL",
     value: "{% subscription_management_url %}",
+    linkText: "Manage subscription",
   },
-  { label: "View in browser URL", value: "{% view_in_browser_url %}" },
+  {
+    label: "View in browser URL",
+    value: "{% view_in_browser_url %}",
+    linkText: "View in browser",
+  },
 ];
 
 export const VISUAL_BRAND = {
