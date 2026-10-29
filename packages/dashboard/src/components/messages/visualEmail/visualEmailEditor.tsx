@@ -165,6 +165,11 @@ export interface VisualEmailEditorProps {
   /** Switch the template editor to its Code tab. */
   onOpenCode?: () => void;
   /**
+   * Shown while `disabled` because the published version is being viewed:
+   * switches the template to its draft (where editing is possible).
+   */
+  onEditDraft?: () => void;
+  /**
    * Whether the visual tab is showing. When it becomes visible again after
    * the MJML body was edited elsewhere (Code tab), that MJML is opened.
    */
@@ -201,6 +206,7 @@ export default function VisualEmailEditor({
   baseApiUrl,
   authHeaders,
   onOpenCode,
+  onEditDraft,
   active = true,
 }: VisualEmailEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -694,8 +700,9 @@ export default function VisualEmailEditor({
 
   let statusLabel = "All changes saved to the draft";
   if (disabled) {
-    statusLabel =
-      "Viewing the published version — switch to the draft to edit.";
+    statusLabel = onEditDraft
+      ? "Viewing the published version (read-only)."
+      : "Viewing the published version — switch to the draft to edit.";
   } else if (pending && mode === "html") {
     statusLabel = "Unsaved changes — click Save to update the email";
   } else if (pending) {
@@ -803,9 +810,26 @@ export default function VisualEmailEditor({
     </Stack>
   );
 
+  const editDraftNotice =
+    disabled && onEditDraft ? (
+      <Alert
+        severity="info"
+        data-testid="visual-edit-draft-notice"
+        action={
+          <Button color="inherit" size="small" onClick={onEditDraft}>
+            Edit the draft
+          </Button>
+        }
+      >
+        You&apos;re viewing the published version, which can&apos;t be edited.
+        Edit the draft to make changes.
+      </Alert>
+    ) : null;
+
   if (!started) {
     return (
       <Stack spacing={2} sx={{ p: 3, maxWidth: 720 }}>
+        {editDraftNotice}
         {openState === "importMjml" ? (
           <>
             <Typography variant="h6">
@@ -1108,6 +1132,16 @@ export default function VisualEmailEditor({
         <Typography sx={{ fontSize: 12.5, color: "#7A6F67" }}>
           {statusLabel}
         </Typography>
+        {disabled && onEditDraft ? (
+          <Button
+            size="small"
+            variant="contained"
+            onClick={onEditDraft}
+            data-testid="visual-edit-draft"
+          >
+            Edit the draft
+          </Button>
+        ) : null}
         <Box sx={{ flex: 1 }} />
         <TextField
           size="small"
