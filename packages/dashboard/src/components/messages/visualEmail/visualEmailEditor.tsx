@@ -36,15 +36,19 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   configureHtmlModeComponents,
   installImageSettings,
+  installMjmlBorderStyles,
   repairComponentLinks,
 } from "./visualEmailComponents";
 import { convertMjmlToHtml, readMjmlBackup } from "./visualEmailConvert";
 import {
   applyVisualSave,
+  bodyChangedOutsideVisual,
   buildVisualDesign,
+  DEFAULT_NEW_DESIGN_KIND,
   expandSelfClosingMjml,
   hasUnsubscribeLink,
   isMjmlBody,
+  NewDesignKind,
   STARTER_MJML,
   VISUAL_EMAIL_VARIABLES,
   VISUAL_HTML_EDITOR_ID,
@@ -53,6 +57,14 @@ import {
   visualOpenState,
 } from "./visualEmailDesign";
 import { installCanvasFonts, withMjmlFonts } from "./visualEmailFonts";
+import {
+  CANVAS_COMPONENTS_CONFIG,
+  HISTORY_CSS,
+  installCanvasAttributeCleanup,
+  installTextDragSelect,
+  installUndoRedo,
+  syncEditingText,
+} from "./visualEmailHistory";
 import {
   applyShellToCanvas,
   detectHtmlImportRisks,
@@ -70,7 +82,6 @@ import {
   validateHref,
 } from "./visualEmailLinks";
 import {
-  hasSyncContent,
   installRichTextToolbar,
   LinkOptions,
   RTE_CHANGE_EVENT,
@@ -88,7 +99,6 @@ type StartSource =
   | "starter"
   | "htmlStarter"
   | "htmlConverted";
-type NewDesignKind = "html" | "mjml";
 type EditorMode = "mjml" | "html";
 
 function editorModeFor(
@@ -154,6 +164,11 @@ export interface VisualEmailEditorProps {
   authHeaders: Record<string, string>;
   /** Switch the template editor to its Code tab. */
   onOpenCode?: () => void;
+  /**
+   * Whether the visual tab is showing. When it becomes visible again after
+   * the MJML body was edited elsewhere (Code tab), that MJML is opened.
+   */
+  active?: boolean;
 }
 
 function backupKey(templateId: string) {
@@ -186,12 +201,15 @@ export default function VisualEmailEditor({
   baseApiUrl,
   authHeaders,
   onOpenCode,
+  active = true,
 }: VisualEmailEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  // the body as the visual editor last wrote (or opened) it
+  const lastBodyRef = useRef<string | null>(null);
   const [openState, setOpenState] = useState<VisualOpenState>(() =>
     visualOpenState(draft),
   );
@@ -210,7 +228,9 @@ export default function VisualEmailEditor({
   const [riskReview, setRiskReview] = useState<HtmlImportRisk[] | null>(null);
   const [openedRisks, setOpenedRisks] = useState<HtmlImportRisk[]>([]);
   const [linkDialog, setLinkDialog] = useState<LinkDialogState | null>(null);
-  const [newKind, setNewKind] = useState<NewDesignKind>("html");
+  const [newKind, setNewKind] = useState<NewDesignKind>(
+    DEFAULT_NEW_DESIGN_KIND,
+  );
   // Convert to HTML: the confirm dialog's answer, and the compiled HTML the
   // re-initialised HTML editor opens.
   const [convertPrompt, setConvertPrompt] = useState<
@@ -291,9 +311,14 @@ export default function VisualEmailEditor({
             project,
             mjml,
           });
-          setDraft((current) =>
-            applyVisualSave(current, withDraftPreview(design, current)),
-          );
+          setDraft((current) => {
+            const next = applyVisualSave(
+              current,
+              withDraftPreview(design, current),
+            );
+            lastBodyRef.current = next.body;
+            return next;
+          });
           setWarnings(visualDesignWarnings(mjml));
         }
         setPending(false);
@@ -303,15 +328,10 @@ export default function VisualEmailEditor({
           // storage unavailable — autosave to the server still happened
         }
       };
-      // HTML mode: text being edited right now is written to the model first,
-      // so a toolbar edit (link, color …) isn't lost when Save is clicked.
-      const view: unknown =
-        modeRef.current === "html" ? editor.getSelected()?.getView() : null;
-      if (hasSyncContent(view)) {
-        void view.syncContent().then(run);
-      } else {
-        run();
-      }
+      // HTML mode: text being edited right now is written to the model first
+      // (only if it changed: an unchanged write is an empty undo step).
+      if (modeRef.current === "html") syncEditingText(editor);
+      run();
     },
     [disabled, setDraft, templateId],
   );
@@ -383,6 +403,7 @@ export default function VisualEmailEditor({
       fromElement: false,
       storageManager: false,
       undoManager: { trackSelection: false },
+      domComponents: CANVAS_COMPONENTS_CONFIG,
       // HTML mode: no GrapesJS page CSS (box-sizing etc.) — the canvas should
       // look like the email does in a client.
       ...(htmlMode ? { protectedCss: "" } : {}),
@@ -431,7 +452,10 @@ export default function VisualEmailEditor({
     // Component types and toolbar go in before any content loads, so
     // imported images/cells pick them up.
     if (htmlMode) configureHtmlModeComponents(editor);
-    else installImageSettings(editor, "mjml");
+    else {
+      installImageSettings(editor, "mjml");
+      installMjmlBorderStyles(editor);
+    }
     installCanvasFonts(editor);
     installRichTextToolbar(editor, {
       mode: htmlMode ? "html" : "mjml",
@@ -446,7 +470,7 @@ export default function VisualEmailEditor({
     if (!document.getElementById(TOOLBAR_STYLE_ID)) {
       const style = document.createElement("style");
       style.id = TOOLBAR_STYLE_ID;
-      style.textContent = RTE_TOOLBAR_CSS;
+      style.textContent = RTE_TOOLBAR_CSS + HISTORY_CSS;
       document.head.appendChild(style);
     }
 
@@ -492,6 +516,10 @@ export default function VisualEmailEditor({
         editor.BlockManager.add(id, block),
       );
       editor.clearDirtyCount();
+    } else if (design?.project && bodyChangedOutsideVisual(current)) {
+      // opened below from the body; written back right away
+      loadWarning =
+        "This email's MJML was changed outside the visual editor (e.g. in the Code tab), so that version was opened.";
     } else if (design?.project) {
       try {
         // The draft store freezes state and GrapesJS mutates project data
@@ -521,21 +549,11 @@ export default function VisualEmailEditor({
       editor.setComponents(STARTER_MJML);
     }
 
-    // GrapesJS keeps its own undo stack for every structural, style and text edit.
-    editor.Panels.addButton("options", [
-      {
-        id: "amie-undo",
-        label: "↶",
-        command: "core:undo",
-        attributes: { title: "Undo (Ctrl/Cmd+Z)" },
-      },
-      {
-        id: "amie-redo",
-        label: "↷",
-        command: "core:redo",
-        attributes: { title: "Redo (Ctrl/Cmd+Shift+Z)" },
-      },
-    ]);
+    // GrapesJS keeps its own undo stack for every structural, style and text
+    // edit; these are the visual editor's only undo/redo controls.
+    installUndoRedo(editor);
+    const stopTextDragSelect = installTextDragSelect(editor);
+    installCanvasAttributeCleanup(editor);
 
     if (!htmlMode) addMjmlBlocks(editor);
 
@@ -577,7 +595,14 @@ export default function VisualEmailEditor({
     );
     // Starting from MJML or the starter writes the first design immediately.
     // HTML mode never writes on open: only the Save button changes the body.
-    if (!design && !disabled && !htmlMode) saveDesign(false);
+    const openedFromBody =
+      !htmlMode &&
+      Boolean(design?.project) &&
+      bodyChangedOutsideVisual(current);
+    lastBodyRef.current = current.body;
+    if ((!design || openedFromBody) && !disabled && !htmlMode) {
+      saveDesign(false);
+    }
     let openedMarkup = editor.getHtml();
     if (htmlMode)
       openedMarkup = design && loadedDesign ? design.mjml : current.body;
@@ -627,6 +652,7 @@ export default function VisualEmailEditor({
         RTE_CHANGE_EVENT,
         onRteChange,
       );
+      stopTextDragSelect();
       editor.destroy();
       editorRef.current = null;
       shellRef.current = null;
@@ -634,6 +660,24 @@ export default function VisualEmailEditor({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [started, startSource, resetKey]);
+
+  // Back on the visual tab after the MJML was edited in the Code tab: open
+  // that MJML (and write the design), instead of overwriting it later.
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!active || !editor || disabled || modeRef.current !== "mjml") return;
+    const { body } = draftRef.current;
+    if (
+      lastBodyRef.current === null ||
+      body === lastBodyRef.current ||
+      !isMjmlBody(body)
+    ) {
+      return;
+    }
+    editor.setComponents(expandSelfClosingMjml(stripLegacyMjmlPreview(body)));
+    lastBodyRef.current = body;
+    saveDesign(false);
+  }, [active, disabled, saveDesign]);
 
   const restoreBackup = () => {
     if (!recovery || !editorRef.current) return;
@@ -736,14 +780,14 @@ export default function VisualEmailEditor({
         }
       >
         <FormControlLabel
-          value="html"
-          control={<Radio />}
-          label="HTML email (recommended) — the Code tab shows editable HTML"
-        />
-        <FormControlLabel
           value="mjml"
           control={<Radio />}
-          label="MJML email — the Code tab shows MJML"
+          label="Drag-and-drop email (MJML, default) — the Code tab shows MJML"
+        />
+        <FormControlLabel
+          value="html"
+          control={<Radio />}
+          label="HTML email — the Code tab shows editable HTML"
         />
       </RadioGroup>
       <Box>

@@ -630,3 +630,71 @@ export function configureHtmlModeComponents(editor: Editor): void {
   installBlockPlacement(editor);
   installFriendlyNames(editor);
 }
+
+/* ------------------------------------------------------------------ */
+/* MJML borders                                                         */
+/* ------------------------------------------------------------------ */
+
+/** Border sides MJML supports on sections, wrappers and columns. */
+export const MJML_BORDER_SIDES = [
+  "border-top",
+  "border-right",
+  "border-bottom",
+  "border-left",
+] as const;
+
+const MJML_BORDERED_TYPES = ["mj-section", "mj-wrapper", "mj-column"];
+
+/** Style Manager sector with every MJML border property as a plain field. */
+export const MJML_BORDER_SECTOR = "amie-borders";
+
+/**
+ * Make section/wrapper/column borders editable and clearable in the Style
+ * Manager. grapesjs-mjml only exposes `border` (and its radius), so e.g. a
+ * footer section's `border-top="1px solid #F2EBE2"` could be neither seen
+ * nor removed. Each property is a text field ("1px solid #F2EBE2"); clearing
+ * it removes the MJML attribute. Call before content loads.
+ */
+export function installMjmlBorderStyles(editor: Editor): void {
+  MJML_BORDERED_TYPES.forEach((type) => {
+    const existing = editor.Components.getType(type);
+    if (!existing) return;
+    const defaults: { stylable?: unknown } =
+      existing.model.prototype.defaults ?? {};
+    const stylable = Array.isArray(defaults.stylable)
+      ? defaults.stylable.filter((p): p is string => typeof p === "string")
+      : [];
+    const add = ["border", ...MJML_BORDER_SIDES, "border-radius"].filter(
+      (p) => !stylable.includes(p),
+    );
+    if (!add.length) return;
+    editor.Components.addType(type, {
+      model: { defaults: { stylable: [...stylable, ...add] } },
+    });
+  });
+  editor.onReady(() => {
+    const sm = editor.StyleManager;
+    const exists = sm
+      .getSectors()
+      .some((sector) => sector.getId() === MJML_BORDER_SECTOR);
+    if (exists) return;
+    sm.addSector(MJML_BORDER_SECTOR, {
+      name: "Borders",
+      open: true,
+      properties: [
+        { label: "Border (all sides)", property: "border" },
+        { label: "Border top", property: "border-top" },
+        { label: "Border right", property: "border-right" },
+        { label: "Border bottom", property: "border-bottom" },
+        { label: "Border left", property: "border-left" },
+        { label: "Corner radius", property: "border-radius" },
+      ].map((p) => ({
+        ...p,
+        type: "base",
+        default: "",
+        // eslint-disable-next-line @typescript-eslint/naming-convention
+        placeholder: "e.g. 1px solid #F2EBE2 (empty = none)",
+      })),
+    });
+  });
+}

@@ -75,13 +75,34 @@ describe("rich text actions: inline styles", () => {
     );
   });
 
-  it("replaces the same property on nested content and keeps others", () => {
+  it("gives nested content with its own value the new one, and keeps other styles", () => {
+    // (removing it isn't enough: GrapesJS keeps known elements' styles and
+    // puts them back when the text is written to the model)
     const { root, range } = setup(
       '[a <span style="color:red;font-weight:bold;">b</span> c]',
     );
     applyInlineStyle(root, range, "color", "#2D7A7A");
     expect(root.innerHTML).toBe(
-      '<span style="color:#2D7A7A;">a <span style="font-weight:bold;">b</span> c</span>',
+      '<span style="color:#2D7A7A;">a <span style="font-weight:bold;color:#2D7A7A;">b</span> c</span>',
+    );
+  });
+
+  it("nested black spans (Mautic footers) take the new color", () => {
+    const { root, range } = setup(
+      '[<span style="color:rgb(0, 0, 0);">About <span style="color:rgb(0, 0, 0);">us</span></span>]',
+    );
+    applyInlineStyle(root, range, "color", "#A39B93");
+    root.querySelectorAll("span").forEach((span) => {
+      expect(span.getAttribute("style")).toContain("color:#A39B93");
+    });
+    expect(root.innerHTML).not.toContain("rgb(0, 0, 0)");
+  });
+
+  it("styles a selection over several paragraphs paragraph by paragraph", () => {
+    const { root, range } = setup("<p>[One</p><p>Two]</p>");
+    applyInlineStyle(root, range, "font-size", "10px");
+    expect(root.innerHTML).toBe(
+      '<p><span style="font-size:10px;">One</span></p><p><span style="font-size:10px;">Two</span></p>',
     );
   });
 
