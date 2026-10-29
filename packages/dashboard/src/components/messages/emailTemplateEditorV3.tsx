@@ -1198,6 +1198,17 @@ export default function EmailTemplateEditorV3({
           >
             {sendTestControl}
           </Box>
+          {viewDraft ? null : (
+            <Button
+              variant="outlined"
+              color="warning"
+              data-testid="edit-draft"
+              onClick={() => setViewDraft(true)}
+              sx={{ borderRadius: "8px", textTransform: "none" }}
+            >
+              Viewing published · Edit draft
+            </Button>
+          )}
           <Button
             variant="contained"
             disabled={!canPublish || isPublisherUpdating}
@@ -1285,7 +1296,12 @@ export default function EmailTemplateEditorV3({
                     : current,
                 )
               }
-              disabled={disabled || !viewDraft}
+              // `disabled` already means "read-only here": it includes viewing
+              // the published version of a template that has a draft. With
+              // no draft, the published version is what's edited (the first
+              // edit creates the draft), as in every other tab.
+              disabled={disabled}
+              onEditDraft={viewDraft ? undefined : () => setViewDraft(true)}
               resetKey={`${templateId}:${viewDraft}`}
               workspaceId={workspaceId}
               baseApiUrl={baseApiUrl}

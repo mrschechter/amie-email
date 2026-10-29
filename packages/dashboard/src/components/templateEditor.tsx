@@ -539,6 +539,15 @@ export default function TemplateEditor({
     });
   }, [hidePublisher, setState, template]);
 
+  // `viewDraft` is shared app state: the journey editor sets it to false
+  // when it opens a published journey, and it stayed false when going on to
+  // a template, so every template opened read-only ("Viewing the published
+  // version") or with its visual editor buttons disabled. Templates open on
+  // their draft.
+  useEffect(() => {
+    if (!hidePublisher) setViewDraft(true);
+  }, [templateId, hidePublisher, setViewDraft]);
+
   const publisherStatuses: {
     publisher: PublisherStatus;
     draftToggle: PublisherDraftToggleStatus;
@@ -874,7 +883,11 @@ export default function TemplateEditor({
       draft,
       disabled: Boolean(disabled) || !inDraftView,
       inDraftView,
-      setDraft: (setter) =>
+      setDraft: (setter) => {
+        // Editing the published version of a template without a draft
+        // creates the draft; keep showing it, or the page would turn
+        // read-only (published view of an out-of-date template) mid-edit.
+        if (!viewDraft && inDraftView && !hidePublisher) setViewDraft(true);
         setState((stateDraft) => {
           let currentDefinition: MessageTemplateResourceDraft | null = null;
           if (stateDraft.editedTemplate?.draft) {
@@ -894,7 +907,8 @@ export default function TemplateEditor({
           }
           stateDraft.editedTemplate.draft = setter(currentDefinition);
           return stateDraft;
-        }),
+        });
+      },
     };
   }, [
     disabled,
@@ -903,6 +917,8 @@ export default function TemplateEditor({
     setState,
     template?.definition,
     viewDraft,
+    setViewDraft,
+    hidePublisher,
   ]);
 
   const handleDuplicate = useCallback(() => {
