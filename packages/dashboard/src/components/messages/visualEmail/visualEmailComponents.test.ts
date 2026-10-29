@@ -15,6 +15,8 @@ import {
   getImageSrc,
   imageTraits,
   installImageSettings,
+  installMjmlBorderStyles,
+  MJML_BORDER_SIDES,
   placeDroppedComponent,
   setImageLink,
   setImageSrc,
@@ -509,5 +511,59 @@ describe("dropping blocks between stacked sibling tables (no wrapping card)", ()
     const rows = doc.querySelectorAll("table.container > tbody > tr");
     expect(rows[rows.length - 1]?.contains(img)).toBe(true);
     expect(img.getAttribute("width")).toBe("552");
+  });
+});
+
+/**
+ * Nicholate: a footer section's `border-top="1px solid #F2EBE2"` could be
+ * neither seen nor removed in the visual editor (only `border` was a style).
+ */
+describe("MJML section/column borders are editable and clearable", () => {
+  function borderedEditor(body: string) {
+    const editor = grapesjs.init({
+      headless: true,
+      storageManager: false,
+      plugins: [(e: Editor) => grapesjsMjml(e, {})],
+    });
+    editors.push(editor);
+    installMjmlBorderStyles(editor);
+    editor.setComponents(body);
+    return editor;
+  }
+
+  function sections(editor: Editor): Component[] {
+    const out: Component[] = [];
+    const walk = (c: Component) => {
+      if (c.get("type") === "mj-section") out.push(c);
+      c.components().forEach(walk);
+    };
+    const wrapper = editor.getWrapper();
+    if (wrapper) walk(wrapper);
+    return out;
+  }
+
+  const FOOTER =
+    '<mjml><mj-body><mj-section border-top="1px solid #F2EBE2"><mj-column border-left="2px solid #000"><mj-text>Footer</mj-text></mj-column></mj-section></mj-body></mjml>';
+
+  it("sections, wrappers and columns can style every border side", () => {
+    const editor = borderedEditor(FOOTER);
+    const [section] = sections(editor);
+    if (!section) throw new Error("no section");
+    const stylable: unknown = section.get("stylable");
+    MJML_BORDER_SIDES.forEach((side) => {
+      expect(stylable).toContain(side);
+    });
+    expect(section.getStyle()["border-top"]).toBe("1px solid #F2EBE2");
+  });
+
+  it("clearing border-top removes it from the MJML; editing it writes it", () => {
+    const editor = borderedEditor(FOOTER);
+    const [section] = sections(editor);
+    if (!section) throw new Error("no section");
+    section.removeStyle("border-top");
+    expect(editor.getHtml()).not.toContain("border-top");
+    expect(editor.getHtml()).toContain('border-left="2px solid #000"');
+    section.addStyle({ "border-bottom": "1px dashed #CCCCCC" });
+    expect(editor.getHtml()).toContain('border-bottom="1px dashed #CCCCCC"');
   });
 });

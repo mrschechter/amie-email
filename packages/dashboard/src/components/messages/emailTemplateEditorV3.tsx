@@ -1085,6 +1085,9 @@ export default function EmailTemplateEditorV3({
       onKeyDown={(event) => {
         if (
           disabled ||
+          // the visual editor has its own undo/redo (GrapesJS); the draft
+          // history would revert the email behind the editor's back
+          tab === "visual" ||
           event.nativeEvent.isComposing ||
           event.altKey ||
           !(event.metaKey || event.ctrlKey) ||
@@ -1150,30 +1153,36 @@ export default function EmailTemplateEditorV3({
           </Typography>
         </Stack>
         <Stack direction="row" spacing={1} alignItems="center">
-          <Tooltip title="Undo (⌘/Ctrl+Z)">
-            <span>
-              <IconButton
-                aria-label="Undo"
-                disabled={disabled || !canUndo || tab === "visual"}
-                onClick={undo}
-                sx={{ color: COLORS.teal, borderRadius: "8px" }}
-              >
-                <Undo fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-          <Tooltip title="Redo (⌘/Ctrl+Shift+Z or Ctrl+Y)">
-            <span>
-              <IconButton
-                aria-label="Redo"
-                disabled={disabled || !canRedo || tab === "visual"}
-                onClick={redo}
-                sx={{ color: COLORS.teal, borderRadius: "8px" }}
-              >
-                <Redo fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
+          {/* The visual editor shows its own undo/redo pair in its canvas
+              toolbar; showing these (disabled) too was confusing. */}
+          {tab === "visual" ? null : (
+            <>
+              <Tooltip title="Undo (⌘/Ctrl+Z)">
+                <span>
+                  <IconButton
+                    aria-label="Undo"
+                    disabled={disabled || !canUndo}
+                    onClick={undo}
+                    sx={{ color: COLORS.teal, borderRadius: "8px" }}
+                  >
+                    <Undo fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+              <Tooltip title="Redo (⌘/Ctrl+Shift+Z or Ctrl+Y)">
+                <span>
+                  <IconButton
+                    aria-label="Redo"
+                    disabled={disabled || !canRedo}
+                    onClick={redo}
+                    sx={{ color: COLORS.teal, borderRadius: "8px" }}
+                  >
+                    <Redo fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </>
+          )}
           <Box
             sx={{
               "& .MuiButton-root": {
@@ -1282,6 +1291,7 @@ export default function EmailTemplateEditorV3({
               baseApiUrl={baseApiUrl}
               authHeaders={authHeaders}
               onOpenCode={() => setTab("code")}
+              active={tab === "visual"}
             />
           ) : null}
           {visualMounted && !emailDraft ? (

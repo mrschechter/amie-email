@@ -14,6 +14,15 @@ export const VISUAL_EDITOR_ID = "grapesjs-mjml" as const;
 /** Plain GrapesJS over a hand-written HTML document (see visualEmailHtml.ts). */
 export const VISUAL_HTML_EDITOR_ID = "grapesjs-html" as const;
 
+/** What a new visual design is built as. */
+export type NewDesignKind = "html" | "mjml";
+
+/**
+ * New visual emails default to the drag-and-drop MJML editor; HTML stays a
+ * choice (and existing emails keep their mode, or use "Convert to HTML").
+ */
+export const DEFAULT_NEW_DESIGN_KIND: NewDesignKind = "mjml";
+
 /**
  * Personalization the visual editor can insert. These are the exact Liquid
  * forms Amie Send renders (see backend-lib/src/liquid.ts): `user.*` profile
@@ -202,4 +211,24 @@ export function applyVisualSave<T extends CodeEmailContents>(
     amieBlocks: null,
     visualDesign: design,
   };
+}
+
+/**
+ * The body of an MJML visual email was changed outside the visual editor
+ * (Code tab, assistant, draft undo) since the editor last wrote it. The
+ * editor then opens that MJML instead of its saved project — otherwise the
+ * next visual edit regenerated the body from the project and silently threw
+ * the outside change away (e.g. a `border-top` deleted in the Code tab came
+ * back).
+ */
+export function bodyChangedOutsideVisual(draft: {
+  body?: string | null;
+  visualDesign?: VisualEmailDesign | null;
+}): boolean {
+  const design = draft.visualDesign;
+  if (!design || visualDesignEditor(design) === VISUAL_HTML_EDITOR_ID) {
+    return false;
+  }
+  if (!isMjmlBody(draft.body)) return false;
+  return (draft.body ?? "").trim() !== design.mjml.trim();
 }

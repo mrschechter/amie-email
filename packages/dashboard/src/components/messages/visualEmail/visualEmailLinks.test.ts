@@ -23,8 +23,12 @@ import {
   validateHref,
 } from "./visualEmailLinks";
 import {
+  applyInlineStyle,
   applyLink,
   applySavedLink,
+  clampToRoot,
+  commitIfDirty,
+  commitTextEdit,
   expandToWord,
   insertPasted,
   insertVariable,
@@ -33,7 +37,6 @@ import {
   restoreSelection,
   RteLike,
   saveSelection,
-  syncAfterDeferredEdit,
 } from "./visualEmailRte";
 import {
   visualDesignWarnings,
@@ -435,23 +438,29 @@ describe("the selection survives GrapesJS rebuilding the text block", () => {
   });
 });
 
-describe("deferred toolbar edits are written back (HTML and MJML)", () => {
+describe("toolbar edits are written to the model (HTML and MJML)", () => {
   /** Minimal GrapesJS shape: a wrapper with one text component. */
-  function fakeEditor(view: {
+  function fakeEditor(opts: {
     el: HTMLElement;
     container: HTMLElement;
     rteEnabled: boolean;
+    lastContent?: string;
+    /** what GrapesJS does on sync: re-render the text from the model */
+    rerender?: boolean;
   }) {
-    const syncContent = jest.fn(async () => {});
-    const text = {
-      getView: () => ({
-        el: view.el,
-        rteEnabled: view.rteEnabled,
-        getChildrenContainer: () => view.container,
-        syncContent,
+    const view = {
+      el: opts.el,
+      rteEnabled: opts.rteEnabled,
+      lastContent: opts.lastContent,
+      getChildrenContainer: () => opts.container,
+      syncContent: jest.fn(async ({ content }: { content?: string } = {}) => {
+        if (opts.rerender && content !== undefined) {
+          // eslint-disable-next-line no-param-reassign
+          opts.container.innerHTML = content;
+        }
       }),
-      components: () => ({ models: [] }),
     };
+    const text = { getView: () => view, components: () => ({ models: [] }) };
     const wrapper = {
       getView: () => ({
         el: document.body,
@@ -461,7 +470,7 @@ describe("deferred toolbar edits are written back (HTML and MJML)", () => {
     };
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
     const editor = { getWrapper: () => wrapper } as unknown as Editor;
-    return { editor, syncContent };
+    return { editor, view };
   }
 
   it("MJML: the RTE edits mj-text's inner container, which is matched and synced", () => {
@@ -470,13 +479,9 @@ describe("deferred toolbar edits are written back (HTML and MJML)", () => {
     el.appendChild(container);
     container.innerHTML =
       '<a href="{% unsubscribe_url %}" target="_blank">Unsubscribe</a> | Manage subscription';
-    const { editor, syncContent } = fakeEditor({
-      el,
-      container,
-      rteEnabled: false,
-    });
-    syncAfterDeferredEdit(editor, container);
-    expect(syncContent).toHaveBeenCalledWith({
+    const { editor, view } = fakeEditor({ el, container, rteEnabled: false });
+    commitTextEdit(editor, container);
+    expect(view.syncContent).toHaveBeenCalledWith({
       force: true,
       content: container.innerHTML,
     });
@@ -485,24 +490,146 @@ describe("deferred toolbar edits are written back (HTML and MJML)", () => {
   it("HTML: a text cell edits its own element", () => {
     const el = document.createElement("td");
     el.innerHTML = '<a href="{% unsubscribe_url %}">Unsubscribe</a>';
-    const { editor, syncContent } = fakeEditor({
+    const { editor, view } = fakeEditor({
       el,
       container: el,
       rteEnabled: false,
     });
-    syncAfterDeferredEdit(editor, el);
-    expect(syncContent).toHaveBeenCalledTimes(1);
+    commitTextEdit(editor, el);
+    expect(view.syncContent).toHaveBeenCalledTimes(1);
   });
 
-  it("still editing: GrapesJS syncs it itself when editing stops", () => {
+  it("still editing: left to GrapesJS (it writes the text when editing stops)", () => {
     const el = document.createElement("td");
-    const { editor, syncContent } = fakeEditor({
+    el.innerHTML = "About us";
+    const { editor, view } = fakeEditor({
       el,
       container: el,
       rteEnabled: true,
     });
-    syncAfterDeferredEdit(editor, el);
-    expect(syncContent).not.toHaveBeenCalled();
+    commitTextEdit(editor, el);
+    expect(view.syncContent).not.toHaveBeenCalled();
+  });
+
+  it("commitIfDirty (Save, undo) writes typed text; the selection is kept and no empty step follows", () => {
+    document.body.innerHTML = "";
+    const el = document.createElement("td");
+    el.innerHTML = "About us: Amie is a <b>women's</b> health brand.";
+    document.body.appendChild(el);
+    const { editor, view } = fakeEditor({
+      el,
+      container: el,
+      rteEnabled: true,
+      lastContent: "old",
+      rerender: true,
+    });
+    const range = document.createRange();
+    const text = el.lastChild;
+    if (!text) throw new Error("no text");
+    range.setStart(text, 1);
+    range.setEnd(text, 7);
+    document.getSelection()?.removeAllRanges();
+    document.getSelection()?.addRange(range);
+    expect(commitIfDirty(editor, el)).toBe(true);
+    expect(view.syncContent).toHaveBeenCalledTimes(1);
+    // GrapesJS won't write it again (an empty undo step) when editing stops
+    expect(view.lastContent).toBe(el.innerHTML);
+    // the text was re-rendered; the same words are still selected
+    expect(document.getSelection()?.toString()).toBe("health");
+  });
+
+  it("canvas-only draggable attributes don't count as a change", () => {
+    const el = document.createElement("td");
+    el.innerHTML = '<b draggable="true">Hi</b>';
+    const { editor, view } = fakeEditor({
+      el,
+      container: el,
+      rteEnabled: true,
+      lastContent: "<b>Hi</b>",
+    });
+    expect(commitIfDirty(editor, el)).toBe(false);
+    expect(view.syncContent).not.toHaveBeenCalled();
+  });
+
+  it("commitIfDirty writes typing only if the text changed since the last write", () => {
+    const el = document.createElement("td");
+    el.innerHTML = "Hello";
+    const { editor, view } = fakeEditor({
+      el,
+      container: el,
+      rteEnabled: true,
+      lastContent: "Hello",
+    });
+    expect(commitIfDirty(editor, el)).toBe(false);
+    el.innerHTML = "Hello there";
+    expect(commitIfDirty(editor, el)).toBe(true);
+    expect(view.syncContent).toHaveBeenCalledTimes(1);
+    const idle = fakeEditor({ el, container: el, rteEnabled: false });
+    expect(commitIfDirty(idle.editor, el)).toBe(false);
+  });
+});
+
+/**
+ * Nicholate 2026-10-28: selecting the whole About us footer (drag from its
+ * padding / past its last line, triple-click) and choosing a font size,
+ * font, color … did nothing. One end of such a selection is outside the
+ * text being edited, and every toolbar action ignored it.
+ */
+describe("whole-block selections are clamped to the edited text", () => {
+  function layout() {
+    document.body.innerHTML =
+      '<table><tr><td id="pad">x</td><td id="t">About us: <b>Amie</b>.<br><br>Address.</td><td id="after">y</td></tr></table>';
+    const root = document.getElementById("t");
+    const pad = document.getElementById("pad")?.firstChild;
+    const after = document.getElementById("after")?.firstChild;
+    if (!root || !pad || !after) throw new Error("bad fixture");
+    return { root, pad, after };
+  }
+
+  it("selection from outside before to outside after covers all of it", () => {
+    const { root, pad, after } = layout();
+    const range = document.createRange();
+    range.setStart(pad, 0);
+    range.setEnd(after, 1);
+    const clamped = clampToRoot(root, range);
+    expect(clamped?.toString()).toBe(root.textContent);
+  });
+
+  it("selection starting inside and ending past the block", () => {
+    const { root, after } = layout();
+    const range = document.createRange();
+    const first = root.firstChild;
+    if (!first) throw new Error("no text");
+    range.setStart(first, 6);
+    range.setEnd(after, 1);
+    expect(clampToRoot(root, range)?.toString()).toBe("us: Amie.Address.");
+  });
+
+  it("selection inside is unchanged; outside entirely is null", () => {
+    const { root, pad, after } = layout();
+    const inside = document.createRange();
+    inside.selectNodeContents(root);
+    expect(clampToRoot(root, inside)).toBe(inside);
+    const outside = document.createRange();
+    outside.setStart(pad, 0);
+    outside.setEnd(pad, 1);
+    expect(clampToRoot(root, outside)).toBeNull();
+    const later = document.createRange();
+    later.selectNodeContents(after);
+    expect(clampToRoot(root, later)).toBeNull();
+  });
+
+  it("a font size applied to the clamped whole-block selection covers every word", () => {
+    const { root, pad, after } = layout();
+    const range = document.createRange();
+    range.setStart(pad, 0);
+    range.setEnd(after, 1);
+    const clamped = clampToRoot(root, range);
+    if (!clamped) throw new Error("no overlap");
+    applyInlineStyle(root, clamped, "font-size", "10px");
+    expect(root.innerHTML).toBe(
+      '<span style="font-size:10px;">About us: <b>Amie</b>.<br><br>Address.</span>',
+    );
   });
 });
 

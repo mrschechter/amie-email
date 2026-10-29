@@ -163,6 +163,25 @@ function stripStyleProperty(node: Node, prop: string): void {
   }
 }
 
+/**
+ * Give every element in `node` that sets `prop` itself the new value, so
+ * nested spans don't keep the old one. (Removing it from the DOM isn't
+ * enough: GrapesJS keeps the style of elements it already knows and puts it
+ * back when the text is written to the model.) An empty value removes it.
+ */
+function replaceStyleProperty(node: Node, prop: string, value: string): void {
+  if (!value) {
+    stripStyleProperty(node, prop);
+    return;
+  }
+  if (!isParentNode(node)) return;
+  node.querySelectorAll("[style]").forEach((el) => {
+    if (parseStyle(el.getAttribute("style")).some(([k]) => k === prop)) {
+      setStyleProperty(el, prop, value);
+    }
+  });
+}
+
 /** The span whose whole content is exactly the selection, if there is one. */
 function exactSpan(root: HTMLElement, range: Range): HTMLElement | null {
   const text = range.toString();
@@ -176,20 +195,43 @@ function exactSpan(root: HTMLElement, range: Range): HTMLElement | null {
 }
 
 /**
- * Apply one CSS property (color, font-size …) to the selection as an inline
- * style. Re-applying to the same selection updates the span instead of
- * nesting another; an empty value removes the property.
+ * Elements inside `container` whose own CSS (a class/id rule — HTML mode
+ * keeps imported inline styles as #id rules — or a link's colour) gives them
+ * a different `prop` than `container` get the value inline too, so the whole
+ * selection really changes. Mautic-style footers wrap their text in spans
+ * with their own font-size; a 10px span around them changed nothing.
  */
-export function applyInlineStyle(
+function overrideDescendants(
+  container: HTMLElement,
+  prop: string,
+  value: string,
+): void {
+  const view = container.ownerDocument.defaultView;
+  if (!view || !value) return;
+  const want = view.getComputedStyle(container).getPropertyValue(prop);
+  if (!want) return;
+  container.querySelectorAll("*").forEach((el) => {
+    if (el.tagName === "BR") return;
+    const has = view.getComputedStyle(el).getPropertyValue(prop);
+    // background isn't inherited: only replace a background of its own
+    const own =
+      prop === "background-color"
+        ? has && has !== "rgba(0, 0, 0, 0)" && has !== "transparent"
+        : Boolean(has);
+    if (own && has !== want) setStyleProperty(el, prop, value);
+  });
+}
+
+/** Apply within one block (paragraph, list item, cell …). */
+function applyInlineStyleInBlock(
   root: HTMLElement,
   range: Range,
   prop: string,
   value: string,
 ): Range {
-  if (range.collapsed) return range;
   const existing = exactSpan(root, range);
   if (existing) {
-    stripStyleProperty(existing, prop);
+    replaceStyleProperty(existing, prop, value);
     setStyleProperty(existing, prop, value);
     if (!existing.attributes.length) {
       const parent = existing.parentNode;
@@ -202,11 +244,12 @@ export function applyInlineStyle(
       }
       return range;
     }
+    overrideDescendants(existing, prop, value);
     return selectContents(range, existing);
   }
   const doc = root.ownerDocument;
   const fragment = range.extractContents();
-  stripStyleProperty(fragment, prop);
+  replaceStyleProperty(fragment, prop, value);
   if (!value) {
     range.insertNode(fragment);
     return range;
@@ -215,7 +258,70 @@ export function applyInlineStyle(
   setStyleProperty(span, prop, value);
   span.appendChild(fragment);
   range.insertNode(span);
+  overrideDescendants(span, prop, value);
   return selectContents(range, span);
+}
+
+/**
+ * The selection split at block boundaries: one range per paragraph (or
+ * other block) it covers, so styling never wraps a <span> around <p>s or
+ * leaves an empty paragraph behind.
+ */
+export function blockSegments(root: HTMLElement, range: Range): Range[] {
+  const doc = root.ownerDocument;
+  const walker = doc.createTreeWalker(root, 4 /* text */);
+  const groups: { block: Node; first: Text; last: Text }[] = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (!isText(node) || !node.data.trim() || !range.intersectsNode(node)) {
+      continue;
+    }
+    const block =
+      closest(root, node, (el) => BLOCK_TAGS.has(el.tagName)) ?? root;
+    const current = groups[groups.length - 1];
+    if (current && current.block === block) current.last = node;
+    else groups.push({ block, first: node, last: node });
+  }
+  return groups.map(({ first, last }) => {
+    const segment = doc.createRange();
+    if (first === range.startContainer) {
+      segment.setStart(first, range.startOffset);
+    } else segment.setStart(first, 0);
+    if (last === range.endContainer) segment.setEnd(last, range.endOffset);
+    else segment.setEnd(last, last.data.length);
+    return segment;
+  });
+}
+
+/**
+ * Apply one CSS property (color, font-size …) to the selection as an inline
+ * style. Re-applying to the same selection updates the span instead of
+ * nesting another; an empty value removes the property. A selection over
+ * several paragraphs is styled paragraph by paragraph.
+ */
+export function applyInlineStyle(
+  root: HTMLElement,
+  range: Range,
+  prop: string,
+  value: string,
+): Range {
+  if (range.collapsed) return range;
+  const segments = blockSegments(root, range);
+  if (segments.length < 2) {
+    return applyInlineStyleInBlock(root, range, prop, value);
+  }
+  // last first: styling a paragraph never moves the ones before it
+  const styled = segments
+    .reverse()
+    .map((segment) => applyInlineStyleInBlock(root, segment, prop, value))
+    .reverse();
+  const first = styled[0];
+  const last = styled[styled.length - 1];
+  if (first && last) {
+    range.setStart(first.startContainer, first.startOffset);
+    range.setEnd(last.endContainer, last.endOffset);
+  }
+  return range;
 }
 
 export interface LinkOptions {
@@ -526,11 +632,38 @@ ${COLOR_POPOVER_CSS}`;
 /** The parts of the RTE the actions touch (lets tests use a plain element). */
 export type RteLike = Pick<RichTextEditor, "el" | "doc" | "selection">;
 
+/**
+ * The part of `range` inside `root`, or null if they don't overlap.
+ *
+ * Selecting a whole text block by dragging from its padding, past its last
+ * line, or with a triple-click puts one end of the selection *outside* the
+ * element being edited. Every toolbar action used to ignore such a
+ * selection, so formatting the whole block "did nothing".
+ */
+export function clampToRoot(root: HTMLElement, range: Range): Range | null {
+  const doc = root.ownerDocument;
+  const inside = doc.createRange();
+  inside.selectNodeContents(root);
+  let startVsRoot: number;
+  let endVsRoot: number;
+  try {
+    startVsRoot = inside.comparePoint(range.startContainer, range.startOffset);
+    endVsRoot = inside.comparePoint(range.endContainer, range.endOffset);
+  } catch {
+    return null; // the selection is in another document or a detached tree
+  }
+  if (startVsRoot > 0 || endVsRoot < 0) return null; // entirely after / before
+  if (startVsRoot === 0 && endVsRoot === 0) return range;
+  const clamped = range.cloneRange();
+  if (startVsRoot < 0) clamped.setStart(root, 0);
+  if (endVsRoot > 0) clamped.setEnd(root, root.childNodes.length);
+  return clamped;
+}
+
 function currentRange(rte: RteLike): Range | null {
   const sel = rte.selection();
   if (!sel?.rangeCount) return null;
-  const range = sel.getRangeAt(0);
-  return rte.el.contains(range.commonAncestorContainer) ? range : null;
+  return clampToRoot(rte.el, sel.getRangeAt(0));
 }
 
 /** Bubbles from the edited element after any toolbar/paste edit. */
@@ -713,12 +846,11 @@ export function hasSyncContent(view: unknown): view is {
   );
 }
 
-/**
- * Dialogs and pickers take focus, which makes GrapesJS stop editing the text
- * (and sync it) *before* the user's choice is applied. Write the element's
- * content back to its component so that late edit isn't lost.
- */
-export function syncAfterDeferredEdit(editor: Editor, el: HTMLElement): void {
+/** The text component whose view edits `el` (MJML: an inner container). */
+export function textComponentFor(
+  editor: Editor,
+  el: HTMLElement,
+): Component | undefined {
   const find = (component: Component): Component | undefined => {
     const view = component.getView();
     // HTML text cells edit their own element; MJML text (mj-text) edits an
@@ -733,16 +865,127 @@ export function syncAfterDeferredEdit(editor: Editor, el: HTMLElement): void {
     return undefined;
   };
   const wrapper = editor.getWrapper();
-  const component = wrapper ? find(wrapper) : undefined;
-  const view: unknown = component?.getView();
-  const editing =
+  return wrapper ? find(wrapper) : undefined;
+}
+
+interface TextViewState {
+  rteEnabled?: boolean;
+  lastContent?: string;
+}
+
+function isEditingView(view: unknown): view is TextViewState {
+  return (
     typeof view === "object" &&
     view !== null &&
     "rteEnabled" in view &&
-    Boolean(view.rteEnabled);
-  if (!editing && hasSyncContent(view)) {
-    void view.syncContent({ force: true, content: el.innerHTML });
+    Boolean(view.rteEnabled)
+  );
+}
+
+/** Write the text of `el` to its component now (re-renders it). */
+function writeTextToModel(editor: Editor, el: HTMLElement): void {
+  const view: unknown = textComponentFor(editor, el)?.getView();
+  if (!hasSyncContent(view)) return;
+  const sel = el.ownerDocument.getSelection();
+  const range = sel?.rangeCount ? clampToRoot(el, sel.getRangeAt(0)) : null;
+  const saved = range ? saveSelection(el, range) : null;
+  // With `content` given this runs synchronously.
+  void view.syncContent({ force: true, content: el.innerHTML });
+  if (isEditingView(view)) {
+    // GrapesJS writes the text again when editing stops if it differs from
+    // this; it's in the model now, so that would only add an empty undo step.
+    view.lastContent = el.innerHTML;
+    if (saved && sel) {
+      sel.removeAllRanges();
+      sel.addRange(restoreSelection(el, saved));
+    }
   }
+}
+
+/**
+ * After a toolbar edit: if the dialog or dropdown it came from made GrapesJS
+ * stop editing, the edit only exists in the canvas; write it to the model
+ * (see #62). While editing, GrapesJS writes the text itself when editing
+ * stops, and undo inside the session is handled by visualEmailHistory.
+ */
+export function commitTextEdit(editor: Editor, el: HTMLElement): void {
+  const view: unknown = textComponentFor(editor, el)?.getView();
+  if (isEditingView(view)) return;
+  writeTextToModel(editor, el);
+}
+
+/**
+ * Write the text being edited to the model if it changed since it was last
+ * written (Save in HTML mode, or before restyling the whole block). Writing
+ * unchanged text would add an undo step that does nothing. Returns whether
+ * it wrote (the DOM was re-rendered).
+ */
+/**
+ * The block a dialog/picker edit goes to, editing again: the link dialog
+ * and color picker take focus, which makes GrapesJS stop editing (and write
+ * the text) before the choice is applied. Applying it to a block that isn't
+ * being edited needed a second write of the same text, which GrapesJS
+ * couldn't always undo; editing it again keeps the edit in the same
+ * undoable editing session.
+ */
+async function resumeEditing(
+  editor: Editor,
+  rte: RteLike,
+  component: Component | undefined,
+): Promise<HTMLElement | null> {
+  const view: unknown = component?.getView();
+  if (
+    !isEditingView(view) &&
+    typeof view === "object" &&
+    view !== null &&
+    "onActive" in view &&
+    typeof view.onActive === "function" &&
+    component
+  ) {
+    editor.select(component);
+    try {
+      await view.onActive();
+    } catch {
+      // fall back to the block as it is
+    }
+  }
+  return editedRoot(rte, component);
+}
+
+/** Canvas-only `draggable` attributes (GrapesJS / drag-select toggle them). */
+const DRAGGABLE_ATTR_RE = / draggable="(?:true|false)"/g;
+
+export function commitIfDirty(editor: Editor, el: HTMLElement): boolean {
+  const view: unknown = textComponentFor(editor, el)?.getView();
+  if (!isEditingView(view)) return false;
+  const now = el.innerHTML.replace(DRAGGABLE_ATTR_RE, "");
+  if ((view.lastContent ?? "").replace(DRAGGABLE_ATTR_RE, "") === now) {
+    return false;
+  }
+  writeTextToModel(editor, el);
+  return true;
+}
+
+/**
+ * Fired on the edited element just before a toolbar/paste edit changes it.
+ * The undo history (visualEmailHistory) writes the text typed so far to the
+ * model and records the design, so each toolbar edit is one undo step.
+ */
+export const RTE_BEFORE_CHANGE_EVENT = "amie-rte-before-change";
+
+/**
+ * Announce an edit of `root` and return `range` valid for it afterwards:
+ * the text may have been re-rendered while it was recorded.
+ */
+function beforeChange(root: HTMLElement, range?: Range): Range | undefined {
+  const saved = range ? saveSelection(root, range) : null;
+  const before = root.innerHTML;
+  const EventCtor = root.ownerDocument.defaultView?.Event ?? Event;
+  root.dispatchEvent(new EventCtor(RTE_BEFORE_CHANGE_EVENT, { bubbles: true }));
+  if (!range || !saved) return range;
+  return root.innerHTML === before && root.contains(range.startContainer)
+    ? range
+    : restoreSelection(root, saved);
 }
 
 /** The text component whose RTE is active (for component-level alignment). */
@@ -841,13 +1084,49 @@ export function installRichTextToolbar(
     const text = data.getData("text");
     if (!html && !text) return;
     ev.preventDefault();
-    finish(rte, insertPasted(rte.el, range, html, text));
+    const target = beforeChange(rte.el, range) ?? range;
+    finish(rte, insertPasted(rte.el, target, html, text));
   };
 
   // GrapesJS's own link/wrap actions create links without an href prompt and
   // styling wrappers with editor ids; ours replace them.
   rteModule.remove("link");
   rteModule.remove("wrap");
+
+  /**
+   * Run a toolbar edit on the current selection (clamped to the text being
+   * edited), as one undo step.
+   */
+  const runEdit = (
+    rte: RichTextEditor,
+    edit: (root: HTMLElement, range: Range) => Range | null,
+  ): boolean => {
+    const root = rte.el;
+    const current = currentRange(rte);
+    if (!current) return false;
+    const range = beforeChange(root, current) ?? current;
+    const next = edit(root, range);
+    if (!next) return false;
+    finish(rte, next, root);
+    commitTextEdit(editor, root);
+    return true;
+  };
+
+  // Bold / italic / underline / strike-through are GrapesJS's (execCommand).
+  // Run them on the clamped selection and commit them like the others.
+  ["bold", "italic", "underline", "strikethrough"].forEach((name) => {
+    const action = rteModule.get(name);
+    if (!action) return;
+    const original = action.result;
+    action.result = (rte, act) =>
+      runEdit(rte, (_root, range) => {
+        const sel = rte.selection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+        original(rte, act);
+        return sel?.rangeCount ? sel.getRangeAt(0) : range;
+      });
+  });
 
   // Toolbar dropdowns take focus when opened, which can end editing (and
   // rebuild the text) before `change` fires; remember the selection first.
@@ -881,17 +1160,18 @@ export function installRichTextToolbar(
     ) => {
       const snap = snapshot && snapshot.rte === rte ? snapshot : null;
       snapshot = null;
-      const live = currentRange(rte);
-      let root: HTMLElement | null = rte.el;
-      let range: Range | null = live;
-      if (snap) {
-        root = editedRoot(rte, snap.component);
-        range = root ? restoreSelection(root, snap.saved) : null;
+      if (!snap) {
+        runEdit(rte, edit);
+        return;
       }
-      if (!root || !range) return;
-      finish(rte, edit(root, range), root);
-      // the dropdown took focus, so editing may already have stopped
-      syncAfterDeferredEdit(editor, root);
+      void resumeEditing(editor, rte, snap.component).then((root) => {
+        if (!root) return;
+        beforeChange(root);
+        const range = restoreSelection(root, snap.saved);
+        finish(rte, edit(root, range), root);
+        // if editing couldn't start again, write the edit to the model
+        commitTextEdit(editor, root);
+      });
     };
   };
 
@@ -952,11 +1232,17 @@ export function installRichTextToolbar(
           initial: selectionColor(rte, range, prop),
           closeOn: [rte.doc],
           onApply: (color) => {
-            const root = editedRoot(rte, component);
-            if (!root || !applySavedColor(rte, saved, prop, color ?? "", root))
-              return;
-            syncAfterDeferredEdit(editor, root);
-            if (color && bar) bar.style.background = color;
+            void resumeEditing(editor, rte, component).then((root) => {
+              if (root) beforeChange(root);
+              if (
+                !root ||
+                !applySavedColor(rte, saved, prop, color ?? "", root)
+              ) {
+                return;
+              }
+              commitTextEdit(editor, root);
+              if (color && bar) bar.style.background = color;
+            });
           },
         });
       },
@@ -981,30 +1267,28 @@ export function installRichTextToolbar(
       const saved = saveSelection(rte.el, range);
       const component = editingComponent(editor);
       openLinkDialog(readLink(rte.el, range), (link) => {
-        const root = editedRoot(rte, component);
-        if (!root || !applySavedLink(rte, saved, link, root)) return;
-        syncAfterDeferredEdit(editor, root);
+        void resumeEditing(editor, rte, component).then((root) => {
+          if (root) beforeChange(root);
+          if (!root || !applySavedLink(rte, saved, link, root)) return;
+          commitTextEdit(editor, root);
+        });
       });
     },
   });
   rteModule.add("amie-unlink", {
     icon: '<span style="text-decoration:line-through">🔗</span>',
     attributes: { title: "Remove link" },
-    result: (rte) => {
-      const range = currentRange(rte);
-      if (range) finish(rte, removeLink(rte.el, range));
-    },
+    result: (rte) => runEdit(rte, (root, range) => removeLink(root, range)),
   });
 
   (["ul", "ol"] as const).forEach((type) => {
     rteModule.add(`amie-${type}`, {
       icon: type === "ul" ? "•≡" : "1≡",
       attributes: { title: type === "ul" ? "Bulleted list" : "Numbered list" },
-      result: (rte) => {
-        const range = currentRange(rte);
-        if (range && canInsertList(rte.el))
-          finish(rte, toggleList(rte.el, range, type));
-      },
+      result: (rte) =>
+        runEdit(rte, (root, range) =>
+          canInsertList(root) ? toggleList(root, range, type) : null,
+        ),
       update: (rte, action) => {
         action.btn?.classList.toggle(
           "amie-rte-disabled",
@@ -1027,11 +1311,10 @@ export function installRichTextToolbar(
       icon: alignIcons[align],
       attributes: { title: `Align ${align}` },
       result: (rte) => {
-        const range = currentRange(rte);
-        if (range && alignBlock(rte.el, range, align)) {
-          finish(rte, range);
-          return;
-        }
+        const aligned = runEdit(rte, (root, range) =>
+          alignBlock(root, range, align) ? range : null,
+        );
+        if (aligned) return;
         const component = editingComponent(editor);
         if (!component) return;
         const apply = () => {
@@ -1043,12 +1326,8 @@ export function installRichTextToolbar(
         };
         // Changing the component re-renders it (MJML), so write the text
         // being edited back to the model first or those edits are lost.
-        const view: unknown = component.getView();
-        if (hasSyncContent(view)) {
-          void view.syncContent().then(apply);
-        } else {
-          apply();
-        }
+        commitIfDirty(editor, rte.el);
+        apply();
       },
     });
   });
@@ -1056,10 +1335,8 @@ export function installRichTextToolbar(
   rteModule.add("amie-clear", {
     icon: "T<sub>x</sub>",
     attributes: { title: "Clear formatting" },
-    result: (rte) => {
-      const range = currentRange(rte);
-      if (range) finish(rte, clearFormatting(rte.el, range));
-    },
+    result: (rte) =>
+      runEdit(rte, (root, range) => clearFormatting(root, range)),
   });
 
   const variables = selectIcon(
