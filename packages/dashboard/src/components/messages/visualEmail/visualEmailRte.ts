@@ -976,16 +976,28 @@ export const RTE_BEFORE_CHANGE_EVENT = "amie-rte-before-change";
 /**
  * Announce an edit of `root` and return `range` valid for it afterwards:
  * the text may have been re-rendered while it was recorded.
+ *
+ * Re-rendering typed text produces the same HTML from new nodes, and the
+ * selection's live range collapses onto `root` (still "inside" it), so the
+ * HTML alone can't tell; the range is kept only if it still covers the same
+ * text. Otherwise Bold etc. ran on an empty selection after typing.
  */
-function beforeChange(root: HTMLElement, range?: Range): Range | undefined {
+export function beforeChange(
+  root: HTMLElement,
+  range?: Range,
+): Range | undefined {
   const saved = range ? saveSelection(root, range) : null;
-  const before = root.innerHTML;
   const EventCtor = root.ownerDocument.defaultView?.Event ?? Event;
   root.dispatchEvent(new EventCtor(RTE_BEFORE_CHANGE_EVENT, { bubbles: true }));
   if (!range || !saved) return range;
-  return root.innerHTML === before && root.contains(range.startContainer)
-    ? range
-    : restoreSelection(root, saved);
+  if (
+    root.contains(range.startContainer) &&
+    root.contains(range.endContainer)
+  ) {
+    const now = saveSelection(root, range);
+    if (now.start === saved.start && now.end === saved.end) return range;
+  }
+  return restoreSelection(root, saved);
 }
 
 /** The text component whose RTE is active (for component-level alignment). */
