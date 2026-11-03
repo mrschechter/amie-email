@@ -454,6 +454,11 @@ export default function VisualEmailEditor({
       },
     });
     editorRef.current = editor;
+    // `storageManager: false` leaves autosave on: every model change ran
+    // store(), which re-reads the text being edited and re-renders it a tick
+    // later, dropping the selection (Bold after typing applied, then the
+    // text was deselected). Nothing is stored here, so don't autosave.
+    editor.Storage.setAutosave(false);
 
     // Component types and toolbar go in before any content loads, so
     // imported images/cells pick them up.

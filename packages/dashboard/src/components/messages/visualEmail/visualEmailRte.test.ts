@@ -5,11 +5,13 @@ import {
   alignBlock,
   applyInlineStyle,
   applyLink,
+  beforeChange,
   canInsertList,
   clearFormatting,
   insertTextAt,
   readLink,
   removeLink,
+  RTE_BEFORE_CHANGE_EVENT,
   toggleList,
 } from "./visualEmailRte";
 
@@ -244,5 +246,26 @@ describe("rich text actions: lists, alignment, clear, variables", () => {
     const { root: r2, range: c2 } = setup("Bye [].");
     insertTextAt(r2, c2, "{% unsubscribe_url %}");
     expect(r2.innerHTML).toBe("Bye {% unsubscribe_url %}.");
+  });
+});
+
+describe("before a toolbar edit", () => {
+  it("keeps the selection when recording typed text re-renders the same HTML", () => {
+    // Bold after typing: the history writes the typed text to the model,
+    // which re-renders identical HTML from new nodes; the live selection
+    // range collapses onto the root and Bold ran on nothing.
+    const { root, range } = setupText("Typed Start ", "writing", " here.");
+    root.addEventListener(RTE_BEFORE_CHANGE_EVENT, () => {
+      const html = root.innerHTML;
+      root.innerHTML = html;
+    });
+    const next = beforeChange(root, range);
+    expect(range.collapsed).toBe(true);
+    expect(next?.toString()).toBe("writing");
+  });
+
+  it("returns the same range when nothing was re-rendered", () => {
+    const { root, range } = setupText("a ", "b", " c");
+    expect(beforeChange(root, range)).toBe(range);
   });
 });
