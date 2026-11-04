@@ -28,7 +28,8 @@ journeys on them.
 
 ## Not available yet (coming when we migrate those flows)
 Quiz-completed / abandoned-checkout leads (people who never purchased) —
-those flows stay in Mautic until the lead events are added.
+these flows have no sender until the lead events are added (Mautic, which used
+to run them, stopped sending 2026-08-27 and was retired 2026-10-21).
 
 ## Ground rules
 - Send from `Amie <hello@em.tryamie.com>` (preconfigured default).
