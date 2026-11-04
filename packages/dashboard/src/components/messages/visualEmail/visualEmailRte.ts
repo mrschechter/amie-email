@@ -382,6 +382,44 @@ export function expandToWord(range: Range): boolean {
   return true;
 }
 
+/** Every non-blank character of the selection renders bold (600+). */
+export function isBold(root: HTMLElement, range: Range): boolean {
+  const view = root.ownerDocument.defaultView;
+  if (!view) return false;
+  const walker = root.ownerDocument.createTreeWalker(root, 4 /* text */);
+  let any = false;
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (!isText(node) || !node.data.trim() || !range.intersectsNode(node)) {
+      continue;
+    }
+    const el = node.parentElement;
+    const weight = el ? view.getComputedStyle(el).fontWeight : "";
+    const n = weight === "bold" ? 700 : Number(weight);
+    if (!(n >= 600)) return false;
+    any = true;
+  }
+  return any;
+}
+
+/**
+ * Bold as an inline font-weight on exactly the selection, like size and
+ * colour: text pasted from Google Docs / Mautic sits in spans with their own
+ * `font-weight:400` (often inside `<b style="font-weight:normal">`), so the
+ * browser's bold command (a `<b>` around them) showed nothing or was lost
+ * when the text was saved. Nested weights inside the selection are replaced;
+ * bold text toggles back to normal.
+ */
+export function toggleBold(root: HTMLElement, range: Range): Range | null {
+  if (range.collapsed && !expandToWord(range)) return null;
+  return applyInlineStyle(
+    root,
+    range,
+    "font-weight",
+    isBold(root, range) ? "normal" : "bold",
+  );
+}
+
 /**
  * Text for a link inserted with nothing selected: the variable's label
  * ("Unsubscribe"), "Link" for other Liquid, or the web address itself.
@@ -1124,9 +1162,19 @@ export function installRichTextToolbar(
     return true;
   };
 
-  // Bold / italic / underline / strike-through are GrapesJS's (execCommand).
+  // Bold is an inline font-weight (see toggleBold), not execCommand.
+  const boldAction = rteModule.get("bold");
+  if (boldAction) {
+    boldAction.result = (rte) => runEdit(rte, toggleBold);
+    boldAction.state = (rte) => {
+      const range = currentRange(rte);
+      return range && !range.collapsed && isBold(rte.el, range) ? 1 : 0;
+    };
+  }
+
+  // Italic / underline / strike-through are GrapesJS's (execCommand).
   // Run them on the clamped selection and commit them like the others.
-  ["bold", "italic", "underline", "strikethrough"].forEach((name) => {
+  ["italic", "underline", "strikethrough"].forEach((name) => {
     const action = rteModule.get(name);
     if (!action) return;
     const original = action.result;
