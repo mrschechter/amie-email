@@ -12,6 +12,7 @@ import {
   readLink,
   removeLink,
   RTE_BEFORE_CHANGE_EVENT,
+  toggleBold,
   toggleList,
 } from "./visualEmailRte";
 
@@ -267,5 +268,48 @@ describe("before a toolbar edit", () => {
   it("returns the same range when nothing was re-rendered", () => {
     const { root, range } = setupText("a ", "b", " c");
     expect(beforeChange(root, range)).toBe(range);
+  });
+});
+
+describe("bold", () => {
+  it("bolds text pasted from Google Docs inside font-weight:400 spans", () => {
+    // Google Docs wraps paste in <b style="font-weight:normal"> and gives
+    // every run its own font-weight:400; a <b> around that showed nothing.
+    const { root, range } = setup(
+      '<b style="font-weight:normal;"><span style="font-weight:400;color:#000;">an [important update] here</span></b>',
+    );
+    const next = toggleBold(root, range);
+    expect(next?.toString()).toBe("important update");
+    const span = Array.from(root.querySelectorAll("span")).find(
+      (el) => el.textContent === "important update",
+    );
+    expect(span?.getAttribute("style")).toContain("font-weight:bold");
+    expect(span?.querySelector('[style*="400"]')).toBeNull();
+  });
+
+  it("replaces nested weights inside the selection", () => {
+    const { root, range } = setup(
+      '<span style="font-weight:400;">[a <span style="font-weight:normal;">b</span> c]</span>',
+    );
+    toggleBold(root, range);
+    expect(root.innerHTML).not.toMatch(/font-weight:\s*(400|normal)[^"]*">b/);
+    expect(root.textContent).toBe("a b c");
+  });
+
+  it("turns bold text back to normal", () => {
+    const { root, range } = setup(
+      '<span style="font-weight:400;">x <span style="font-weight:bold;">[y]</span> z</span>',
+    );
+    toggleBold(root, range);
+    const y = Array.from(root.querySelectorAll("span")).find(
+      (el) => el.textContent === "y",
+    );
+    expect(y?.getAttribute("style")).toContain("font-weight:normal");
+  });
+
+  it("does nothing on a caret outside a word", () => {
+    const { root, range } = setup("a [] b");
+    expect(toggleBold(root, range)).toBeNull();
+    expect(root.innerHTML).toBe("a  b");
   });
 });
