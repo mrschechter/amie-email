@@ -2907,7 +2907,7 @@ function SegmentNodeComponent({
           <DropSlot groupId={node.id} index={i} disabled={disabled} />
           <DraggableRow nodeId={childId} disabled={disabled}>
             <Stack direction="row" spacing={1} alignItems="flex-start">
-              <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Box sx={{ flex: "1 0 auto" }}>
                 <SegmentNodeComponent
                   node={child}
                   renderDelete={childCount > 1}
@@ -3173,24 +3173,35 @@ export default function SegmentEditor({
           borderRadius: 1.5,
           border: `1px solid ${theme.palette.grey.A800}`,
           boxShadow: 2,
+          // Deeply nested conditions keep full-size fields and scroll
+          // sideways instead of squeezing inputs under the row actions.
+          overflowX: "auto",
           ...sx,
         }}
       >
-        <SegmentDndProvider
-          onDrop={(nodeId, groupId, index) =>
-            contextValue.setState((draft) => {
-              dropAt(draft.editedSegment.definition, nodeId, groupId, index);
-              return draft;
-            })
-          }
+        <Box
+          sx={{
+            width: "max-content",
+            minWidth: "100%",
+            "& .MuiStack-root > *": { flexShrink: 0 },
+          }}
         >
-          <SegmentNodeComponent
-            node={entryNode}
-            isRoot
-            renderDelete={false}
-            label="empty"
-          />
-        </SegmentDndProvider>
+          <SegmentDndProvider
+            onDrop={(nodeId, groupId, index) =>
+              contextValue.setState((draft) => {
+                dropAt(draft.editedSegment.definition, nodeId, groupId, index);
+                return draft;
+              })
+            }
+          >
+            <SegmentNodeComponent
+              node={entryNode}
+              isRoot
+              renderDelete={false}
+              label="empty"
+            />
+          </SegmentDndProvider>
+        </Box>
       </Box>
     </SegmentEditorContext.Provider>
   );

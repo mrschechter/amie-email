@@ -143,3 +143,28 @@ it("renders drag handles, per-row actions and drop slots for every group of an e
     container.remove();
   }
 });
+
+it("keeps nested condition fields full-size: the editor scrolls sideways instead of shrinking them", () => {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    act(() =>
+      root.render(
+        <SegmentEditor segmentId="seg-1" onSegmentChange={() => {}} />,
+      ),
+    );
+    const scroller = Array.from(container.querySelectorAll("div")).find(
+      (el) => getComputedStyle(el).overflowX === "auto",
+    );
+    expect(scroller).toBeDefined();
+    // Content is laid out at its natural width inside the scroller, so deep
+    // nesting overflows sideways instead of squeezing Value / Time Unit under
+    // the row actions (real layout is verified in a browser; jsdom has none).
+    const inner = scroller?.firstElementChild;
+    expect(inner && getComputedStyle(inner).width).toBe("max-content");
+  } finally {
+    act(() => root.unmount());
+    container.remove();
+  }
+});
